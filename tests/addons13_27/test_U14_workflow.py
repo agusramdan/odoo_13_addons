@@ -25,16 +25,19 @@ def local_git(*args):
 
 
 class WorkflowGate(OfflineCase):
-    def test_local_worktree_is_task_branch_without_candidate_commit(self):
+    def test_candidate_commit_is_on_task_branch_and_gate_remains_blocked(self):
         branch = local_git('rev-parse', '--abbrev-ref', 'HEAD')
         head = local_git('rev-parse', 'HEAD')
+        base = local_git('merge-base', 'main', 'HEAD')
+        main = local_git('rev-parse', 'main')
         self.assertEqual(branch.returncode, 0, branch.stderr)
         self.assertEqual(head.returncode, 0, head.stderr)
+        self.assertEqual(base.returncode, 0, base.stderr)
+        self.assertEqual(main.returncode, 0, main.stderr)
         self.assertEqual(branch.stdout.strip(), 'ADDONS13-29')
-        self.assertEqual(head.stdout.strip(), BASE_SHA)
-        self.assertEqual(local_git('log', '-1', '--format=%H').stdout.strip(), BASE_SHA)
-        status = local_git('status', '--porcelain').stdout.splitlines()
-        self.assertTrue(any(line[3:].startswith('tests/') for line in status))
+        self.assertNotEqual(head.stdout.strip(), BASE_SHA)
+        self.assertEqual(base.stdout.strip(), BASE_SHA)
+        self.assertEqual(main.stdout.strip(), BASE_SHA)
         analysis = json.loads((ANALYSIS / 'result.json').read_text())
         self.assertIsNone(analysis['candidate_sha'])
         self.assertFalse(analysis['acceptance'])
