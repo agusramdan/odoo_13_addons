@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Form View -->
+
+    <record id="view_service_endpoint_test_wizard_form" model="ir.ui.view">
+        <field name="name">service.endpoint.test.wizard.form</field>
+        <field name="model">service.endpoint.test.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Test Endpoint">
+                <group>
+                    <field name="endpoint_id" readonly="1"/>
+                    <field name="endpoint_model" readonly="1"/>
+                    <field name="method"/>
+                    <field name="path"/>
+                </group>
+                <group string="Params">
+                    <field name="params" widget="text"/>
+                </group>
+                <group string="Header">
+                    <field name="headers" widget="text"/>
+                </group>
+                <group string="Payload">
+                    <field name="payload" widget="text"/>
+                </group>
+                <group>
+                    <field name="response_status"/>
+                    <field name="response_body"/>
+                    <field name="success"/>
+                </group>
+                <footer>
+
+                    <button
+                        name="action_test"
+                        string="Test"
+                        type="object"
+                        class="btn-primary"
+                    />
+
+                    <button
+                        string="Close"
+                        special="cancel"
+                    />
+
+                </footer>
+
+            </form>
+        </field>
+    </record>
+</odoo>

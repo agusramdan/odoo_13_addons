@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Tree View -->
+    <record id="view_service_endpoint_tree" model="ir.ui.view">
+        <field name="name">service.endpoint.tree</field>
+        <field name="model">service.endpoint</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="url"/>
+                <field name="audience"/>
+                <field name="credential_id"/>
+                <field name="timeout"/>
+                <field name="active"/>
+            </tree>
+        </field>
+    </record>
+
+    <!-- Form View -->
+    <record id="view_service_endpoint_form" model="ir.ui.view">
+        <field name="name">service.endpoint.form</field>
+        <field name="model">service.endpoint</field>
+        <field name="arch" type="xml">
+            <form string="Service Endpoint">
+                <header>
+                    <field name="active" invisible="1"/>
+                    <button name="action_test_connection" type="object" string="Test Connection" class="oe_highlight" />
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Service">
+                            <field name="code"/>
+                            <field name="url" />
+                        </group>
+                        <group string="Connection">
+                            <field name="timeout"/>
+                            <field name="active_log"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Endpoint">
+                            <group>
+                                <field name="source" string="Source Value" />
+                                <label for="config_param_name"/>
+                                <div class="d-flex w-100 align-items-center">
+                                    <field name="config_param_name" attrs="{'invisible':[('source','=','value')]}" />
+                                    <button string="Edit" type="object" name="open_config_parameter"
+                                        attrs="{'invisible':['|',('config_param_name','in',['',False]),('source','!=','config_parameter'),]}"
+                                        class="btn btn-primary ms-2"
+                                    />
+                                </div>
+
+                                <field name="base_url" string="Base Url" attrs="{'invisible':[('source','=','value')]}"/>
+                                <field name="base_url_value" string="Base Url"
+                                       attrs="{'invisible':[('source','!=','value')]}"
+                                       placeholder="https://employee.company.com"/>
+                                <field name="base_path" placeholder="/api/v1" />
+                                <field name="audience" placeholder="employee-service" />
+                                <field name="content_type_default" />
+                            </group>
+                        </page>
+
+                        <page string="Authentication">
+                            <group>
+                                <field name="credential_id" options="{'no_create_edit': False}" />
+                            </group>
+                        </page>
+
+                        <page string="Help">
+                            <group string="Code">
+                                <div>
+                                    Unique identifier used by
+                                    service.client.
+                                </div>
+                            </group>
+                            <group string="Base URL">
+                                <div>
+                                    Example:
+                                    https://employee.company.com
+                                </div>
+                            </group>
+                            <group string="API Prefix">
+                                <div>
+                                    Example: /api/v1
+                                </div>
+                            </group>
+                            <group string="Audience">
+                                <div>
+                                    Audience sent to OIDC token
+                                    endpoint when requesting
+                                    access token.
+                                </div>
+                            </group>
+                            <group string="Credential">
+                                <div>
+                                    Authentication configuration
+                                    used when accessing this
+                                    service.
+                                </div>
+                            </group>
+                            <group string="Timeout">
+                                <div>
+                                    Request timeout in seconds.
+                                </div>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View -->
+    <record id="view_service_endpoint_search" model="ir.ui.view">
+        <field name="name">service.endpoint.search</field>
+        <field name="model">service.endpoint</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="audience"/>
+                <field name="config_param_name"/>
+                <filter string="Active" name="active" domain="[('active','=',True)]" />
+                <group expand="0" string="Group By">
+                    <filter name="group_by_source" string="Source" context="{'group_by':'source'}" />
+                    <filter name="group_by_audience" string="Audience" context="{'group_by':'audience'}" />
+                    <filter name="group_by_credential_id" string="Credential" context="{'group_by':'credential_id'}" />
+                </group>
+
+            </search>
+        </field>
+    </record>
+
+    <!-- Action -->
+    <record id="action_service_endpoint" model="ir.actions.act_window">
+        <field name="name">Service Endpoints</field>
+        <field name="res_model">service.endpoint</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

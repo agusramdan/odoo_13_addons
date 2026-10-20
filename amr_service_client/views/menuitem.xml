@@ -1,0 +1,18 @@
+<odoo>
+    <!-- technical -->
+    <menuitem id="menu_integration" name="Integration" sequence="10"
+              parent="base.menu_users" groups="base.group_no_one"
+    />
+    <menuitem id="menu_service_endpoint" name="Endpoints" sequence="10" parent="menu_integration"
+              action="action_service_endpoint" groups="base.group_no_one"
+    />
+    <menuitem id="menu_service_credential" name="Credentials" sequence="20" parent="menu_integration"
+              action="action_service_credential" groups="base.group_no_one"
+    />
+    <menuitem id="menu_service_client" name="Client" sequence="30" parent="menu_integration"
+              action="service_client_action" groups="base.group_no_one"
+    />
+    <menuitem id="menu_service_client_log" name="Integration Log" sequence="40"
+              action="service_client_log_action" parent="menu_integration" groups="base.group_no_one"
+    />
+</odoo>

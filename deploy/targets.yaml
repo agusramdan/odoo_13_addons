@@ -1,0 +1,26 @@
+# Deployment target inventory for this repository.
+# Enabling a target here only makes it available in configuration; it does not
+# trigger deployment or authorize server mutation. Keep secrets outside this file.
+schema_version: 1
+project: amr_service_client
+
+# This addon repository is development-only. Its known Odoo 13 target is a demo;
+# actual deployment still requires a verified procedure and explicit authorization.
+targets:
+  odoo13_demo:
+    environment: demo
+    platform: odoo
+    version: "13"
+    server_ref: odoo13-demo
+    url: https://odoo13.agusramdan.web.id
+    enabled: true
+    deployable: false
+    approval_required: owner
+    deployment_method: null # Not specified; do not infer a deployment procedure.
+    deploy_path: null       # Fill only after the target path is verified.
+
+  production:
+    environment: production
+    enabled: false
+    status: not_configured
+    reason: This repository is development-only; no production target is assigned.

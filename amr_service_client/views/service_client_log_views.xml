@@ -1,0 +1,60 @@
+<odoo>
+    <data>
+        <record id="service_client_log_form" model="ir.ui.view">
+            <field name="name">service.client.log.form</field>
+            <field name="model">service.client.log</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <form string="sync">
+                    <header>
+                        <button name="dispatch_send" type="object" string="Send" class="oe_highlight"/>
+                        <field name="state" widget="statusbar"/>
+                    </header>
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="endpoint_id"/>
+                                <field name="client_id"/>
+                            </group>
+                            <group>
+                                <field name="credential_id"/>
+                            </group>
+                        </group>
+                        <notebook>
+                            <page string="Request Context" autofocus="autofocus">
+                                <field name="request_context"/>
+                            </page>
+                            <page string="Response">
+                                <field name="response"/>
+                            </page>
+                        </notebook>
+                    </sheet>
+                    <footer/>
+                </form>
+            </field>
+        </record>
+
+        <record id="service_client_log_tree" model="ir.ui.view">
+            <field name="name">service.client.log.tree</field>
+            <field name="model">service.client.log</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <tree>
+                    <field name="create_date"/>
+                    <field name="endpoint_id"/>
+                    <field name="credential_id"/>
+                    <field name="client_id"/>
+                    <field name="state"/>
+                </tree>
+            </field>
+        </record>
+
+        <record id="service_client_log_action" model="ir.actions.act_window" >
+            <field name="name">Integration Log</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">service.client.log</field>
+            <field name="view_mode">tree,form</field>
+            <field name="domain">[]</field>
+        </record>
+    </data>
+</odoo>

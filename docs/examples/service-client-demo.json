@@ -1,0 +1,39 @@
+{
+  "synthetic": true,
+  "auto_load": false,
+  "live_call": false,
+  "format": "documentation_metadata_not_installable_orm_data",
+  "objects": [
+    {
+      "type": "Endpoint",
+      "alias": "demo_endpoint_a",
+      "name": "Demo Endpoint A",
+      "code": "demo_endpoint_a",
+      "source": "value",
+      "base_url_value": "https://resource.example.invalid",
+      "base_path": "/demo",
+      "timeout": 30,
+      "credential_alias": "demo_credential_a"
+    },
+    {
+      "type": "Credential",
+      "alias": "demo_credential_a",
+      "name": "Demo Credential A",
+      "source": "database",
+      "auth_type": "basic",
+      "credential_json": null,
+      "credential_material_present": false
+    },
+    {
+      "type": "Service Client",
+      "alias": "demo_client_a",
+      "name": "Demo Service Client A",
+      "endpoint_alias": "demo_endpoint_a",
+      "credential_alias": "demo_credential_a",
+      "model_reference": "MODEL_SYNTHETIC_OWNER_APPROVED",
+      "each_record": false,
+      "active": false,
+      "active_log": false
+    }
+  ]
+}
