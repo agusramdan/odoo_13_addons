@@ -60,3 +60,33 @@ class Tokens(OfflineCase):
   token='synthetic.jwt.token'
   with mock.patch.object(self.p.time,'time',return_value=100),mock.patch.object(self.p.jwt,'decode',return_value={'exp':200}) as decode: self.assertFalse(self.p.AuthenticationProvider(None,{}).is_token_expired(token))
   self.assertEqual(decode.call_args.kwargs['options'],{'verify_signature':False,'verify_exp':False})
+
+ def test_token_provider_credential_check_does_not_log_token(self):
+  marker='SYNTHETIC_ACCESS_TOKEN_MUST_NOT_APPEAR_IN_LOGS'
+  token={'access_token':marker}
+  for provider_type in (self.p.GetJWTTokenProvider,self.p.ClientSecretProvider,self.p.ServiceAccountProvider):
+   with self.subTest(provider=provider_type.__name__):
+    provider=provider_type(None,{})
+    provider._request_token=mock.Mock(return_value=token)
+    with mock.patch.object(self.p._logger,'debug') as debug_log:
+     result=provider.test_credential()
+    self.assertIs(result,token)
+    debug_log.assert_called_once()
+    self.assertNotIn(marker,repr(debug_log.call_args_list),'synthetic token leaked to debug log')
+
+ def test_credential_failure_log_does_not_include_exception_text(self):
+  marker='SYNTHETIC_ERROR_BODY_MUST_NOT_APPEAR_IN_LOGS'
+  credential_module=load('models/service_credential.py')
+  credential=object.__new__(credential_module.ServiceCredential)
+  credential.ensure_one=mock.Mock()
+  credential.name='synthetic-credential'
+  provider=mock.Mock()
+  provider.test_credential.side_effect=ValueError(marker)
+  credential.get_credential_provider=mock.Mock(return_value=provider)
+  with mock.patch.object(credential_module._logger,'exception') as exception_log, mock.patch.object(credential_module._logger,'error') as error_log:
+   with self.assertRaises(credential_module.UserError) as caught:
+    credential.action_test_credential()
+  log_calls=exception_log.call_args_list+error_log.call_args_list
+  self.assertTrue(log_calls,'credential failures should still be logged')
+  self.assertNotIn(marker,repr(log_calls),'synthetic error text leaked to server log')
+  self.assertIn(marker,str(caught.exception),'keep existing user-facing error behavior in this log-only scope')

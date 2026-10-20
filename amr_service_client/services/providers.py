@@ -175,7 +175,7 @@ class GetJWTTokenProvider(AuthenticationProvider):
 
     def test_credential(self):
         token = self._request_token()
-        _logger.debug(f"Credential token: {token}...")
+        _logger.debug("Credential token retrieved successfully")
         # self.env['amr.resource.helper'].decode(token['access_token'])
         return token
 
@@ -282,7 +282,7 @@ class ClientSecretProvider(AuthenticationProvider):
 
     def test_credential(self):
         token = self._request_token()
-        _logger.debug(f"Credential token: {token}...")
+        _logger.debug("Credential token retrieved successfully")
         # self.env['amr.resource.helper'].decode(token['access_token'])
         return token
 
@@ -432,6 +432,6 @@ class ServiceAccountProvider(ClientSecretProvider):
 
     def test_credential(self):
         token = self._request_token()
-        _logger.debug(f"Credential token: {token}...")
+        _logger.debug("Credential token retrieved successfully")
         # self.env['amr.resource.helper'].decode(token['access_token'])
         return token

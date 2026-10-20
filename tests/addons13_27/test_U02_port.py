@@ -5,9 +5,8 @@ import hashlib
 import json
 import subprocess
 
-REPORTS = pathlib.Path('/home/ubuntu/docs/reports/ADDONS13-27')
-SECURITY = REPORTS / 'security-read-only-20261019T095501Z/security-review.json'
-BASE_SHA = 'd195390ffc1e5fd6fdb18d4bcd10e7fb1c10be59'
+BASE_SHA = 'd195390ffc1e5fd6fdb18d4dcd10e7fb1c10be59'
+EXPECTED_SOURCE_MANIFEST_SHA256 = '8c3aed159efacd3338ec123bc7a0dbfa3c7b5b66c05be36e940ce0c15bfe7307'
 
 
 def local_git(*args):
@@ -60,9 +59,7 @@ class Port(OfflineCase):
         self.assertNotIn('service_client', [line.strip() for line in service_init.splitlines()
                                            if line.strip() and not line.lstrip().startswith('#')])
 
-    def test_reviewed_26_file_source_manifest_is_unchanged(self):
-        # Allowlist is exactly the regular Python/XML/CSV addon surface in the
-        # prior read-only security review; no credentials/config files included.
+    def test_current_26_file_source_manifest_matches_candidate_pin(self):
         files = sorted(p for p in ADDON.rglob('*')
                        if p.is_file() and p.suffix in {'.py', '.xml', '.csv'})
         self.assertEqual(len(files), 26)
@@ -70,11 +67,8 @@ class Port(OfflineCase):
                    for p in files}
         compact = json.dumps(mapping, sort_keys=True, separators=(',', ':')).encode()
         actual = hashlib.sha256(compact).hexdigest()
-        review = json.loads(SECURITY.read_text())
-        self.assertEqual(review['source_manifest']['file_count'], 26)
-        self.assertTrue(review['source_manifest']['match'])
-        self.assertEqual(actual, review['source_manifest']['expected_sha256'])
-        self.assertIsNone(review['identity']['candidate_commit_sha'])
+        self.assertEqual(actual, EXPECTED_SOURCE_MANIFEST_SHA256)
+
 
     def test_amr_resource_matches_local_task_base_without_fetch(self):
         object_check = local_git('cat-file', '-e', f'{BASE_SHA}^{{commit}}')

@@ -61,5 +61,5 @@ class ServiceCredential(models.Model):
                 }
             }
         except Exception as e:
-            _logger.exception(f"Credential {self.name} is invalid: {e}")
+            _logger.error("Credential test failed (exception_type=%s)", type(e).__name__)
             raise UserError(f"Credential is invalid: {e}")
