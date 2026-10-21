@@ -3,11 +3,9 @@
 import json
 import logging
 
-from odoo.http import Controller, Response, request, route
-
+from odoo.http import Controller, request, route
 from werkzeug.exceptions import HTTPException
 from werkzeug.wrappers import Response
-from odoo.http import request
 
 _logger = logging.getLogger(__name__)
 
@@ -18,11 +16,12 @@ class ControllerToken(Controller):
     def handle_exception(cls, ex, status=500, error=None, error_description=None):
         if isinstance(ex, HTTPException):
             raise ex
+        _logger.exception("Error in request: %s", ex)
         return cls.make_response(
             status=status,
             success=False,
             error=error or "general_error",
-            error_description=error_description or str(ex)
+            error_description=error_description or "Request could not be processed.",
         )
 
     @classmethod
@@ -38,13 +37,15 @@ class ControllerToken(Controller):
 
     @classmethod
     def make_response(cls, status=200, **payload):
+        body = payload if payload else {
+            "error": "unknown_error",
+            "error_description": "An unknown error occurred.",
+        }
+
         return Response(
-            response=json.dumps(
-                payload
-                or {"error": "unknown_error", "error_description": "An unknown error occurred."}
-            ),
+            response=json.dumps(body, ensure_ascii=False),
             status=status,
-            headers=[("Content-Type", "application/json")],
+            content_type="application/json; charset=utf-8",
         )
 
     @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)

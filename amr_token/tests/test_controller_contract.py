@@ -25,7 +25,10 @@ class TestControllerContract(unittest.TestCase):
         self._require("make_response")
         response = self.module.ControllerToken.make_response(201, result="ok")
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.headers["Content-Type"], "application/json")
+        self.assertEqual(
+            response.headers["Content-Type"],
+            "application/json; charset=utf-8",
+        )
         self.assertEqual(self._json(response), {"result": "ok"})
 
         empty = self.module.ControllerToken.make_response(500)
@@ -47,15 +50,18 @@ class TestControllerContract(unittest.TestCase):
 
     def test_exception_handler_preserves_http_exception_and_maps_other_errors(self):
         self._require("handle_exception")
-        mapped = self.module.ControllerToken.handle_exception(
-            ValueError("synthetic failure"), 401, "invalid_request",
-        )
+        with self.assertLogs(self.module._logger, level="ERROR"):
+            mapped = self.module.ControllerToken.handle_exception(
+                ValueError("synthetic failure"), 401, "invalid_request",
+            )
         self.assertEqual(mapped.status_code, 401)
-        self.assertEqual(self._json(mapped), {
+        mapped_json = self._json(mapped)
+        self.assertEqual(mapped_json, {
             "success": False,
             "error": "invalid_request",
-            "error_description": "synthetic failure",
+            "error_description": "Request could not be processed.",
         })
+        self.assertNotIn("synthetic failure", json.dumps(mapped_json))
 
         with self.assertRaises(StubHTTPException):
             self.module.ControllerToken.handle_exception(StubHTTPException("already handled"))
