@@ -101,5 +101,5 @@ This covers the main failure modes when Cursor generates Odoo code without guida
 
 ## Document
 - Document write in `<addon>/docs`
-- PRD write in `<addon>/docs/<tasknumber>`
-- UAT write in `<addon>/docs/<tasknumber>`
+- PRD write in `docs/<tasknumber>`
+- UAT write in `docs/<tasknumber>`
