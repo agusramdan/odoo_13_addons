@@ -41,8 +41,8 @@ class TestJwksContract(unittest.TestCase):
         pem = public.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
         model._check_public_key([SimpleNamespace(public_key=pem, algorithm="RS256")])
         records = _ModelRecords([_record("synthetic-mismatch", "RS256", public, active=True, is_signing=False)])
-        # PyJWT 2.7.0 on this offline host accesses RSA numbers without a type guard.
-        with self.assertRaisesRegex(AttributeError, "EllipticCurvePublicNumbers.*attribute 'n'"):
+        # Characterize missing RSA numbers without relying on version-specific type names.
+        with self.assertRaisesRegex(AttributeError, "has no attribute 'n'"):
             model.get_jwks(records)
         self.assertEqual(records.domains, [[("active", "=", True)]])
 
