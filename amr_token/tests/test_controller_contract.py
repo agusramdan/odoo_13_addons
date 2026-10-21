@@ -3,7 +3,10 @@ import json
 import unittest
 from unittest import mock
 
-from support import ADDON, StubHTTPException, load_controller_module
+if __package__:
+    from .support import ADDON, StubHTTPException, load_controller_module
+else:
+    from support import ADDON, StubHTTPException, load_controller_module
 
 
 class TestControllerContract(unittest.TestCase):

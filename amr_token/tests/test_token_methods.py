@@ -7,7 +7,10 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from support import load_public_key_model
+if __package__:
+    from .support import load_public_key_model
+else:
+    from support import load_public_key_model
 
 
 class TestTokenMethods(unittest.TestCase):

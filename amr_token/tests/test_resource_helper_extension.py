@@ -2,7 +2,10 @@
 import unittest
 from unittest import mock
 
-from support import ADDON, load_helper_module
+if __package__:
+    from .support import ADDON, load_helper_module
+else:
+    from support import ADDON, load_helper_module
 
 
 class TestResourceHelperExtension(unittest.TestCase):

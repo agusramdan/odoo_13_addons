@@ -1,7 +1,10 @@
 """P-03 field/default/selection contract on the candidate model."""
 import unittest
 
-from support import ADDON, load_public_key_model
+if __package__:
+    from .support import ADDON, load_public_key_model
+else:
+    from support import ADDON, load_public_key_model
 
 
 class TestPublicKeyFieldContract(unittest.TestCase):

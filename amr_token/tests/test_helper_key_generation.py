@@ -7,7 +7,10 @@ from unittest import mock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
-from support import ADDON, load_helper_module
+if __package__:
+    from .support import ADDON, load_helper_module
+else:
+    from support import ADDON, load_helper_module
 
 
 class TestHelperKeyGeneration(unittest.TestCase):

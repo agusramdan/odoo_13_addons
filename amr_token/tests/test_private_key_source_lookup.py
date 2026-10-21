@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from support import load_public_key_model
+if __package__:
+    from .support import load_public_key_model
+else:
+    from support import load_public_key_model
 
 MARKER = "SYNTHETIC-NOT-KEY-MATERIAL"
 

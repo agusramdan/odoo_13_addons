@@ -5,7 +5,10 @@ from types import SimpleNamespace
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
-from support import ADDON, load_public_key_model
+if __package__:
+    from .support import ADDON, load_public_key_model
+else:
+    from support import ADDON, load_public_key_model
 
 
 PRIVATE_JWK_PARAMETERS = {"d", "p", "q", "dp", "dq", "qi", "oth"}

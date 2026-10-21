@@ -3,7 +3,10 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from support import load_public_key_model
+if __package__:
+    from .support import load_public_key_model
+else:
+    from support import load_public_key_model
 
 
 class TestGenerateKeyAction(unittest.TestCase):

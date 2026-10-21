@@ -3,7 +3,10 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from support import load_helper_module
+if __package__:
+    from .support import load_helper_module
+else:
+    from support import load_helper_module
 
 
 class _Environment(dict):

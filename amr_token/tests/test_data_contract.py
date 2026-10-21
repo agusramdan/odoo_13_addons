@@ -5,7 +5,10 @@ import hashlib
 import unittest
 import xml.etree.ElementTree as ET
 
-from support import ADDON
+if __package__:
+    from .support import ADDON
+else:
+    from support import ADDON
 
 
 class TestDataContract(unittest.TestCase):

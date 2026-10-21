@@ -7,7 +7,10 @@ from unittest import mock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from support import ADDON, load_public_key_model
+if __package__:
+    from .support import ADDON, load_public_key_model
+else:
+    from support import ADDON, load_public_key_model
 
 
 class TestDemoContract(unittest.TestCase):

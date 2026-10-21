@@ -7,7 +7,10 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from support import load_helper_module
+if __package__:
+    from .support import load_helper_module
+else:
+    from support import load_helper_module
 
 
 class TestTokenHelperLifecycle(unittest.TestCase):

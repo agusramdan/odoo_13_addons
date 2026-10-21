@@ -3,7 +3,10 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from support import ADDON, load_settings_model
+if __package__:
+    from .support import ADDON, load_settings_model
+else:
+    from support import ADDON, load_settings_model
 
 
 class TestResConfigSettingsContract(unittest.TestCase):

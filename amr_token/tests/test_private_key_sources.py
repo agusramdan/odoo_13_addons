@@ -4,7 +4,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from support import load_public_key_model
+if __package__:
+    from .support import load_public_key_model
+else:
+    from support import load_public_key_model
 
 
 class TestPrivateFileRead(unittest.TestCase):
