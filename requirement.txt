@@ -1,0 +1,7 @@
+# External Python distributions used by Odoo 13 addons in this repository.
+# Target runtime: CPython 3.7.9.
+# amr_resource / amr_service_client: requests, jwt (provided by PyJWT).
+# amr_token: jwt (PyJWT) and cryptography.
+PyJWT==2.8.0
+cryptography==39.0.2
+requests==2.31.0

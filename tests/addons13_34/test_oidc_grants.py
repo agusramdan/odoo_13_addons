@@ -79,7 +79,7 @@ class TestOidcGrantFlows(unittest.TestCase):
         result = self.module.TokenHelper.do_challenge_grant(self.helper, data)
 
         self.assertEqual(result, {"challenge": "synthetic-challenge"})
-        payload = self.helper.generate_token_asymmetric.call_args.args[0]
+        payload = self.helper.generate_token_asymmetric.call_args[0][0]
         self.assertEqual(payload["iss"], "https://issuer.example.invalid")
         self.assertEqual(payload["aud"], "resource-a")
         self.assertEqual(payload["scope"], "custom")
@@ -95,7 +95,7 @@ class TestOidcGrantFlows(unittest.TestCase):
         result = self.module.TokenHelper.do_digital_signature_grant(self.helper, data)
 
         self.assertEqual(result, {"digital_signature": "synthetic-signature"})
-        payload = self.helper.generate_token_asymmetric.call_args.args[0]
+        payload = self.helper.generate_token_asymmetric.call_args[0][0]
         self.assertEqual(payload["iss"], "https://issuer.example.invalid")
         self.assertEqual(payload["aud"], "default-audience")
         self.assertEqual(payload["nonce"], "n")
