@@ -12,7 +12,7 @@ from . import test_oidc_user_responses
 from . import test_private_key_source_lookup
 from . import test_private_key_sources
 from . import test_public_key_contract
-from . import test_public_key_orm
+from ..integration_tests import test_public_key_orm
 from . import test_public_key_validation
 from . import test_res_users_contract
 from . import test_resource_helper_extension
