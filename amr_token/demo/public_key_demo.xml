@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo noupdate="1">
+    <record id="demo_public_key_inactive" model="amr.public.key">
+        <field name="name">Synthetic public-only demo (inactive)</field>
+        <field name="kid">synthetic-demo-not-for-signing</field>
+        <field name="source">database</field>
+        <field name="algorithm">RS256</field>
+        <field name="public_key">-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8XNZ2s7P9jdZjUTGQD8C
+9Da063GDJX0EduRsGQ8rd4yGWH3SjGrv2mv5RnmIYmYLwCYyO6PaGfO40YPXK6bf
+ndfCT8QIlVa3SjBfvX/ZM428SLpk/rQ2hfyiGacJ2eN9Ppp0WugCvqKNzs86Ld8M
+PxW8YC6jTFNGshTiS5Hi2eHe0qLQaU+GMTS1VGSZc5zwLcIpCbutwepbRsXND5Gc
+bvQdSP8n6O9jmi0dI/Yrog2EUGNn63oOsF8WqvjSpzhIj/FsH4Z0CvwNp7p8yxLV
+V+fdhSVl8iN5aEqGCdmHui3QcJ2Tm8pzzBcKzKBrEcc3nHTRnJ3mnwhkVZPcPXHM
+AwIDAQAB
+-----END PUBLIC KEY-----
+</field>
+        <field name="active" eval="False"/>
+        <field name="is_signing" eval="False"/>
+    </record>
+</odoo>

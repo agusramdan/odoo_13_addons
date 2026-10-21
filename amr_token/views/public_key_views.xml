@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+
+    <!-- FORM VIEW -->
+    <record id="view_amr_public_key_form" model="ir.ui.view">
+        <field name="name">amr.public.key.form</field>
+        <field name="model">amr.public.key</field>
+        <field name="arch" type="xml">
+            <form string="OIDC JWKS Key">
+
+                <header>
+<!--                    <button name="action_generate_es256_key"-->
+<!--                            type="object"-->
+<!--                            string="Generate ES256 Key"-->
+<!--                            class="btn-secondary"-->
+<!--                    />-->
+
+<!--                    <button name="action_set_signing"-->
+<!--                            type="object"-->
+<!--                            string="Set as Signing Key"-->
+<!--                            class="btn-primary"-->
+<!--                            attrs="{'invisible': [('active', '=', False)]}"/>-->
+
+<!--                    <button name="action_deactivate"-->
+<!--                            type="object"-->
+<!--                            string="Deactivate"-->
+<!--                            class="btn-secondary"-->
+<!--                            attrs="{'invisible': [('active', '=', False)]}"/>-->
+                </header>
+
+                <sheet>
+
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" placeholder="Key Name"/>
+                        </h1>
+                    </div>
+
+                    <group>
+
+                        <group string="Identity">
+                            <field name="kid" attrs="{'required': [('public_key', 'not in', [False,''])]}"/>
+                            <field name="source" />
+                            <field name="algorithm"/>
+                            <field name="hsm_key_id" attrs="{'invisible': [('source', '!=', 'hsm')]}"/>
+                        </group>
+
+                        <group string="Status">
+                            <field name="active"/>
+                            <field name="is_signing"/>
+                        </group>
+
+                    </group>
+
+                    <notebook>
+
+                        <page string="Public Key">
+                            <field name="public_key" widget="text"/>
+                        </page>
+
+                        <page string="Private Key (Dev Only)">
+                            <field name="private_key"
+                                   widget="text"
+                                   attrs="{'readonly': [('active', '=', True)]}"/>
+                        </page>
+
+                        <page string="Lifecycle">
+                            <group>
+                                <field name="created_at" readonly="1"/>
+                                <field name="expires_at"/>
+                            </group>
+                        </page>
+
+                    </notebook>
+
+                </sheet>
+
+            </form>
+        </field>
+    </record>
+
+    <!-- TREE VIEW -->
+    <record id="view_amr_public_key_tree" model="ir.ui.view">
+        <field name="name">amr.public.key.tree</field>
+        <field name="model">amr.public.key</field>
+        <field name="arch" type="xml">
+            <tree string="OIDC Keys">
+                <field name="name"/>
+                <field name="kid"/>
+                <field name="hsm_key_id"/>
+                <field name="algorithm"/>
+                <field name="is_signing"/>
+                <field name="active"/>
+                <field name="expires_at"/>
+            </tree>
+        </field>
+    </record>
+
+    <!-- ACTION -->
+    <record id="action_amr_public_key" model="ir.actions.act_window">
+        <field name="name">OIDC JWKS Keys</field>
+        <field name="res_model">amr.public.key</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <!-- MENU -->
+<!--    <menuitem id="menu_amr_oidc_root"-->
+<!--              name="OIDC"-->
+<!--              sequence="10"/>-->
+
+</odoo>

@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<odoo>
+    <record id="view_amr_token_form" model="ir.ui.view">
+        <field name="name">amr.token.form</field>
+        <field name="model">amr.token</field>
+        <field name="arch" type="xml">
+            <form string="JWT Token">
+                <sheet>
+                    <group>
+                        <field name="user_id" />
+                        <field name="token" />
+                    </group>
+                    <group>
+                        <field name="expires" />
+                        <field name="retention" />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_amr_token_tree" model="ir.ui.view">
+        <field name="name">amr.token.tree</field>
+        <field name="model">amr.token</field>
+        <field name="arch" type="xml">
+            <tree string="JWT Token">
+                <field name="user_id" />
+                <field name="token" groups="base.group_erp_manager" />
+                <field name="expires" />
+                <field name="retention" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_amr_token" model="ir.actions.act_window">
+        <field name="name">JWT Tokens</field>
+        <field name="res_model">amr.token</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>
