@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<odoo>
+    <data>
+    <record id="view_oidc_client_form" model="ir.ui.view">
+        <field name="name">oidc.client.form</field>
+        <field name="model">oidc.client</field>
+        <field name="arch" type="xml">
+            <form string="OIDC Client">
+                <header>
+                    <button
+                        name="action_export_service_account" type="object"
+                        string="Create Service Account" class="oe_highlight"
+                        attrs="{'invisible':[('authentication_method','!=','private_key_jwt')]}"
+                    />
+                    <field name="active" invisible="1" />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field name="client_type" />
+                        </group>
+                        <group>
+                            <field name="client_id" />
+                            <field name="client_email" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="User Authorization">
+                            <group>
+                                <field name="web_base_url" />
+                                <field name="redirect_path" />
+                                <field name="redirect_uri" />
+                            </group>
+                            <field name="authorization_ids" />
+                        </page>
+                        <page string="Authentication" name="page_m2m_authentication">
+                            <group>
+                                <field name="authentication_method" />
+                                <field name="client_secret" password="1" attrs="{'invisible':[('authentication_method','!=','client_secret')]}"/>
+                                <field name="user_id" />
+                            </group>
+                            <field name="key_ids" attrs="{'invisible':[('authentication_method','!=','private_key_jwt')]}">
+                                <tree string="Public keys" >
+                                    <field name="active" />
+                                    <field name="kid" />
+                                    <field name="algorithm"/>
+                                    <field name="expired_at" />
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_oidc_client_tree" model="ir.ui.view">
+        <field name="name">oidc.client.tree</field>
+        <field name="model">oidc.client</field>
+        <field name="arch" type="xml">
+            <tree string="OIDC Client">
+                <field name="active" invisible="1" />
+                <field name="name" />
+                <field name="client_id" />
+                <field name="user_id" groups="base.group_erp_manager" />
+                <field name="web_base_url" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_oidc_client" model="ir.actions.act_window">
+        <field name="name">OIDC Clients</field>
+        <field name="res_model">oidc.client</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    </data>
+</odoo>
