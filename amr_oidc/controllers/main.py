@@ -3,7 +3,7 @@
 import base64
 import json
 import logging
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import werkzeug
 
@@ -14,11 +14,31 @@ from odoo.http import request, route
 _logger = logging.getLogger(__name__)
 
 
+def _append_query_params(url, params):
+    parts = urlsplit(url)
+    query = parts.query
+    if query:
+        query += '&'
+    query += urlencode(params)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def _append_fragment_params(url, params):
+    parts = urlsplit(url)
+    fragment = parts.fragment
+    if fragment:
+        fragment += '&'
+    fragment += urlencode(params)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, fragment))
+
+
 class ControllerOIDC(ControllerToken):
 
     @route(['/oidc/authorize', '/oidc/auth'], type='http', auth='public', csrf=False)
     def authorize(self, **params):
-        self.is_invalid_parameter_authorize()
+        invalid = self.is_invalid_parameter_authorize(**params)
+        if invalid:
+            return invalid
         user = request.env.user
         # params -> json -> base 64
         params_json = json.dumps(params)
@@ -45,12 +65,12 @@ class ControllerOIDC(ControllerToken):
     def login_page(self, params=None, client_name=None):
         return request.render('amr_oidc.custom_login_template', {'params': params, 'client_name': client_name})
 
-    @route('/oidc/authorize_continue', type='http', auth='user', csrf=False)
+    @route('/oidc/authorize_continue', type='http', auth='user', methods=['POST'], csrf=True)
     def authorize_continue(self, params=None):
         kwargs = json.loads(base64.urlsafe_b64decode(params.encode()).decode())
         return self.oidc_authorize(**kwargs)
 
-    @route('/oidc/login/submit', type='http', auth='public', methods=['POST'], csrf=False)
+    @route('/oidc/login/submit', type='http', auth='public', methods=['POST'], csrf=True)
     def login_submit(self, login=None, password=None, params=None):
         db = request.session.db
         try:
@@ -79,10 +99,7 @@ class ControllerOIDC(ControllerToken):
         if not client:
             return self.invalid_response(400, 'invalid_client')
 
-        if not redirect_uri and client.redirect_uri:
-            redirect_uri = client.redirect_uri
-
-        if not client.validate_redirect_uri(redirect_uri):
+        if not client._validate_redirect_uri(redirect_uri):
             return self.invalid_response(400, 'invalid_redirect_uri')
 
         if response_type not in ['code', 'token']:
@@ -101,21 +118,20 @@ class ControllerOIDC(ControllerToken):
         scope = params.get('scope')
         state = params.get('state')
 
-        client = request.env['oidc.client'].search([('client_id', '=', client_id)], limit=1)
-        if not redirect_uri and client.redirect_uri:
-            redirect_uri = client.redirect_uri
+        # sudo: resolve the protocol client only after redirect/client validation.
+        client = request.env['oidc.client'].sudo().search([('client_id', '=', client_id)], limit=1)
 
         # hanya support authorization code flow
         if response_type == 'code':
-            authorization_code = client.create_authorization_code(redirect_uri=redirect_uri, scope=scope)
+            authorization_code = client._create_authorization_code(redirect_uri=redirect_uri, scope=scope)
             query = {'code': authorization_code.code}
             if state:
                 query['state'] = state
 
-            redirect_url = f'{authorization_code.redirect_uri}?{urlencode(query)}'
+            redirect_url = _append_query_params(authorization_code.redirect_uri, query)
 
         elif response_type == 'token':
-            access_token = client.create_access_token(redirect_uri=redirect_uri, scope=scope)
+            access_token = client._create_access_token(redirect_uri=redirect_uri, scope=scope)
             query = {
                 'access_token': access_token.token,
                 'token_type': 'Bearer',
@@ -125,7 +141,7 @@ class ControllerOIDC(ControllerToken):
             if state:
                 query['state'] = state
 
-            redirect_url = f'{access_token.redirect_uri}#{urlencode(query)}'
+            redirect_url = _append_fragment_params(access_token.redirect_uri, query)
         else:
             return self.invalid_response(400, 'unsupported_response_type')
 

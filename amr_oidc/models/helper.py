@@ -155,7 +155,7 @@ class TokenHelper(models.AbstractModel):
         if not client_secret:
             return {'status': 401, 'error': "invalid_grant"}
         try:
-            client.check_credentials(client_secret)
+            client._check_credentials(client_secret)
         except Exception:
             _logger.exception("Error _check_credentials")
             return {'status': 401, 'error': "invalid_grant"}
@@ -282,7 +282,7 @@ class TokenHelper(models.AbstractModel):
         if not refresh_token:
             return {'status': 400, 'error': "invalid_grant"}
 
-        payload = self.env['oidc.refresh.token'].validate_token(refresh_token)
+        payload = self.env['oidc.refresh.token']._validate_token(refresh_token)
 
         if not payload or not payload.get('token'):
             return {'status': 400, 'error': "invalid_grant", 'error_description': "Invalid or expired token"}
@@ -297,7 +297,7 @@ class TokenHelper(models.AbstractModel):
         payload = {}
         token = kwargs.get('access_token') or kwargs.get('token') or self.get_header_token() or self.get_bearer_token()
         if token:
-            payload = self.env['oidc.client'].validate_token(token)
+            payload = self.env['oidc.client']._validate_token(token)
             if payload and payload.get('uid'):
                 uid = payload.get('uid')
                 # sudo: preserve source introspection-user lookup; policy deferred.
@@ -323,7 +323,7 @@ class TokenHelper(models.AbstractModel):
         user = None
         token = kwargs.get('access_token') or kwargs.get('token') or self.get_header_token() or self.get_bearer_token()
         if token:
-            payload = request.env['oidc.client'].validate_token(token)
+            payload = request.env['oidc.client']._validate_token(token)
             if payload and payload.get('uid'):
                 uid = payload.get('uid')
                 # sudo: preserve source profile-user lookup; policy deferred.

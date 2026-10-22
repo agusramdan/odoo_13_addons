@@ -84,7 +84,7 @@ class OidcRefreshToken(models.Model):
         )
 
     @api.model
-    def validate_token(self, token, audience, options=None):
+    def _validate_token(self, token, audience, options=None):
         try:
             options = options or {"require": ["exp", "iss", "aud"]}
             payload = jwt.decode(
@@ -101,7 +101,7 @@ class OidcRefreshToken(models.Model):
                 rec = self.sudo().search([
                     ("token", "=", token),
                     ("revoked", "=", False),
-                    ('expires_at', '<', fields.Datetime.now())
+                    ('expires_at', '>', fields.Datetime.now())
                 ], limit=1)
                 if rec:
                     return payload

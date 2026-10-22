@@ -36,7 +36,7 @@ class OidcClient(models.Model):
         ("atm", "ATM"),
         ("cdm", "CDM"),
     ], default="machine")
-    client_secret = fields.Char()
+    client_secret = fields.Char(groups='base.group_erp_manager')
     authentication_method = fields.Selection([
         ("client_secret", "Client Secret"),
         ("private_key_jwt", "Private Key JWT"),
@@ -51,54 +51,41 @@ class OidcClient(models.Model):
     authorization_ids = fields.One2many('oidc.authorization.code', 'client_id')
     key_ids = fields.One2many('oidc.client.key', 'client_id')
 
-    def check_credentials(self, client_secret):
+    def _check_credentials(self, client_secret):
         self.ensure_one()
         # todo next using hash method to check secret like user credentials
         if client_secret != self.client_secret:
             raise ValueError("Invalid secret")
         return True
 
-    def validate_redirect_uri(self, redirect_uri):
+    def _get_fixed_redirect_uri(self):
+        path = REDIRECT_MODE.get(self.redirect_path)
+        if not path or not self.web_base_url:
+            return None
+        return self.web_base_url.rstrip('/') + path
+
+    def _validate_redirect_uri(self, redirect_uri):
         if self.redirect_path:
-            return True
+            fixed_uri = self._get_fixed_redirect_uri()
+            if not fixed_uri:
+                return False
+            parsed = urlparse(fixed_uri)
+            if not parsed.scheme or not parsed.netloc:
+                return False
+            return redirect_uri is None or redirect_uri == fixed_uri
 
         if not self.redirect_uri or not redirect_uri:
-            return True
+            return False
 
         parsed = urlparse(redirect_uri)
-
-        if not parsed.scheme:
-            _logger.error("Error %s parsed.scheme. %s", parsed.scheme, redirect_uri)
+        if not parsed.scheme or not parsed.netloc:
             return False
 
-        if not parsed.netloc:
-            _logger.error("Error %s parsed.netloc. %s", parsed.netloc, redirect_uri)
-            return False
-        # client.redirect_uri_ids
-        # .mapped('uri')
-        allowed_uris = (self.redirect_uri.splitlines() or []) + [self.redirect_uri]
-        normalized_redirect = f'{parsed.scheme}://{parsed.netloc}{parsed.path}'.strip()
-
-        for allowed_uri in allowed_uris:
-
-            allowed_parsed = urlparse(allowed_uri)
-
-            normalized_allowed = (
-                f'{allowed_parsed.scheme}://'
-                f'{allowed_parsed.netloc}'
-                f'{allowed_parsed.path}'
-            ).strip()
-
-            if normalized_allowed == normalized_redirect:
-                return True
-            _logger.error("Error [%s] != [%s]", normalized_redirect, normalized_allowed)
-
-        _logger.error("Error %s.", normalized_redirect)
-
-        return False
+        allowed_uris = [uri for uri in self.redirect_uri.splitlines() if uri]
+        return redirect_uri in allowed_uris
 
     @api.model
-    def client_auth(self, token):
+    def _client_auth(self, token):
         try:
             decoded = base64.b64decode(token).decode()
             client_id, client_secret = decoded.split(':', 1)
@@ -111,13 +98,13 @@ class OidcClient(models.Model):
         except:
             return None
 
-    def create_authorization_code(self, redirect_uri=None, scope=''):
+    def _create_authorization_code(self, redirect_uri=None, scope=''):
         if self.redirect_path:
-            redirect_uri = self.web_base_url + REDIRECT_MODE.get(self.redirect_path)
+            redirect_uri = self._get_fixed_redirect_uri()
         else:
             redirect_uri = redirect_uri or self.redirect_uri
-        # sudo: preserve source code creation; code-record policy deferred.
-        return self.env['oidc.authorization.code'].sudo().create({
+        # Keep create in the caller's environment; the validated controller supplies elevation.
+        return self.env['oidc.authorization.code'].create({
             'client_id': self.client_id,
             'user_id': self.env.user.id,
             'redirect_uri': redirect_uri,
@@ -125,9 +112,9 @@ class OidcClient(models.Model):
             'expired_at': fields.Datetime.now() + timedelta(minutes=5),
         })
 
-    def create_access_token(self, redirect_uri=None, scope='', **kw):
+    def _create_access_token(self, redirect_uri=None, scope='', **kw):
         if self.redirect_path:
-            redirect_uri = self.web_base_url + REDIRECT_MODE.get(self.redirect_path)
+            redirect_uri = self._get_fixed_redirect_uri()
         else:
             redirect_uri = redirect_uri or self.redirect_uri
 
@@ -135,7 +122,7 @@ class OidcClient(models.Model):
             scope=scope, audience=self.client_id, redirect_uri=redirect_uri
         )
 
-    def validate_token(self, token):
+    def _validate_token(self, token):
         client = self
         if not client:
             payload = jwt.decode(
@@ -152,8 +139,8 @@ class OidcClient(models.Model):
         audience = client.client_id
         return self.env['amr.token.helper'].validate(token, audience=audience)
 
-    def validate_refresh_token(self, token):
-        return self.env['oidc.refresh.token'].validate_token(token, self.client_id)
+    def _validate_refresh_token(self, token):
+        return self.env['oidc.refresh.token']._validate_token(token, self.client_id)
 
     def export_service_account(self, algorithm):
         self.ensure_one()

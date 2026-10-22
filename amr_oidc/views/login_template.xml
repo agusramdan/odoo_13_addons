@@ -413,12 +413,21 @@
 
                     <!-- Continue -->
                     <t t-if="request.env.user.is_user_allow_create_token()">
-                    <a
-                        class="btn btn-primary btn-continue"
-                        t-attf-href="/oidc/authorize_continue?params={{ params }}%26client_name={{ client_name }}"
-                    >
-                        Continue
-                    </a>
+                    <form action="/oidc/authorize_continue" method="post">
+                        <input
+                            type="hidden"
+                            name="csrf_token"
+                            t-att-value="request.csrf_token()"
+                        />
+                        <input
+                            type="hidden"
+                            name="params"
+                            t-att-value="params"
+                        />
+                        <button type="submit" class="btn btn-primary btn-continue">
+                            Continue
+                        </button>
+                    </form>
                     </t>
 
                     <!-- Switch Account -->

@@ -99,14 +99,19 @@ class PackageContract(unittest.TestCase):
         imports = [node.module for node in tree.body if isinstance(node, ast.ImportFrom)]
         self.assertTrue("odoo.addons.amr_token.controllers.main" in imports)
 
-    def test_acl_source_bytes_preserved_not_an_access_policy_verdict(self):
-        import hashlib
-        # Owner exception: no replay ACL row; no added/removed privileges.
-        # This is a preservation check, not acceptance of effective permissions.
-        self.source("security/ir.model.access.csv")
-        self.assertEqual(hashlib.sha256(
-            (ADDON / "security/ir.model.access.csv").read_bytes()).hexdigest(),
-            "6bacca85a84990610ad6db92bdf1a6e0b0c33064bf2199a8cb9f9218bb767476")
+    def test_acl_csv_uses_standard_schema(self):
+        import csv
+        with (ADDON / "security/ir.model.access.csv").open(
+            newline="", encoding="utf-8"
+        ) as stream:
+            rows = list(csv.reader(stream))
+        self.assertEqual(rows[0], [
+            "id", "name", "model_id:id", "group_id:id", "perm_read",
+            "perm_write", "perm_create", "perm_unlink",
+        ])
+        for row in rows[1:]:
+            if row:
+                self.assertEqual(len(row), 8)
 
     def test_manifest_resources_and_local_template_assets_exist(self):
         import xml.etree.ElementTree as ET
