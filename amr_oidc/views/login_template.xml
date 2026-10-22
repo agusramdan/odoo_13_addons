@@ -1,0 +1,448 @@
+<?xml version="1.0"?>
+<odoo>
+    <data>
+    <template id="custom_login_template">
+
+        <t t-call="web.layout">
+
+            <style>
+
+                body {
+                    background: #f1f5f9;
+                }
+
+                .sso-wrapper {
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+
+                .sso-card {
+                    width: 100%;
+                    max-width: 420px;
+                    background: white;
+                    border-radius: 24px;
+                    padding: 40px;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+                }
+
+                .sso-logo {
+                    text-align: center;
+                    margin-bottom: 24px;
+                }
+
+                .sso-logo img {
+                    width: 72px;
+                    height: 72px;
+                }
+
+                .sso-title {
+                    text-align: center;
+                    font-size: 28px;
+                    font-weight: 700;
+                    color: #0f172a;
+                    margin-bottom: 8px;
+                }
+
+                .sso-subtitle {
+                    text-align: center;
+                    color: #64748b;
+                    margin-bottom: 32px;
+                    font-size: 14px;
+                }
+
+                .client-box {
+                    background: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 16px;
+                    padding: 16px;
+                    margin-bottom: 24px;
+                }
+
+                .client-title {
+                    font-size: 13px;
+                    color: #64748b;
+                    margin-bottom: 6px;
+                }
+
+                .client-name {
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: #0f172a;
+                }
+
+                .form-label {
+                    font-weight: 600;
+                    margin-bottom: 8px;
+                    color: #334155;
+                }
+
+                .form-control {
+                    height: 52px;
+                    border-radius: 14px;
+                    border: 1px solid #cbd5e1;
+                    font-size: 15px;
+                    padding-left: 16px;
+                }
+
+                .form-control:focus {
+                    border-color: #2563eb;
+                    box-shadow: 0 0 0 0.2rem rgba(37,99,235,0.15);
+                }
+
+                .btn-login {
+                    width: 100%;
+                    height: 52px;
+                    border-radius: 14px;
+                    background: #2563eb;
+                    border: none;
+                    font-weight: 600;
+                    font-size: 16px;
+                    transition: 0.3s;
+                }
+
+                .btn-login:hover {
+                    background: #1d4ed8;
+                }
+
+                .security-note {
+                    margin-top: 24px;
+                    font-size: 13px;
+                    color: #64748b;
+                    text-align: center;
+                }
+
+                .security-note i {
+                    color: #16a34a;
+                }
+                .login-error-box {
+                    margin-bottom: 24px;
+                    padding: 16px 18px;
+                    border-radius: 16px;
+
+                    background: #fef2f2;
+                    border: 1px solid #fecaca;
+
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                }
+
+                .login-error {
+                    font-size: 14px;
+                    font-weight: 500;
+                    line-height: 1.5;
+
+                    color: #991b1b;
+                }
+
+            </style>
+
+            <div class="sso-wrapper">
+
+                <div class="sso-card">
+
+                    <!-- Logo -->
+                    <div class="sso-logo">
+                        <img src="/amr_oidc/static/description/icon.png"/>
+                    </div>
+
+                    <!-- Title -->
+                    <div class="sso-title">
+                        Sign in
+                    </div>
+
+                    <div class="sso-subtitle">
+                        Single Sign-On Authentication
+                    </div>
+
+                    <!-- Client App Info -->
+                    <div class="client-box">
+
+                        <div class="client-title">
+                            Application requesting access
+                        </div>
+
+                        <div class="client-name">
+                            <t t-esc="request.params.get('client_name', 'Corporate Application')"/>
+                        </div>
+
+                    </div>
+                    <t t-if="error">
+                        <div class="login-error-box">
+                            <div class="alert alert-danger login-error" role="alert">
+                                <t t-esc="error"/>
+                            </div>
+                        </div>
+                    </t>
+                    <!-- Login Form -->
+                    <form action="/oidc/login/submit" method="post">
+
+                        <input
+                            type="hidden"
+                            name="csrf_token"
+                            t-att-value="request.csrf_token()"
+                        />
+
+                        <input
+                            type="hidden"
+                            name="params"
+                            t-att-value="request.params.get('params')"
+                        />
+                        <input
+                            type="hidden"
+                            name="client_name"
+                            t-att-value="request.params.get('client_name')"
+                        />
+                        <div class="mb-3">
+
+                            <label class="form-label">
+                                Username
+                            </label>
+
+                            <input
+                                type="text"
+                                name="login"
+                                class="form-control"
+                                placeholder="Enter your username"
+                                required="required"
+                                autofocus="autofocus"
+                                t-att-value="request.params.get('login')"
+                            />
+
+                        </div>
+
+                        <div class="mb-4">
+
+                            <label class="form-label">
+                                Password
+                            </label>
+
+                            <input
+                                type="password"
+                                name="password"
+                                class="form-control"
+                                placeholder="Enter your password"
+                                required="required"
+                                t-att-value="request.params.get('password')"
+                            />
+
+                        </div>
+
+                        <div class="mb-4">
+                            <button type="submit" class="btn btn-primary btn-login"> Continue</button>
+                        </div>
+
+                    </form>
+
+
+                    <!-- Security -->
+                    <div class="security-note">
+                        Your authentication is secured and encrypted
+                    </div>
+
+                </div>
+
+            </div>
+
+        </t>
+
+    </template>
+
+    <template id="custom_oidc_continue_template">
+
+        <t t-call="web.layout">
+
+            <style>
+
+                body {
+                    background: #f1f5f9;
+                }
+
+                .oidc-wrapper {
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+
+                .oidc-card {
+                    width: 100%;
+                    max-width: 420px;
+                    background: white;
+                    border-radius: 24px;
+                    padding: 40px;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+                }
+
+                .logo-box {
+                    text-align: center;
+                    margin-bottom: 24px;
+                }
+
+                .logo-box img {
+                    width: 72px;
+                    height: 72px;
+                }
+
+                .title {
+                    text-align: center;
+                    font-size: 28px;
+                    font-weight: 700;
+                    margin-bottom: 8px;
+                    color: #0f172a;
+                }
+
+                .subtitle {
+                    text-align: center;
+                    color: #64748b;
+                    margin-bottom: 30px;
+                }
+
+                .user-box {
+                    border: 1px solid #e2e8f0;
+                    border-radius: 16px;
+                    padding: 18px;
+                    margin-bottom: 24px;
+                    background: #f8fafc;
+                }
+
+                .user-name {
+                    font-weight: 600;
+                    font-size: 18px;
+                    color: #0f172a;
+                }
+
+                .user-email {
+                    color: #64748b;
+                    font-size: 14px;
+                }
+
+                .client-box {
+                    margin-bottom: 24px;
+                    padding: 16px;
+                    border-radius: 16px;
+                    background: #eff6ff;
+                    border: 1px solid #bfdbfe;
+                }
+
+                .client-title {
+                    font-size: 13px;
+                    color: #64748b;
+                    margin-bottom: 4px;
+                }
+
+                .client-name {
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: #1e3a8a;
+                }
+
+                .btn-continue {
+                    width: 100%;
+                    height: 52px;
+                    border-radius: 14px;
+                    font-weight: 600;
+                    font-size: 16px;
+                }
+
+                .switch-account {
+                    text-align: center;
+                    margin-top: 18px;
+                }
+
+                .switch-account a {
+                    text-decoration: none;
+                    color: #2563eb;
+                    font-size: 14px;
+                }
+
+                .security-note {
+                    margin-top: 24px;
+                    text-align: center;
+                    font-size: 13px;
+                    color: #64748b;
+                }
+
+            </style>
+
+            <div class="oidc-wrapper">
+
+                <div class="oidc-card">
+
+                    <div class="logo-box">
+                        <img src="/amr_oidc/static/description/icon.png"/>
+                    </div>
+
+                    <div class="title">
+                        Continue Sign In
+                    </div>
+
+                    <div class="subtitle">
+                        You are already signed in
+                    </div>
+
+                    <!-- User -->
+                    <div class="user-box">
+
+                        <div class="user-name">
+                            <t t-esc="request.env.user.name"/>
+                        </div>
+
+                        <div class="user-email">
+                            <t t-esc="request.env.user.login"/>
+                        </div>
+
+                    </div>
+
+                    <!-- Client -->
+                    <div class="client-box">
+
+                        <div class="client-title">
+                            Application requesting access
+                        </div>
+
+                        <div class="client-name">
+                            <t t-esc="request.params.get('client_name', 'Corporate Application')"/>
+                        </div>
+
+                    </div>
+
+                    <!-- Continue -->
+                    <t t-if="request.env.user.is_user_allow_create_token()">
+                    <a
+                        class="btn btn-primary btn-continue"
+                        t-attf-href="/oidc/authorize_continue?params={{ params }}%26client_name={{ client_name }}"
+                    >
+                        Continue
+                    </a>
+                    </t>
+
+                    <!-- Switch Account -->
+                    <div class="switch-account">
+
+                        <a
+                            t-attf-href="/web/session/logout?redirect=/oidc/login_form?params={{ params }}%26client_name={{ client_name }}"
+                        >
+                            Use another account
+                        </a>
+
+                    </div>
+
+                    <div class="security-note">
+                        Secure Single Sign-On
+                    </div>
+
+                </div>
+
+            </div>
+
+        </t>
+
+    </template>
+
+    </data>
+</odoo>
