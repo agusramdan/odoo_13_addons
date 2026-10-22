@@ -1,8 +1,8 @@
 # Modul `amr_oidc`
 
-> Tugas: ADDONS13-37; repositori/lokasi: `agusramdan/odoo_13_addons/amr_oidc`; pin sumber upstream: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`; snapshot kode yang didokumentasikan: `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; versi manifest: `13.0.1.0.0`.
-> Tanggal inspeksi: 2026-10-22; status: telah ditinjau Lead setelah tinjauan independen; dokumentasi tetap DRAFT, belum dirilis/dipublikasikan.
-> Lingkup: dokumentasi berbasis kode sumber saja, bukan bukti instalasi, runtime, keamanan efektif, atau deployment. Target proyek Python 3.7.9 dinyatakan oleh `AGENTS.md`; runtime belum diverifikasi. Odoo 13; tidak mengklaim migrasi atau kompatibilitas Odoo 20.
+> Addon: `amr_oidc`; repo/path: `agusramdan/odoo_13_addons/amr_oidc`; sumber upstream: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`; versi manifest: `13.0.1.0.0`.
+> Tanggal inspeksi: 2026-10-22; dokumentasi ini source-based dan tidak menyatakan status release.
+> Lingkup: deklarasi source untuk Odoo 13; bukan bukti instalasi, runtime, keamanan efektif, atau deployment. Target proyek Python 3.7.9 dinyatakan oleh `AGENTS.md`; panduan ini tidak menyertifikasi runtime. Tidak mengklaim migrasi atau kompatibilitas Odoo 20.
 
 ## Ringkasan
 
@@ -35,12 +35,12 @@ README ini adalah indeks; panduan lengkap ada di [panduan pengguna](docs/user.md
 - **Konfigurasi:** parameter yang tampak pada kode sumber: `amr_token.expires_in`, `amr_token.secret`, `web.base.url`; jangan menyalin atau mengubah nilai produksi berdasar dokumen ini.
 - **Galat:** hanya cabang kode sumber yang terlihat dijelaskan; perilaku runtime, percobaan ulang, dan idempotensi tidak ditetapkan.
 - **OIDC/protokol:** penukaran authorization-code/token dan penerbitan ID-token tidak disediakan oleh addon/graf kode sumber dan dependensi yang ditinjau. Metadata Discovery bukan bukti implementasi. Kapabilitas lain berstatus `UNASSESSED / UNVERIFIED`.
-- **Keamanan/batas:** ACL adalah deklarasi statis; penegakan, visibilitas menu, peran efektif dan isolasi data belum diverifikasi. Lihat kebijakan eksplisit di kedua panduan.
+- **Keamanan/batas:** deklarasi ACL, field `client_secret`, validasi callback, serta POST+CSRF pada dua rute perubahan keadaan didokumentasikan dari source. Tes kontrak offline bukan bukti enforcement Odoo/ORM/HTTP. Area seperti secret/key handling dan lifecycle memerlukan review tersendiri; panduan ini bukan risk acceptance.
 - **Pengguna/menu/peran, tanya jawab:** disediakan pada [panduan pengguna](docs/user.md).
 
 ## Catatan versi dan riwayat perubahan
 
-- Versi Odoo sumber: 13; manifest `13.0.1.0.0`, lisensi `LGPL-3`; snapshot kode yang didokumentasikan `6bd356e7386420e23b23d6f2874cb9c20944d003`; pin asal sumber upstream `6725f802acde636be0b25e2c140d15dccd37b0db`.
+- Versi Odoo sumber: 13; manifest `13.0.1.0.0`, lisensi `LGPL-3`; sumber upstream `agusramdan/addons_oidc` ditinjau pada revision `6725f802acde636be0b25e2c140d15dccd37b0db`.
 - Status migrasi 20.0: belum; tidak ada migrasi atau kompatibilitas Odoo 20 yang diklaim.
 - Status runtime/penerapan: belum diverifikasi dalam dokumentasi source ini.
-- Changelog 2026-10-22 (ADDONS13-37): indeks/panduan ditinjau terhadap snapshot kode sumber, PRD-DRAFT dan UAT-DRAFT yang diterima; bukti dan batasan dicatat di panduan. Tinjauan independen: PASS (Editor dan Reviewer); tidak ada PR, rilis, atau publikasi yang diklaim.
+- Catatan 2026-10-22: panduan menjelaskan deklarasi akses, callback, expiry, helper, dan perlindungan form yang tampak pada source; tidak menyatakan enforcement atau perilaku runtime.

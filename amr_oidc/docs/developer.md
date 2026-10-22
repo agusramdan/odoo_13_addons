@@ -4,11 +4,11 @@
 
 ## Cakupan dan identitas kode sumber
 
-Penelaahan kode sumber pada snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`, termasuk parent `amr_token` pada snapshot tersebut. Asal addon: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`. Manifest mendeklarasikan Odoo 13, versi `13.0.1.0.0`, lisensi `LGPL-3`. Ini bukan hasil instalasi, uji runtime, audit keamanan, atau deployment.
+Penelaahan source mencakup addon `amr_oidc` dan parent `amr_token`. Asal addon: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`. Manifest mendeklarasikan Odoo 13, versi `13.0.1.0.0`, lisensi `LGPL-3`. Panduan ini bersumber dari kode, bukan hasil instalasi, uji runtime Odoo, audit keamanan formal, atau deployment.
 
-Rujukan berikut menggunakan path relatif repositori dan `path:baris` aktual dalam snapshot tersebut. SHA-256 pada tabel integritas adalah hash berkas kandidat worktree, bukan hash upstream. Semua path source yang dikutip dalam panduan ini terdaftar satu kali pada tabel tersebut; simbol/rentang memberi lokasi klaim yang tepat.
+Rujukan memakai path relatif repositori dan `path:baris` aktual. SHA-256 pada tabel integritas adalah digest per berkas untuk keterlacakan, bukan identitas commit/branch/PR. Semua path kode aplikasi dan tes yang dikutip tercantum di tabel; `../../AGENTS.md` hanya dirujuk sebagai panduan target proyek, bukan berkas kode addon.
 
-`AGENTS.md` menetapkan target proyek Python 3.7.9 (`../AGENTS.md:14-16`); ini bukan bukti versi runtime atau toolchain yang terpasang. Tidak dilakukan install atau eksekusi tes/runtime.
+`AGENTS.md` menetapkan target proyek Python 3.7.9 (`../../AGENTS.md:14-16`); ini bukan bukti versi runtime atau toolchain yang terpasang. Test sources memakai stub inert (`amr_oidc/tests/support.py`) dan tidak menjalankan Odoo registry, ORM, HTTP, PostgreSQL, atau autentikasi nyata. Versi runtime dan hasil eksekusi pada lingkungan target perlu dibuktikan terpisah.
 
 ## Arsitektur
 
@@ -42,23 +42,26 @@ Selection `oidc.client.client_type`: `machine`, `mobile`, `web`, `atm`, `cdm`; `
 
 | Model/metode | Tanda tangan dan efek yang tampak pada kode sumber |
 |---|---|
-| `oidc.client.check_credentials` | `(self, client_secret)`: membandingkan nilai; `ValueError` bila mismatch, selain itu `True` (`amr_oidc/models/oidc_client.py:54-59`). |
-| `oidc.client.validate_redirect_uri` | `(self, redirect_uri)`: bool; cabang menerima bila `redirect_path` terisi atau URI kosong, selain itu bandingkan scheme/host/path (`amr_oidc/models/oidc_client.py:61-98`). |
-| `oidc.client.client_auth` | `(self, token)`: decode Basic credentials, lookup dengan `sudo`; mismatch/exception ditangani dengan `None` (`amr_oidc/models/oidc_client.py:100-112`). |
-| `oidc.client.create_authorization_code` | `(self, redirect_uri=None, scope='')`: membuat code record dengan expiry lima menit memakai `sudo`; source memasukkan nilai string `self.client_id` ke `client_id`, sementara field tujuan adalah Many2one required (`amr_oidc/models/oidc_client.py:114-126`; `amr_oidc/models/oidc_authorization_code.py:13-18`). Ini mismatch tipe pada source; verifikasi ORM diperlukan. Bukan bukti kegagalan runtime. |
-| `oidc.client.create_access_token` | `(self, redirect_uri=None, scope='', **kw)`: mendelegasikan pembuatan token ke `env.user.create_access_token` (`amr_oidc/models/oidc_client.py:128-136`). |
-| `oidc.client.validate_token` | `(self, token)`: pada cabang falsy `self`, decode payload tanpa signature verify untuk mencari audience, lalu delegasi validasi ke helper parent (`amr_oidc/models/oidc_client.py:138-153`). |
-| `oidc.client.validate_refresh_token` | `(self, token)`: delegasi ke model refresh token (`amr_oidc/models/oidc_client.py:155-156`). |
-| `oidc.client.export_service_account` | `(self, algorithm)`: membentuk hasil yang mencakup private/public key material; tidak disalin atau diotorisasi oleh panduan (`amr_oidc/models/oidc_client.py:158-181`). |
-| `oidc.client.action_export_service_account` | `(self)`: action window untuk wizard (`amr_oidc/models/oidc_client.py:183-194`). |
-| `oidc.client.openid_configuration` | `(self)`: memperbarui hasil metadata parent; metadata bukan capability (`amr_oidc/models/helper.py:46-85`; `amr_token/models/helper.py:170-185`). |
-| `oidc.client.oidc_token` | `(self, grant_type=None, **kwargs)`: dispatch lokal untuk cabang tertentu dan delegasi lainnya (`amr_oidc/models/helper.py:87-101`). |
-| `do_client_credentials` | `(self, data)`: cabang mengambil credential Basic/body, lookup client, lalu delegasi token generation; lihat source (`amr_oidc/models/helper.py:130-171`). |
-| `do_client_assertion` | `(self, assertion, data)`: validasi assertion/key/claims, membuat replay record dan delegasi token generation (`amr_oidc/models/helper.py:173-278`). |
-| `do_refresh_grant` | `(self, refresh_token=None)`: memanggil validator tanpa audience, lalu mencari user dari `sub` dan delegasi (`amr_oidc/models/helper.py:280-291`). |
+| `oidc.client._check_credentials` | `(self, client_secret)`: membandingkan nilai; `ValueError` bila mismatch, selain itu `True` (`amr_oidc/models/oidc_client.py:54-59`). |
+| `oidc.client._validate_redirect_uri` | `(self, redirect_uri)`: pada mode fixed callback menerima hanya URI hasil `web_base_url + redirect_path` yang sama persis (atau parameter dihilangkan); pada mode allowlist menerima URI nonkosong yang sama persis dengan satu baris allowlist dan memiliki scheme/netloc (`amr_oidc/models/oidc_client.py:61-85`). |
+| `oidc.client._client_auth` | `(self, token)`: decode Basic credentials, lookup dengan `sudo`; mismatch/exception ditangani dengan `None` (`amr_oidc/models/oidc_client.py:87-99`). Helper internal; jalur autentikasi/runtime belum diuji. |
+| `oidc.client._create_authorization_code` | `(self, redirect_uri=None, scope='')`: membuat code record dengan expiry lima menit memakai environment `self.env`; source memasukkan string `self.client_id` ke field Many2one `client_id` (`amr_oidc/models/oidc_client.py:101-113`; `amr_oidc/models/oidc_authorization_code.py:13-18`). Ini mismatch source yang memerlukan verifikasi ORM; bukan bukti sukses/gagal runtime. |
+| `oidc.client._create_access_token` | `(self, redirect_uri=None, scope='', **kw)`: mendelegasikan pembuatan token ke `env.user.create_access_token` (`amr_oidc/models/oidc_client.py:115-123`). |
+| `oidc.client._validate_token` | `(self, token)`: pada cabang falsy `self`, decode payload tanpa verifikasi signature untuk mencari audience, lalu delegasi validasi ke helper parent (`amr_oidc/models/oidc_client.py:125-140`). |
+| `oidc.client._validate_refresh_token` | `(self, token)`: delegasi ke model refresh token (`amr_oidc/models/oidc_client.py:142-143`). |
+| `oidc.client.export_service_account` | `(self, algorithm)`: membentuk hasil yang mencakup private/public key material; tidak disalin atau diotorisasi oleh panduan (`amr_oidc/models/oidc_client.py:145-168`). |
+| `oidc.client.action_export_service_account` | `(self)`: action window untuk wizard (`amr_oidc/models/oidc_client.py:170-181`). |
+| `amr.token.helper.openid_configuration` | `(self)`: memperbarui hasil metadata parent; metadata bukan capability (`amr_oidc/models/helper.py:46-85`; `amr_token/models/helper.py:170-185`). |
+| `amr.token.helper.oidc_token` | `(self, grant_type=None, **kwargs)`: dispatch lokal untuk cabang tertentu dan delegasi lainnya (`amr_oidc/models/helper.py:87-101`). |
+| `amr.token.helper.do_client_credentials` | `(self, data)`: cabang mengambil credential Basic/body, lookup client, lalu delegasi token generation (`amr_oidc/models/helper.py:130-171`). |
+| `amr.token.helper.do_client_assertion` | `(self, assertion, data)`: validasi assertion/key/claims, membuat replay record dan delegasi token generation (`amr_oidc/models/helper.py:173-278`). |
+| `amr.token.helper.do_refresh_grant` | `(self, refresh_token=None)`: memanggil validator tanpa audience, lalu mencari user dari `payload['sub']` dan delegasi (`amr_oidc/models/helper.py:280-291`). |
+| `oidc.refresh.token.get_secret` | `(self)`: mengambil parameter `amr_token.secret` melalui `sudo`; nilai tidak dibaca atau dicantumkan (`amr_oidc/models/oidc_refresh_token.py:21-29`). Caller reachability/RPC tidak dibuktikan; perlakukan helper ini sebagai area sensitif yang memerlukan review terpisah. |
+| `oidc.refresh.token.get_expires_in`, `get_issuer`, `get_algorithm`, `create_refresh_token` | Helper membaca parameter/default atau membuat record refresh (`amr_oidc/models/oidc_refresh_token.py:21-68`). Akses efektif dan RPC perlu penilaian terpisah. |
+| `oidc.refresh.token._validate_token` | `(self, token, audience, options=None)`: validasi JWT lalu mencari record yang belum kedaluwarsa dan tidak revoked (`amr_oidc/models/oidc_refresh_token.py:87-116`). |
 | Wizard `action_generate`, `action_save` | Metode wizard menghasilkan/menyimpan data account/key sesuai cabang source; jangan gunakan panduan ini sebagai prosedur ekspor atau menyimpan key (`amr_oidc/wizard/service_account.py:58-105`). |
 
-Tidak ada endpoint API publik yang disimpulkan dari daftar metode ini.
+Daftar metode tidak membuktikan endpoint HTTP atau jangkauan RPC. Metode public/non-private yang tampak pada model dapat memerlukan penilaian RPC tersendiri; pada pekerjaan ini tidak dilakukan runtime/RPC call test.
 
 ## Rute dan deklarasi antarmuka
 
@@ -66,12 +69,12 @@ Dekorator rute menyatakan atribut statis berikut saja; atribut yang tidak dituli
 
 | Path | type | auth | methods | website | csrf | Deklarasi |
 |---|---|---|---|---|---|---|
-| `/oidc/authorize`, `/oidc/auth` | `http` | `public` | tidak eksplisit | tidak eksplisit | `False` | `:19` |
-| `/oidc/continue` | `http` | `public` | `GET` | `True` | tidak eksplisit | `:40` |
-| `/oidc/login_form` | `http` | `public` | `GET` | `True` | tidak eksplisit | `:44` |
-| `/oidc/authorize_continue` | `http` | `user` | tidak eksplisit | tidak eksplisit | `False` | `:48` |
-| `/oidc/login/submit` | `http` | `public` | `POST` | tidak eksplisit | `False` | `:53` |
-| `/oidc/profile`, `/oidc/userinfo` | `http` | `none` | `GET` | tidak eksplisit | `False` | `:134` |
+| `/oidc/authorize`, `/oidc/auth` | `http` | `public` | tidak eksplisit | tidak eksplisit | `False` | `:37` |
+| `/oidc/continue` | `http` | `public` | `GET` | `True` | tidak ditulis | `:60` |
+| `/oidc/login_form` | `http` | `public` | `GET` | `True` | tidak ditulis | `:64` |
+| `/oidc/authorize_continue` | `http` | `user` | `POST` | tidak eksplisit | `True` | `:68` |
+| `/oidc/login/submit` | `http` | `public` | `POST` | tidak eksplisit | `True` | `:73` |
+| `/oidc/profile`, `/oidc/userinfo` | `http` | `none` | `GET` | tidak eksplisit | `False` | `:150` |
 
 Menu client/code mencantumkan parent XML ID `amr_token.menu_token_parent` dan group `base.group_no_one`; root menu OIDC lokal dikomentari (`amr_oidc/views/menuitem.xml:4-13`). View client/code dan wizard dideklarasikan pada XML yang tercantum manifest (`amr_oidc/views/oidc_client_views.xml:3-76`; `amr_oidc/views/oidc_authorization_code_views.xml:3-24`; `amr_oidc/wizard/service_account.xml:3-26`; `amr_oidc/__manifest__.py:16-23`). Deklarasi menu/action bukan bukti visibilitas UI/runtime.
 
@@ -123,14 +126,12 @@ CSV mendeklarasikan izin berikut (urutan read/write/create/unlink):
 | Model | Group field pada baris | R/W/C/U |
 |---|---|---|
 | `oidc.client` | `base.group_erp_manager` | Ya/Ya/Ya/Ya |
-| `oidc.client` | `base.group_user` | Ya/Tidak/Tidak/Tidak |
 | `oidc.client.key` | `base.group_erp_manager` | Ya/Ya/Ya/Ya |
 | `oidc.client.key` | `base.group_user` | Ya/Tidak/Tidak/Tidak |
 | `oidc.authorization.code` | `base.group_erp_manager` | Ya/Ya/Ya/Ya |
-| `oidc.authorization.code` | `base.group_user` | Ya/Tidak/Tidak/Tidak |
-| `oidc.refresh.token` | kosong | Ya/Ya/Ya/Tidak |
+| `oidc.refresh.token` | `base.group_system` | Ya/Ya/Ya/Tidak |
 
-Sumber baris/header: `amr_oidc/security/ir.model.access.csv:1-10`. Tidak ada baris untuk `oidc.jwt.replay` atau wizard. Ini deskripsi file saja: tidak membuktikan ACL efektif/izin, record rules, field access, atau keselamatan. Panduan tidak mengotorisasi atau menilai akses baca/ekspor secret/private key maupun akses record authorization-code.
+Sumber baris/header: `amr_oidc/security/ir.model.access.csv:1-9`; field `client_secret` mendeklarasikan group `base.group_erp_manager` (`amr_oidc/models/oidc_client.py:39`). Tidak ada baris untuk `oidc.jwt.replay` atau wizard. Ini deskripsi file saja: tidak membuktikan ACL efektif/izin, record rules, field access, atau keamanan RPC. Helper `get_secret` dan ekspor private key tetap batas terpisah; nilai sensitif tidak dicantumkan dan caller reachability perlu verifikasi terpisah.
 
 ### Persyaratan kebijakan — bukan bukti penegakan kode sumber
 
@@ -139,7 +140,14 @@ Sumber baris/header: `amr_oidc/security/ir.model.access.csv:1-10`. Tidak ada bar
 - Record key dimaksudkan tercakup per user/client pemilik; tidak ada jaminan isolasi perusahaan.
 - `sudo()` hanya untuk operasi sistem sempit yang dibenarkan.
 
-Policy ini adalah persyaratan, bukan perilaku yang dibuktikan source. Implementasi yang ditinjau tidak menetapkan group OIDC-admin khusus, effective policy, record-rule enforcement, atau pemenuhan batas `sudo()`. Source memiliki pemanggilan `sudo()` pada client/helper (`amr_oidc/models/oidc_client.py:100-126`; `amr_oidc/models/helper.py:109-110,145-146,201-202,289-304`). Jangan menyimpulkan keamanan dari menu tersembunyi atau ACL statis.
+Policy ini adalah persyaratan, bukan perilaku yang dibuktikan source. Source menetapkan ACL statis dan pemanggilan `sudo()` pada controller/client/helper (`amr_oidc/controllers/main.py:50-51,97-98,121-122`; `amr_oidc/models/oidc_client.py:92-94,137-138`; `amr_oidc/models/helper.py:109-110,145-146,201-202,289-304`). Tidak ada bukti registry/runtime atau enforcement efektif. Metode non-private `get_secret` membaca parameter secret melalui `sudo` (`amr_oidc/models/oidc_refresh_token.py:26-29`); caller reachability belum diverifikasi. Dokumentasi ini tidak menetapkan risk acceptance atau menyimpulkan helper aman dipanggil.
+
+### Redirect, expiry, dan perlindungan form — deklarasi source
+
+- Controller memvalidasi client/redirect sebelum menerbitkan code/token (`amr_oidc/controllers/main.py:37-41,92-108,110-148`). Mode fixed callback dan allowlist exact dibahas pada tabel metode; hasil source-level ini belum diuji melalui HTTP/Odoo.
+- Validator refresh mensyaratkan `expires_at > fields.Datetime.now()` serta `revoked=False` saat pencarian record (`amr_oidc/models/oidc_refresh_token.py:101-109`). Ini bukan bukti kondisi database/runtime.
+- Form login/continue memuat hidden field `csrf_token` dari `request.csrf_token()` (`amr_oidc/views/login_template.xml:185-186,419-420`); route submit dan authorize-continue dideklarasikan `POST, csrf=True` (`amr_oidc/controllers/main.py:68-74`). Deklarasi dan tes AST tidak membuktikan CSRF efektif/runtime.
+- Tes kontrak bersifat offline dan tidak membuktikan enforcement ACL/RPC atau flow OIDC; klaim keamanan efektif memerlukan review dan bukti runtime yang sesuai.
 
 ## Odoo 13 vs Odoo 20
 
@@ -147,27 +155,29 @@ Source/manifest yang diperiksa menargetkan Odoo 13 (`amr_oidc/__manifest__.py:4-
 
 ## Bukti berkas pengujian
 
-File `amr_oidc/tests/test_package_contract.py:1-151` adalah bukti keberadaan test source saja; tidak dijalankan pada pekerjaan dokumentasi ini dan tidak menjadi bukti runtime, ORM, HTTP, registry atau akses efektif.
+`amr_oidc/tests/test_package_contract.py` dan `amr_oidc/tests/test_security_contract.py` mendefinisikan kontrak offline dengan stub inert di `amr_oidc/tests/support.py`; tes memeriksa sebagian struktur/metadata source. Keberadaan atau hasil tes tersebut tidak membuktikan runtime, ORM, HTTP, registry atau akses efektif; bukti eksekusi tertentu dicatat terpisah.
 
 ## Peta kode sumber dan integritas
 
-Hash SHA-256 dihitung dari berkas worktree kandidat pada 2026-10-22. Seluruh path kode sumber yang dirujuk panduan ini dipetakan di bawah; kode sumber tidak diedit oleh pekerjaan dokumentasi ini.
+Hash SHA-256 di bawah adalah digest per berkas source yang menjadi dasar rujukan panduan. Digest dapat dipakai untuk membandingkan isi file, bukan mengidentifikasi branch, commit, PR, atau status gate.
 
 | Repo-relative path | SHA-256 |
 |---|---|
 | `amr_oidc/__init__.py` | `51d0f9735a295f9969115778f66156098eb5de49ce6fd0abce6f4e57908b676b` |
 | `amr_oidc/__manifest__.py` | `16fae221d45569fc5fea4e68748c00a3d732bdc2ef21fff2819782e029339ba0` |
-| `amr_oidc/controllers/main.py` | `171a4433e110f5f4eba8d5f0a651a3c53a437f89734b26a7b60840128e719431` |
+| `amr_oidc/controllers/main.py` | `1d477b08deacd6e792d343234e28b2fbe0d0681d6a5cf32092bc6dd5933214a9` |
 | `amr_oidc/models/__init__.py` | `942326411908a566afd11ec65a60f6698dc3a1b438b0020d1c43a4992792ecc2` |
-| `amr_oidc/models/helper.py` | `3dcc201578cc56c843a2151d0a91c08f430146c271d630ebeae9d0c7df9f3baf` |
+| `amr_oidc/models/helper.py` | `e28b68d32cb3897ae834d84204e82a90fc880def8b55aa0ccd7d1b0d7cc4bb68` |
 | `amr_oidc/models/oidc_authorization_code.py` | `23f64d0da605ba6abf9847bee42d81e87aa7d65a67d93dfd783c06fba34c6597` |
-| `amr_oidc/models/oidc_client.py` | `f7d716417ea061de6e53a726d6fc134f08171d8e6ad171d562aec66ce21f26c2` |
+| `amr_oidc/models/oidc_client.py` | `3923d67f02c186a1c32fb03eee4fb1460180be969e2fa6cdbeb4d2ed10a2faad` |
 | `amr_oidc/models/oidc_client_key.py` | `1f5238eea4f73bbe21a274ecac34d184954d05d2cb442f011efbfde41b2c3ef0` |
 | `amr_oidc/models/oidc_jwt_replay.py` | `b7c49e3a71eb86c47881c318fbf7f4a9445b8b3f1aecc3af954d04a6b045c5b9` |
-| `amr_oidc/models/oidc_refresh_token.py` | `4c6c10c0608c727044596c9044cd2a3c1261cbcc58e52cc08e9d735043bcb9ad` |
-| `amr_oidc/security/ir.model.access.csv` | `6bacca85a84990610ad6db92bdf1a6e0b0c33064bf2199a8cb9f9218bb767476` |
-| `amr_oidc/tests/test_package_contract.py` | `606ebf88a0b008d4ab6956a055ea116d228fdcc5bf97ef03ee595a38d3590f54` |
-| `amr_oidc/views/login_template.xml` | `d4731503a3847dd79f745738ea5394059154021831ec6a57d6e748a0b9e74793` |
+| `amr_oidc/models/oidc_refresh_token.py` | `9fef09d8a411a5129be1f6a41bdeca646e810919903ce5fc814a03363d608862` |
+| `amr_oidc/security/ir.model.access.csv` | `853bfcc19561f490386ad2d7fc9edcef2a3ef1cefbd3254367aeec2ddd2e2458` |
+| `amr_oidc/tests/test_package_contract.py` | `ee8d27c7ef60ba34e609800225fedb53b6668efb7ae19c0455645fd1d2f7d231` |
+| `amr_oidc/tests/test_security_contract.py` | `de8bf3f7e47b8c6900c17512be3105eb7c80910675020183c722f449aa7cd87a` |
+| `amr_oidc/tests/support.py` | `856353094578905073cab2148731478d33e9931abb2c235c4bb8e8d609da0917` |
+| `amr_oidc/views/login_template.xml` | `3eda24c555b385b58c9bfc2b4b05e691da54adb358538b662d3ffe96777acba2` |
 | `amr_oidc/views/menuitem.xml` | `c21871d804c848ed687ee3c4f8c5a2744a4eac44ab80e22a178c5a0a4d9eb6ba` |
 | `amr_oidc/views/oidc_authorization_code_views.xml` | `178b386eb5d5d575dcee03463ae5f777722debed9157261d30f1ed642c8335a3` |
 | `amr_oidc/views/oidc_client_views.xml` | `0ccc1b31fb79f70e56b757ef259990e24ff39783915822a402622e343ac51ec8` |
@@ -175,4 +185,4 @@ Hash SHA-256 dihitung dari berkas worktree kandidat pada 2026-10-22. Seluruh pat
 | `amr_oidc/wizard/service_account.xml` | `a5a25cc05fd88ab531ad612ce6f495ef9fabe59e6690b607fc0d5dc1a5d1aab7` |
 | `amr_token/models/helper.py` | `e286ae9022c66807c8fb6d6a1dc8af90a1a5c4e1243d42949e3de92a18d3a1dc` |
 
-[PERLU KONFIRMASI] Registry/runtime, role dan akses efektif, route/UI visibility, dependency aktual, konfigurasi deployed, flow OIDC dan interoperabilitas memerlukan bukti terpisah. Persyaratan kebijakan di atas belum dibuktikan enforce. Dokumentasi tidak menilai izin secret/private-key atau authorization-code-record access.
+[PERLU KONFIRMASI] Registry/runtime, role dan akses efektif, route/UI visibility, dependency aktual, konfigurasi deployed, flow OIDC dan interoperabilitas memerlukan bukti terpisah. Persyaratan kebijakan di atas belum dibuktikan enforce oleh dokumentasi source ini.
