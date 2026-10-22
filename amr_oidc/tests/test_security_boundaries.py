@@ -21,7 +21,8 @@ class SecurityBoundaries(unittest.TestCase):
     def test_refresh_expiry_boundary(self):
         module = load('models/oidc_refresh_token.py')
         model = module.OidcRefreshToken()
-        model._get_secret = Mock(return_value=object())
+        accessor = '_get_secret' if hasattr(model, '_get_secret') else 'get_secret'
+        setattr(model, accessor, Mock(return_value=object()))
         model.get_issuer = Mock(return_value='synthetic-issuer')
         model.get_algorithm = Mock(return_value='HS256')
         payload = {'token': object()}
