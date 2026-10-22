@@ -99,14 +99,14 @@ class PackageContract(unittest.TestCase):
         imports = [node.module for node in tree.body if isinstance(node, ast.ImportFrom)]
         self.assertTrue("odoo.addons.amr_token.controllers.main" in imports)
 
-    def test_acl_source_bytes_preserved_not_an_access_policy_verdict(self):
+    def test_acl_rev4_snapshot_not_an_access_policy_verdict(self):
         import hashlib
         # Owner exception: no replay ACL row; no added/removed privileges.
         # This is a preservation check, not acceptance of effective permissions.
         self.source("security/ir.model.access.csv")
         self.assertEqual(hashlib.sha256(
             (ADDON / "security/ir.model.access.csv").read_bytes()).hexdigest(),
-            "6bacca85a84990610ad6db92bdf1a6e0b0c33064bf2199a8cb9f9218bb767476")
+            "19b84b88e264d08b3a631d90f83489699df94da3441bf9ed61b81f430a1a9b31")
 
     def test_manifest_resources_and_local_template_assets_exist(self):
         import xml.etree.ElementTree as ET

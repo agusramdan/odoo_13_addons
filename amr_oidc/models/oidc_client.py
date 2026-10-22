@@ -36,7 +36,7 @@ class OidcClient(models.Model):
         ("atm", "ATM"),
         ("cdm", "CDM"),
     ], default="machine")
-    client_secret = fields.Char()
+    client_secret = fields.Char(groups="base.group_erp_manager")
     authentication_method = fields.Selection([
         ("client_secret", "Client Secret"),
         ("private_key_jwt", "Private Key JWT"),
@@ -60,42 +60,16 @@ class OidcClient(models.Model):
 
     def validate_redirect_uri(self, redirect_uri):
         if self.redirect_path:
-            return True
-
+            path = REDIRECT_MODE.get(self.redirect_path)
+            if not path or not self.web_base_url:
+                return False
+            callback = self.web_base_url + path
+            return not redirect_uri or redirect_uri == callback
         if not self.redirect_uri or not redirect_uri:
-            return True
-
+            return False
         parsed = urlparse(redirect_uri)
-
-        if not parsed.scheme:
-            _logger.error("Error %s parsed.scheme. %s", parsed.scheme, redirect_uri)
-            return False
-
-        if not parsed.netloc:
-            _logger.error("Error %s parsed.netloc. %s", parsed.netloc, redirect_uri)
-            return False
-        # client.redirect_uri_ids
-        # .mapped('uri')
-        allowed_uris = (self.redirect_uri.splitlines() or []) + [self.redirect_uri]
-        normalized_redirect = f'{parsed.scheme}://{parsed.netloc}{parsed.path}'.strip()
-
-        for allowed_uri in allowed_uris:
-
-            allowed_parsed = urlparse(allowed_uri)
-
-            normalized_allowed = (
-                f'{allowed_parsed.scheme}://'
-                f'{allowed_parsed.netloc}'
-                f'{allowed_parsed.path}'
-            ).strip()
-
-            if normalized_allowed == normalized_redirect:
-                return True
-            _logger.error("Error [%s] != [%s]", normalized_redirect, normalized_allowed)
-
-        _logger.error("Error %s.", normalized_redirect)
-
-        return False
+        return bool(parsed.scheme and parsed.netloc
+                    and redirect_uri in self.redirect_uri.splitlines())
 
     @api.model
     def client_auth(self, token):

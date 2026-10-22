@@ -1,8 +1,8 @@
 # Modul `amr_oidc`
 
-> Tugas: ADDONS13-37; repositori/lokasi: `agusramdan/odoo_13_addons/amr_oidc`; pin sumber upstream: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`; snapshot kode yang didokumentasikan: `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; versi manifest: `13.0.1.0.0`.
-> Tanggal inspeksi: 2026-10-22; status: telah ditinjau Lead setelah tinjauan independen; dokumentasi tetap DRAFT, belum dirilis/dipublikasikan.
-> Lingkup: dokumentasi berbasis kode sumber saja, bukan bukti instalasi, runtime, keamanan efektif, atau deployment. Target proyek Python 3.7.9 dinyatakan oleh `AGENTS.md`; runtime belum diverifikasi. Odoo 13; tidak mengklaim migrasi atau kompatibilitas Odoo 20.
+> Tugas: ADDONS13-37; repositori/lokasi: `agusramdan/odoo_13_addons/amr_oidc`; pin sumber upstream: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`; snapshot historis dokumentasi: `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; versi manifest: `13.0.1.0.0`.
+> Riwayat inspeksi: 2026-10-22. Perubahan kandidat Step 1 Rev4 pada branch `ADDONS13-37-rev4` belum mendapat verdict Step 2; tinjauan dokumentasi lama tidak diwariskan. Dokumentasi tetap DRAFT, belum dirilis/dipublikasikan.
+> Lingkup: dokumentasi berbasis kode sumber saja, bukan bukti instalasi, runtime, keamanan efektif, atau deployment. Target Python 3.7 mengikuti `AGENTS.md`, target verifikasi Python 3.7.9 mengikuti kontrak Rev4; runtime belum diverifikasi. Odoo 13; tidak mengklaim migrasi atau kompatibilitas Odoo 20.
 
 ## Ringkasan
 
@@ -44,3 +44,5 @@ README ini adalah indeks; panduan lengkap ada di [panduan pengguna](docs/user.md
 - Status migrasi 20.0: belum; tidak ada migrasi atau kompatibilitas Odoo 20 yang diklaim.
 - Status runtime/penerapan: belum diverifikasi dalam dokumentasi source ini.
 - Changelog 2026-10-22 (ADDONS13-37): indeks/panduan ditinjau terhadap snapshot kode sumber, PRD-DRAFT dan UAT-DRAFT yang diterima; bukti dan batasan dicatat di panduan. Tinjauan independen: PASS (Editor dan Reviewer); tidak ada PR, rilis, atau publikasi yang diklaim.
+
+- Kandidat Step 1 Rev4: ACL refresh dibatasi `base.group_system` (R/W/C, tanpa unlink); client/code serta field secret dibatasi `base.group_erp_manager`; redirect dicocokkan persis, termasuk query/fragment, dan callback tetap diikat pada konfigurasi. Dua rute pengubah keadaan menggunakan POST/CSRF dan form bertoken. Getter secret kini helper privat `_get_secret`; dua kegagalan verifier hanya mencatat pesan konstan tanpa exception/stack. Tes Python offline bukan bukti dispatcher, ORM/HTTP, UAT atau clearance keamanan.

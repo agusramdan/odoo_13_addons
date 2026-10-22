@@ -23,7 +23,7 @@ class OidcRefreshToken(models.Model):
         return int(self.env['ir.config_parameter'].sudo().get_param('amr_token.expires_in', 60 * 60 * 24))
 
     @api.model
-    def get_secret(self):
+    def _get_secret(self):
         # sudo: preserve source configuration read; secret handling unchanged.
         return self.env['ir.config_parameter'].sudo().get_param('amr_token.secret')
 
@@ -79,7 +79,7 @@ class OidcRefreshToken(models.Model):
             payload['aud'] = aud
         return jwt.encode(
             payload,
-            self.get_secret(),
+            self._get_secret(),
             algorithm=self.get_algorithm(),
         )
 
@@ -89,7 +89,7 @@ class OidcRefreshToken(models.Model):
             options = options or {"require": ["exp", "iss", "aud"]}
             payload = jwt.decode(
                 token,
-                self.get_secret(),
+                self._get_secret(),
                 issuer=self.get_issuer(),
                 audience=audience,
                 algorithms=[self.get_algorithm()],
@@ -101,7 +101,7 @@ class OidcRefreshToken(models.Model):
                 rec = self.sudo().search([
                     ("token", "=", token),
                     ("revoked", "=", False),
-                    ('expires_at', '<', fields.Datetime.now())
+                    ('expires_at', '>', fields.Datetime.now())
                 ], limit=1)
                 if rec:
                     return payload

@@ -31,6 +31,11 @@ def load(relative):
                                   TransientModel=object)
     http = ModuleType('odoo.http')
     http.request = SimpleNamespace()
+    http.route = lambda *args, **kwargs: lambda method: method
+    controller = ModuleType('odoo.addons.amr_token.controllers.main')
+    controller.ControllerToken = object
+    werkzeug = ModuleType('werkzeug')
+    werkzeug.utils = SimpleNamespace(redirect=lambda target: target)
     jwt = ModuleType('jwt')
     jwt.InvalidTokenError = type('InvalidTokenError', (Exception,), {})
     psycopg2 = ModuleType('psycopg2')
@@ -39,6 +44,6 @@ def load(relative):
                                                   str(ADDON / relative))
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, {'odoo': odoo, 'odoo.http': http,
-                                 'jwt': jwt, 'psycopg2': psycopg2}):
+                                 'jwt': jwt, 'psycopg2': psycopg2, 'odoo.addons.amr_token.controllers.main': controller, 'werkzeug': werkzeug}):
         spec.loader.exec_module(module)
     return module

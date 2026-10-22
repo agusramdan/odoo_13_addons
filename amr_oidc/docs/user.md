@@ -6,7 +6,7 @@
 
 Panduan berbasis kode sumber ini ditujukan kepada administrator Odoo, pengembang integrasi, dan pihak yang meninjau menu/akses. Ia menjelaskan deklarasi addon `amr_oidc` untuk Odoo 13, bukan prosedur instalasi, konfigurasi produksi, atau bukti bahwa layar maupun protokol bekerja. Sebelum tindakan operasional, diperlukan lingkungan dan prosedur yang disetujui, peran yang ditetapkan administrator, serta verifikasi akses/runtime tersendiri. Jangan gunakan secret, token, authorization code, private key, data pengguna, atau log mentah sebagai bahan uji/dukungan.
 
-Identitas kode sumber: snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; asal sumber upstream `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`. Manifest menyatakan versi `13.0.1.0.0`, lisensi `LGPL-3`, Odoo 13 (`amr_oidc/__manifest__.py:4-12`). Migrasi atau kompatibilitas Odoo 20 tidak diklaim. Rujukan kode sumber memakai path relatif repositori dan nomor baris aktual.
+Identitas historis kode sumber: snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; asal sumber upstream `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`. Manifest menyatakan versi `13.0.1.0.0`, lisensi `LGPL-3`, Odoo 13 (`amr_oidc/__manifest__.py:4-12`). Migrasi atau kompatibilitas Odoo 20 tidak diklaim. Kandidat saat ini: branch `ADDONS13-37-rev4`, Step 1; belum ada penerimaan gate berikutnya. Rujukan kode sumber memakai path relatif repositori dan nomor baris kandidat.
 
 ## Menu dan tindakan yang dideklarasikan
 
@@ -17,15 +17,17 @@ XML mendeklarasikan action `action_oidc_client` dengan label `OIDC Clients` dan 
 | Client | Action `action_oidc_client` (`OIDC Clients`), form/list dan tombol terkait wizard. | Menu tidak menetapkan `name`; tidak menginstruksikan pengelolaan client; role dan akses efektif belum terverifikasi. |
 | Authorization code | Action `action_oidc_authorization_code` (`OIDC Auth Code`) dan tree view. | Menu tidak menetapkan `name`; jangan buka atau akses record. Otorisasi/keamanan akses tidak ditetapkan di sini. |
 | Login/continue | Rute/pengendali dan template dideklarasikan. | Sesi, login, callback dan UI efektif [PERLU KONFIRMASI]. |
-| Wizard service account | Form menyebut Generate/Save/Close; ekspor dalam kode sumber menghasilkan materi kunci privat. | Bukan langkah aman operasional; jangan jalankan atau ekspor key berdasarkan panduan ini (`amr_oidc/models/oidc_client.py:158-181`). |
+| Wizard service account | Form menyebut Generate/Save/Close; ekspor dalam kode sumber menghasilkan materi kunci privat. | Bukan langkah aman operasional; jangan jalankan atau ekspor key berdasarkan panduan ini (`amr_oidc/models/oidc_client.py:132-155`). |
 
 Refresh view juga tidak tercantum pada manifest data, dan menu root lokal yang diperiksa berupa komentar (`amr_oidc/__manifest__.py:16-23`; `amr_oidc/views/menuitem.xml:8-13`). Ini tetap bukan bukti keadaan runtime.
 
 ## Akses dan kebijakan
 
-ACL CSV secara statis menyebut `base.group_erp_manager` serta `base.group_user` untuk client, key, authorization code; refresh-token baris memiliki `group_id` kosong. Detail operasi dan izin literal ada di [panduan developer](developer.md#keamanan-dan-batas), sumber `amr_oidc/security/ir.model.access.csv:1-10`. Baris ACL tidak membuktikan izin efektif, record rules, akses field, atau keamanan; tidak adanya baris untuk replay/wizard juga bukan bukti izin/penolakan.
+ACL CSV kandidat membatasi client dan authorization code ke `base.group_erp_manager`; field `client_secret` juga memakai group tersebut. Refresh-token dibatasi `base.group_system` untuk read/write/create, tanpa unlink. ACL key tetap historis (`base.group_erp_manager` serta read untuk `base.group_user`), di luar perubahan ini. Detail operasi dan izin literal ada di [panduan developer](developer.md#keamanan-dan-batas), sumber `amr_oidc/security/ir.model.access.csv:1-8`. Baris ACL tidak membuktikan izin efektif, record rules, akses field, atau keamanan; tidak adanya baris untuk replay/wizard juga bukan bukti izin/penolakan.
 
-**Persyaratan kebijakan (bukan bukti penegakan dalam kode sumber):** administrator OIDC yang berwenang untuk pengelolaan `oidc.client` melalui UI/wizard; akses ORM/RPC langsung untuk operasi non-secret tunduk pada kebijakan ACL/record-rule sama, tanpa bypass; record key dimaksudkan terscope per user/client; tidak ada jaminan isolasi perusahaan; `sudo()` hanya untuk operasi sistem sempit dan beralasan. Source tidak membuktikan policy ditegakkan atau group OIDC-admin khusus. Panduan ini tidak mengotorisasi/menilai pembacaan atau ekspor secret/private key maupun akses record authorization-code. Jangan menganggap menu tersembunyi atau widget password sebagai pengamanan.
+**Persyaratan kebijakan (bukan bukti penegakan dalam kode sumber):** administrator OIDC yang berwenang untuk pengelolaan `oidc.client` melalui UI/wizard; akses ORM/RPC langsung untuk operasi non-secret tunduk pada kebijakan ACL/record-rule sama, tanpa bypass; record key dimaksudkan terscope per user/client; tidak ada jaminan isolasi perusahaan; `sudo()` hanya untuk operasi sistem sempit dan beralasan. Pemetaan Admin OIDC yang diterima adalah `base.group_erp_manager`; deklarasi kandidat bukan bukti penegakan efektif pada runtime. Panduan ini tidak mengotorisasi/menilai pembacaan atau ekspor secret/private key maupun akses record authorization-code. Jangan menganggap menu tersembunyi atau widget password sebagai pengamanan.
+
+Dua form login/lanjut memakai POST dan token CSRF Odoo; link GET lanjut diganti form. Redirect eksternal wajib cocok persis dengan URI terdaftar (query/fragment termasuk); konfigurasi/target eksternal kosong ditolak. Mode callback tetap hanya menerima target yang tidak disuplai atau callback persis. Getter secret publik dihapus; helper privat tetap dipakai internal. Jangan mencoba RPC atau menganggap perubahan ini membuktikan akses efektif.
 
 ## Batas protokol dan konfigurasi
 

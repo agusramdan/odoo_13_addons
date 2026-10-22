@@ -118,7 +118,7 @@ class TokenHelper(models.AbstractModel):
             try:
                 user.with_user(user)._check_credentials(client_secret)
             except Exception:
-                _logger.exception("Error _check_credentials")
+                _logger.warning("Error _check_credentials")
                 return {'status': 401, 'error': "invalid_grant"}
 
         data['client_id'] = client_id
@@ -157,7 +157,7 @@ class TokenHelper(models.AbstractModel):
         try:
             client.check_credentials(client_secret)
         except Exception:
-            _logger.exception("Error _check_credentials")
+            _logger.warning("Error _check_credentials")
             return {'status': 401, 'error': "invalid_grant"}
         data['client_id'] = client_id
         data['azp'] = client.name or client_id

@@ -45,12 +45,12 @@ class ControllerOIDC(ControllerToken):
     def login_page(self, params=None, client_name=None):
         return request.render('amr_oidc.custom_login_template', {'params': params, 'client_name': client_name})
 
-    @route('/oidc/authorize_continue', type='http', auth='user', csrf=False)
+    @route('/oidc/authorize_continue', type='http', auth='user', csrf=True, methods=['POST'])
     def authorize_continue(self, params=None):
         kwargs = json.loads(base64.urlsafe_b64decode(params.encode()).decode())
         return self.oidc_authorize(**kwargs)
 
-    @route('/oidc/login/submit', type='http', auth='public', methods=['POST'], csrf=False)
+    @route('/oidc/login/submit', type='http', auth='public', methods=['POST'], csrf=True)
     def login_submit(self, login=None, password=None, params=None):
         db = request.session.db
         try:
@@ -79,8 +79,6 @@ class ControllerOIDC(ControllerToken):
         if not client:
             return self.invalid_response(400, 'invalid_client')
 
-        if not redirect_uri and client.redirect_uri:
-            redirect_uri = client.redirect_uri
 
         if not client.validate_redirect_uri(redirect_uri):
             return self.invalid_response(400, 'invalid_redirect_uri')
