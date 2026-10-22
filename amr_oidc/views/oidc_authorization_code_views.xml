@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<odoo>
+    <data>
+    <record id="view_oidc_authorization_code_tree" model="ir.ui.view">
+        <field name="name">oidc.authorization.code.tree</field>
+        <field name="model">oidc.authorization.code</field>
+        <field name="arch" type="xml">
+            <tree string="JWT Token">
+                <field name="user_id" />
+                <field name="code" groups="base.group_erp_manager" />
+                <field name="client_id" />
+                <field name="redirect_uri" />
+                <field name="scope" />
+                <field name="expired_at" />
+                <field name="used" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_oidc_authorization_code" model="ir.actions.act_window">
+        <field name="name">OIDC Auth Code</field>
+        <field name="res_model">oidc.authorization.code</field>
+        <field name="view_mode">tree</field>
+    </record>
+    </data>
+</odoo>

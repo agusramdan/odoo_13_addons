@@ -1,0 +1,10 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_oidc_refresh_token,access.oidc.refresh.token,model_oidc_refresh_token,,1,1,1,0
+
+access_oidc_client_admin,access.oidc.client admin,model_oidc_client,base.group_erp_manager,1,1,1,1
+access_oidc_client_user,access.oidc.client user,model_oidc_client,base.group_user,1,0,0,0
+access_oidc_client_key_admin,access.oidc.client.key admin,model_oidc_client_key,base.group_erp_manager,1,1,1,1
+access_oidc_client_key_user,access.oidc.client.key user,model_oidc_client_key,base.group_user,1,0,0,0
+
+access_oidc_authorization_code_admin,access.oidc.authorization.code admin,model_oidc_authorization_code,base.group_erp_manager,1,1,1,1
+access_oidc_authorization_code_user,access.oidc.authorization.code user,model_oidc_authorization_code,base.group_user,1,0,0,0
