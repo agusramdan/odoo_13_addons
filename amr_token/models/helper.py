@@ -167,21 +167,12 @@ class TokenHelper(models.AbstractModel):
         return f"{issuer}/oidc/token"
 
     @api.model
-    def openid_configuration(self):
+    def _service_account_endpoint_defaults(self):
         issuer = self.get_issuer()
         return {
             "issuer": issuer,
             "authorization_endpoint": f"{issuer}/oidc/authorize",
-            "introspection_endpoint": f"{issuer}/oidc/introspect",
             "token_endpoint": self.get_token_endpoint(issuer),
-            "userinfo_endpoint": f"{issuer}/oidc/userinfo",
-            "jwks_uri": f"{issuer}/.well-known/jwks.json",
-            "response_types_supported": ["code", "token", "id_token"],
-            "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": [self.get_signature_algorithm()],
-            "scopes_supported": ["openid", "profile", "email"],
-            "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
-            "claims_supported": ["uid", "db", "user_id", "sub", "name", "email"],
         }
 
     @api.model
@@ -190,21 +181,14 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):
-        if grant_type == 'password':
-            return self.do_password_grant(kwargs)
-        if grant_type == 'challenge_approval':
-            return self.do_challenge_grant(kwargs)
-        if grant_type == 'digital_signature':
-            # server version
-            return self.do_digital_signature_grant(kwargs)
         return {
-            'status': 401,
+            'status': 400,
             'error': "unsupported_grant_type",
             "error_description": _("Grant Type '%s' is not supported") % grant_type
         }
 
     @api.model
-    def do_password_grant(self, data):
+    def _do_password_grant(self, data):
         try:
             username = data.pop('username')
             password = data.pop('password')
@@ -230,7 +214,7 @@ class TokenHelper(models.AbstractModel):
         }
 
     @api.model
-    def do_challenge_grant(self, data):
+    def _do_challenge_grant(self, data):
         client_id = data.pop('client_id', None)
         client_secret = data.pop('client_secret', None)
         grant_type = data.pop('grant_type', None)
@@ -245,7 +229,7 @@ class TokenHelper(models.AbstractModel):
         return {'challenge': challenge}
 
     @api.model
-    def do_digital_signature_grant(self, data):
+    def _do_digital_signature_grant(self, data):
         client_id = data.pop('client_id', None)
         client_secret = data.pop('client_secret', None)
         grant_type = data.pop('grant_type', None)

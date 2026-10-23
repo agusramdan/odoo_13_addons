@@ -4,11 +4,11 @@
 
 ## Cakupan dan identitas kode sumber
 
-Penelaahan kode sumber pada snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`, termasuk parent `amr_token` pada snapshot tersebut. Asal addon: `agusramdan/addons_oidc@6725f802acde636be0b25e2c140d15dccd37b0db`. Manifest mendeklarasikan Odoo 13, versi `13.0.1.0.0`, lisensi `LGPL-3`. Ini bukan hasil instalasi, uji runtime, audit keamanan, atau deployment.
+Penelaahan kode sumber pada snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003` adalah baseline historis ADDONS13-37, termasuk parent `amr_token` pada snapshot tersebut. Candidate ADDONS13-39 berbasis T1 `a2684e704304e947464b3eec7d8d2ef734ec0aef` dan mengubah batas metadata/grant; kontrak source terbarunya ada pada [catatan ADDONS13-39](addons13-39-protocol.md). Manifest menyatakan Odoo 13 dan lisensi `LGPL-3`. Ini bukan hasil instalasi, uji runtime, audit keamanan, atau deployment.
 
-Rujukan berikut menggunakan path relatif repositori dan `path:baris` aktual dalam snapshot tersebut. SHA-256 pada tabel integritas adalah hash berkas kandidat worktree, bukan hash upstream. Semua path source yang dikutip dalam panduan ini terdaftar satu kali pada tabel tersebut; simbol/rentang memberi lokasi klaim yang tepat.
+Rujukan historis di bagian berikut memakai path/baris pada snapshot ADDONS13-37, bukan line number candidate ADDONS13-39. Tabel SHA-256 di bawah adalah integritas snapshot historis dan tidak mewakili file yang berubah pada candidate baru. Rujukan/perilaku current ada pada catatan ADDONS13-39.
 
-`AGENTS.md` menetapkan target proyek Python 3.7.9 (`../AGENTS.md:14-16`); ini bukan bukti versi runtime atau toolchain yang terpasang. Tidak dilakukan install atau eksekusi tes/runtime.
+`AGENTS.md` menetapkan target proyek Python 3.7.9 (`../AGENTS.md:14-16`); runtime uji Python 3.7.9 dan suite offline candidate telah dijalankan, tetapi ini bukan bukti runtime Odoo/registry, toolchain deployment, atau route efektif.
 
 ## Arsitektur
 
@@ -51,11 +51,11 @@ Selection `oidc.client.client_type`: `machine`, `mobile`, `web`, `atm`, `cdm`; `
 | `oidc.client.validate_refresh_token` | `(self, token)`: delegasi ke model refresh token (`amr_oidc/models/oidc_client.py:155-156`). |
 | `oidc.client.export_service_account` | `(self, algorithm)`: membentuk hasil yang mencakup private/public key material; tidak disalin atau diotorisasi oleh panduan (`amr_oidc/models/oidc_client.py:158-181`). |
 | `oidc.client.action_export_service_account` | `(self)`: action window untuk wizard (`amr_oidc/models/oidc_client.py:183-194`). |
-| `oidc.client.openid_configuration` | `(self)`: memperbarui hasil metadata parent; metadata bukan capability (`amr_oidc/models/helper.py:46-85`; `amr_token/models/helper.py:170-185`). |
-| `oidc.client.oidc_token` | `(self, grant_type=None, **kwargs)`: dispatch lokal untuk cabang tertentu dan delegasi lainnya (`amr_oidc/models/helper.py:87-101`). |
-| `do_client_credentials` | `(self, data)`: cabang mengambil credential Basic/body, lookup client, lalu delegasi token generation; lihat source (`amr_oidc/models/helper.py:130-171`). |
-| `do_client_assertion` | `(self, assertion, data)`: validasi assertion/key/claims, membuat replay record dan delegasi token generation (`amr_oidc/models/helper.py:173-278`). |
-| `do_refresh_grant` | `(self, refresh_token=None)`: memanggil validator tanpa audience, lalu mencari user dari `sub` dan delegasi (`amr_oidc/models/helper.py:280-291`). |
+| `amr.token.helper.openid_configuration` | **Tidak tersedia pada candidate ADDONS13-39.** Public metadata helper dihapus; endpoint defaults service-account memakai helper private parent, bukan Discovery document. |
+| `amr.token.helper.oidc_token` | **Tidak dioverride pada candidate ADDONS13-39.** Dispatcher parent menolak semua grant dengan `400 unsupported_grant_type` (`amr_token/models/helper.py:183-188`). |
+| `amr.token.helper._do_password_grant`, `amr.token.helper._do_client_credentials` | Legacy method body berawalan private yang dipertahankan, tetapi tidak dipanggil token dispatcher; bukan capability yang didukung. |
+| `amr.token.helper._do_client_assertion` | Assertion method body berawalan private; tidak didispatch oleh token endpoint. |
+| `amr.token.helper._do_refresh_grant` | Refresh method body berawalan private; tidak didispatch oleh token endpoint. |
 | Wizard `action_generate`, `action_save` | Metode wizard menghasilkan/menyimpan data account/key sesuai cabang source; jangan gunakan panduan ini sebagai prosedur ekspor atau menyimpan key (`amr_oidc/wizard/service_account.py:58-105`). |
 
 Tidak ada endpoint API publik yang disimpulkan dari daftar metode ini.
@@ -66,12 +66,13 @@ Dekorator rute menyatakan atribut statis berikut saja; atribut yang tidak dituli
 
 | Path | type | auth | methods | website | csrf | Deklarasi |
 |---|---|---|---|---|---|---|
-| `/oidc/authorize`, `/oidc/auth` | `http` | `public` | tidak eksplisit | tidak eksplisit | `False` | `:19` |
-| `/oidc/continue` | `http` | `public` | `GET` | `True` | tidak eksplisit | `:40` |
-| `/oidc/login_form` | `http` | `public` | `GET` | `True` | tidak eksplisit | `:44` |
-| `/oidc/authorize_continue` | `http` | `user` | tidak eksplisit | tidak eksplisit | `False` | `:48` |
-| `/oidc/login/submit` | `http` | `public` | `POST` | tidak eksplisit | `False` | `:53` |
-| `/oidc/profile`, `/oidc/userinfo` | `http` | `none` | `GET` | tidak eksplisit | `False` | `:134` |
+| `/oidc/authorize`, `/oidc/auth` | `http` | `public` | tidak eksplisit | tidak eksplisit | `False` | Candidate ADDONS13-39 mengembalikan 400 `unsupported_response_type` (`amr_oidc/controllers/main.py:17-19`). |
+| `/.well-known/openid-configuration` | `http` | `public` | `GET` | tidak eksplisit | `False` | Candidate ADDONS13-39 mengembalikan 404 (`amr_oidc/controllers/main.py:10-12`). |
+| `/oidc/continue` | `http` | `public` | `GET` | `True` | tidak eksplisit | `amr_oidc/controllers/main.py:21-23` |
+| `/oidc/login_form` | `http` | `public` | `GET` | `True` | tidak eksplisit | `amr_oidc/controllers/main.py:25-27` |
+| `/oidc/authorize_continue` | `http` | `user` | tidak eksplisit | tidak eksplisit | `False` | Candidate ADDONS13-39 mengembalikan 400 `unsupported_response_type` (`amr_oidc/controllers/main.py:29-31`). |
+| `/oidc/login/submit` | `http` | `public` | `POST` | tidak eksplisit | `False` | Candidate ADDONS13-39 mengembalikan 400 `unsupported_response_type` (`amr_oidc/controllers/main.py:33-35`). |
+| `/oidc/profile`, `/oidc/userinfo` | `http` | `none` | `GET` | tidak eksplisit | `False` | `amr_oidc/controllers/main.py:44-47` |
 
 Menu client/code mencantumkan parent XML ID `amr_token.menu_token_parent` dan group `base.group_no_one`; root menu OIDC lokal dikomentari (`amr_oidc/views/menuitem.xml:4-13`). View client/code dan wizard dideklarasikan pada XML yang tercantum manifest (`amr_oidc/views/oidc_client_views.xml:3-76`; `amr_oidc/views/oidc_authorization_code_views.xml:3-24`; `amr_oidc/wizard/service_account.xml:3-26`; `amr_oidc/__manifest__.py:16-23`). Deklarasi menu/action bukan bukti visibilitas UI/runtime.
 
@@ -109,10 +110,10 @@ Jangan mendiagnosis dengan token/key nyata atau menyalin raw error/log. Eskalasi
 
 ## Batas protokol
 
-- **Tidak tersedia dalam addon/graf kode sumber/dependensi yang ditinjau:** authorization-code redemption/token exchange dan ID-token issuance. Addon ini tidak boleh disebut implementasi OIDC Authorization Code Flow lengkap (`amr_oidc/controllers/main.py:19-38,72-132`; dispatcher parent `amr_token/models/helper.py:191-204`).
-- Dispatcher parent yang ditinjau memiliki cabang source untuk grant `password`, `challenge_approval`, `digital_signature`, dan cabang `unsupported_grant_type` bagi grant lain (`amr_token/models/helper.py:191-204`). Ini observasi atas dispatcher tersebut, bukan keputusan dukungan keseluruhan capability.
-- Metadata `openid_configuration` memuat deklarasi response types termasuk `code`, `token`, `id_token`; metadata bukan implementasi (`amr_oidc/models/helper.py:46-85`; `amr_token/models/helper.py:170-185`).
-- Capability grant/response lain, endpoint, client-authentication method, serta Discovery lain: **UNASSESSED / UNVERIFIED**. Tidak ada kesimpulan supported/unsupported. Refresh mismatch hanya ketidakselarasan source, bukan flow berhasil.
+- **Candidate ADDONS13-39:** authorization-code redemption/token exchange dan ID-token issuance tetap tidak tersedia; authorization routes fail-closed dengan `400 unsupported_response_type`, dan token dispatcher menolak grant dengan `400 unsupported_grant_type`. Addon ini bukan implementasi OIDC Authorization Code Flow lengkap. Lihat [kontrak candidate](addons13-39-protocol.md).
+- Token dispatcher pada candidate selalu mengembalikan `400 unsupported_grant_type`; metode legacy tetap private (`_do_*`) dan tidak didispatch. Ini tidak membuktikan perilaku RPC/registry efektif (`amr_token/models/helper.py:183-242`; [`addons13-39-protocol.md`](addons13-39-protocol.md)).
+- Tidak ada `openid_configuration` success helper atau well-known metadata pada candidate. Route OIDC Discovery di addon ini mengembalikan 404; RFC 8414 tidak dideklarasikan (`amr_oidc/controllers/main.py:10-12`; [kontrak candidate](addons13-39-protocol.md)).
+- Capability client-authentication method, external consumer/cache, issuer configuration, dan interoperability tetap **UNASSESSED / UNVERIFIED**. `amr_resource.get_oidc_config()` membaca well-known metadata dari issuer dan dapat terdampak untuk issuer lokal; inventory/rollback/release disposition belum selesai (`../../amr_resource/models/helper.py:40-44,65-73,89-90,134-136`; [kontrak candidate](addons13-39-protocol.md)).
 
 ## Keamanan dan batas
 
@@ -147,11 +148,11 @@ Source/manifest yang diperiksa menargetkan Odoo 13 (`amr_oidc/__manifest__.py:4-
 
 ## Bukti berkas pengujian
 
-File `amr_oidc/tests/test_package_contract.py:1-151` adalah bukti keberadaan test source saja; tidak dijalankan pada pekerjaan dokumentasi ini dan tidak menjadi bukti runtime, ORM, HTTP, registry atau akses efektif.
+Test source mencakup `test_package_contract.py` dan `test_capability_fail_closed.py`; kedua suite offline dijalankan pada Python 3.7.9. Fixture tersebut tidak membuktikan runtime, ORM, HTTP, registry, effective route ownership, atau akses efektif.
 
 ## Peta kode sumber dan integritas
 
-Hash SHA-256 dihitung dari berkas worktree kandidat pada 2026-10-22. Seluruh path kode sumber yang dirujuk panduan ini dipetakan di bawah; kode sumber tidak diedit oleh pekerjaan dokumentasi ini.
+Hash SHA-256 berikut adalah rekaman worktree historis pada 2026-10-22 (ADDONS13-37), bukan hash candidate ADDONS13-39. Beberapa path kini berubah; pin candidate final dan hash evidence tersedia pada laporan task terpisah.
 
 | Repo-relative path | SHA-256 |
 |---|---|

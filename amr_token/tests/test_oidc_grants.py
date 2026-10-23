@@ -1,12 +1,9 @@
-"""P-05/OIDC grant routing and claim construction contract."""
+"""Fail-closed token-endpoint contract for incomplete/unsupported grants."""
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-if __package__:
-    from .support import load_helper_module
-else:
-    from support import load_helper_module
+from support import load_helper_module
 
 
 class _Environment(dict):
@@ -20,91 +17,50 @@ class TestOidcGrantFlows(unittest.TestCase):
         self.module = load_helper_module()
         self.helper = object.__new__(self.module.TokenHelper)
         self.helper.env = _Environment()
+        self.helper.generate_user_token = mock.Mock(
+            return_value=("synthetic-token", {"sub": "synthetic-user"}, 60)
+        )
 
-    def _require(self, method):
-        self.assertTrue(callable(getattr(self.module.TokenHelper, method, None)), f"candidate {method} method is missing")
+    def test_incomplete_and_unsupported_grants_fail_closed_without_token(self):
+        cases = (
+            ("password", "do_password_grant"),
+            ("challenge_approval", "do_challenge_grant"),
+            ("digital_signature", "do_digital_signature_grant"),
+            ("client_credentials", "do_client_credentials"),
+            ("urn:ietf:params:oauth:grant-type:jwt-bearer", "do_client_assertion"),
+            ("refresh_token", "do_refresh_grant"),
+            ("authorization_code", "do_authorization_code_grant"),
+            ("custom_extension", "do_custom_grant"),
+            (None, "do_unknown_grant"),
+        )
+        spies = {}
+        for grant_type, handler_name in cases:
+            spy = mock.Mock(return_value={"access_token": "must-not-be-issued"})
+            setattr(self.helper, handler_name, spy)
+            spies[handler_name] = spy
 
-    def test_grant_type_dispatch_and_unsupported_response(self):
-        self._require("oidc_token")
-        self.helper.do_password_grant = mock.Mock(return_value={"grant": "password"})
-        self.helper.do_challenge_grant = mock.Mock(return_value={"grant": "challenge"})
-        self.helper.do_digital_signature_grant = mock.Mock(return_value={"grant": "digital_signature"})
+            response = self.module.TokenHelper.oidc_token(
+                self.helper, grant_type=grant_type, marker="synthetic"
+            )
 
-        self.assertEqual(self.module.TokenHelper.oidc_token(self.helper, "password", value=1), {"grant": "password"})
-        self.assertEqual(self.module.TokenHelper.oidc_token(self.helper, "challenge_approval", value=2), {"grant": "challenge"})
-        self.assertEqual(self.module.TokenHelper.oidc_token(self.helper, "digital_signature", value=3), {"grant": "digital_signature"})
-        unsupported = self.module.TokenHelper.oidc_token(self.helper, "other")
-        self.assertEqual(unsupported["status"], 401)
-        self.assertEqual(unsupported["error"], "unsupported_grant_type")
+            self.assertEqual(response.get("status"), 400, grant_type)
+            self.assertEqual(response.get("error"), "unsupported_grant_type", grant_type)
+            self.assertNotIn("access_token", response)
 
-    def test_password_grant_authenticates_and_returns_bearer_token(self):
-        self._require("do_password_grant")
-        user = mock.Mock()
-        user.with_user.return_value = user
-        users = mock.Mock()
-        users.sudo.return_value = users
-        users.get_user_by_username.return_value = user
-        self.helper.env["res.users"] = users
-        self.helper.generate_user_token = mock.Mock(return_value=("synthetic-token", {"sub": "u"}, 60))
-        data = {
-            "username": "synthetic-user",
-            "password": "synthetic-password",
-            "client_id": "synthetic-client",
-            "client_secret": "synthetic-client-secret",
-            "scope": "profile",
-        }
+        for spy in spies.values():
+            spy.assert_not_called()
+        self.helper.generate_user_token.assert_not_called()
 
-        result = self.module.TokenHelper.do_password_grant(self.helper, data)
+    def test_legacy_grant_handlers_are_not_public_methods(self):
+        for method in (
+            "do_password_grant",
+            "do_challenge_grant",
+            "do_digital_signature_grant",
+        ):
+            with self.subTest(method=method):
+                self.assertFalse(callable(getattr(self.module.TokenHelper, method, None)))
 
-        user.with_user.assert_called_once_with(user)
-        user._check_credentials.assert_called_once_with("synthetic-password")
-        self.helper.generate_user_token.assert_called_once_with(user, scope="profile")
-        self.assertEqual(result, {
-            "access_token": "synthetic-token",
-            "token_type": "Bearer",
-            "expires_in": 60,
-        })
-        self.assertNotIn("client_secret", data)
-
-    def test_password_grant_reports_missing_credentials(self):
-        self._require("do_password_grant")
-        result = self.module.TokenHelper.do_password_grant(self.helper, {"username": "synthetic-user"})
-        self.assertEqual(result["status"], 401)
-        self.assertEqual(result["error"], "invalid_grant")
-
-    def test_challenge_grant_uses_request_audience_or_default(self):
-        self._require("do_challenge_grant")
-        self.helper.get_issuer = mock.Mock(return_value="https://issuer.example.invalid")
-        self.helper.get_audience = mock.Mock(return_value="default-audience")
-        self.helper.generate_token_asymmetric = mock.Mock(return_value=("synthetic-challenge", {}))
-        data = {"client_id": "synthetic-client", "client_secret": "synthetic-secret", "aud": "resource-a", "scope": "custom", "nonce": "n"}
-
-        result = self.module.TokenHelper.do_challenge_grant(self.helper, data)
-
-        self.assertEqual(result, {"challenge": "synthetic-challenge"})
-        payload = self.helper.generate_token_asymmetric.call_args[0][0]
-        self.assertEqual(payload["iss"], "https://issuer.example.invalid")
-        self.assertEqual(payload["aud"], "resource-a")
-        self.assertEqual(payload["scope"], "custom")
-        self.assertEqual(payload["nonce"], "n")
-
-    def test_digital_signature_grant_uses_default_audience(self):
-        self._require("do_digital_signature_grant")
-        self.helper.get_issuer = mock.Mock(return_value="https://issuer.example.invalid")
-        self.helper.get_audience = mock.Mock(return_value="default-audience")
-        self.helper.generate_token_asymmetric = mock.Mock(return_value=("synthetic-signature", {}))
-        data = {"grant_type": "digital_signature", "client_id": "synthetic-client", "client_secret": "synthetic-secret", "nonce": "n"}
-
-        result = self.module.TokenHelper.do_digital_signature_grant(self.helper, data)
-
-        self.assertEqual(result, {"digital_signature": "synthetic-signature"})
-        payload = self.helper.generate_token_asymmetric.call_args[0][0]
-        self.assertEqual(payload["iss"], "https://issuer.example.invalid")
-        self.assertEqual(payload["aud"], "default-audience")
-        self.assertEqual(payload["nonce"], "n")
-
-    def test_user_token_maps_identity_resource_and_expiry(self):
-        self._require("generate_user_token")
+    def test_generic_user_token_helper_remains_available(self):
         user = SimpleNamespace(
             id=23,
             login="synthetic-login",
@@ -130,7 +86,11 @@ class TestOidcGrantFlows(unittest.TestCase):
         self.assertEqual(payload["type"], "machine")
         self.assertEqual(payload["aud"], "service-a")
         self.assertEqual(payload["role"], "reader")
-        self.assertEqual(kwargs, {"audience": "requested-audience", "expires_in": 30, "scope": "profile"})
+        self.assertEqual(kwargs, {
+            "audience": "requested-audience",
+            "expires_in": 30,
+            "scope": "profile",
+        })
         self.assertEqual(result, ("synthetic-token", {"exp": 1}, 30))
 
 

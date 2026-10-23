@@ -1,6 +1,6 @@
 # Modul `amr_token` — OIDC JWKS Key
 
-> Addon Odoo 13 untuk menyimpan material kunci OIDC dan membentuk respons JWKS. Dokumentasi membedakan provenance upstream dari deklarasi kandidat; bukan bukti instalasi, UI, kompatibilitas runtime, keamanan, atau kesiapan produksi.
+> Addon Odoo 13 untuk menyimpan material kunci dan membentuk respons JWKS. Candidate ADDONS13-39 tidak mendeklarasikan OIDC Discovery pada `amr_token`; token dispatcher menolak semua grant. Ini bukan bukti route efektif, instalasi, keamanan, atau kesiapan produksi. Lihat [batas protokol ADDONS13-39](../amr_oidc/docs/addons13-39-protocol.md).
 
 | Metadata                               | Nilai                                                                                                                                                                |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@
 
 ## Untuk Developer
 
-Panduan teknis dan batasan source: [Panduan Developer](docs/developer.md). Mencakup model, settings, semua route yang dideklarasikan, dependency, key-selection, dan batas runtime yang belum diverifikasi.
+Panduan teknis dan batasan source: [Panduan Developer](docs/developer.md). Mencakup model, settings, route yang dideklarasikan, dependency, key-selection, dan batas runtime yang belum diverifikasi. Route OIDC Discovery pada kombinasi dengan `amr_oidc` mengembalikan 404; tidak ada RFC 8414 route.
 
 ## Untuk User
 
@@ -21,5 +21,5 @@ Panduan pengguna berbasis source: [Panduan User](docs/user.md). UI/hak akses efe
 ## Catatan Versi
 
 - Source ditujukan untuk Odoo 13; kompatibilitas Odoo 20 tidak diklaim.
-- Detail UI, ACL efektif, dependency terpasang, dan perilaku server memerlukan verifikasi tersendiri.
+- Suite unit offline candidate dijalankan pada Python 3.7.9; detail UI, ACL efektif, dependency pada Odoo, dan perilaku server memerlukan verifikasi tersendiri.
 - Dokumentasi ini tidak menyatakan security clearance, dukungan HSM, atau kesiapan produksi.

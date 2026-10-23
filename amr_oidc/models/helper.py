@@ -11,10 +11,6 @@ from datetime import datetime, timezone
 
 _logger = logging.getLogger(__name__)
 
-JWT_CLIENT_ASSERTION = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-JWT_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-
-
 class TokenHelper(models.AbstractModel):
     _inherit = 'amr.token.helper'
 
@@ -43,65 +39,9 @@ class TokenHelper(models.AbstractModel):
         except Exception:
             return None, None
 
-    @api.model
-    def openid_configuration(self):
-        result = super().openid_configuration()
-        issuer = self.get_issuer()
-        result.update(
-            {
-                "authorization_endpoint": f"{issuer}/oidc/authorize",
-                # "userinfo_endpoint": f"{issuer}/oidc/userinfo",
-                # "jwks_uri": f"{issuer}/oidc/jwks",
-                "response_types_supported": [
-                    "code",
-                    "token",
-                    "id_token",
-                ],
-                # "subject_types_supported": [
-                #     "public",
-                # ],
-                # "id_token_signing_alg_values_supported": [
-                #     "RS256",
-                # ],
-                "scopes_supported": [
-                    "openid",
-                    "profile",
-                    "email",
-                ],
-                "token_endpoint_auth_methods_supported": [
-                    "client_secret_post",
-                    "client_secret_basic",
-                ],
-                "claims_supported": [
-                    "uid",
-                    "db",
-                    "user_id",
-                    "sub",
-                    "name",
-                    "email",
-                ],
-            }
-        )
-        return result
 
     @api.model
-    def oidc_token(self, grant_type=None, **kwargs):
-        if grant_type == JWT_GRANT_TYPE:
-            return self.do_client_assertion(kwargs.pop('assertion'), kwargs)
-
-        if grant_type == 'client_credentials':
-            if kwargs.get('client_assertion_type') == JWT_CLIENT_ASSERTION:
-                return self.do_client_assertion(kwargs.pop('client_assertion'), kwargs)
-
-            return self.do_client_credentials(kwargs)
-
-        if grant_type == 'refresh_token':
-            return self.do_refresh_grant(kwargs.get('refresh_token'))
-
-        return super().oidc_token(grant_type=grant_type, **kwargs)
-
-    @api.model
-    def do_password_grant(self, data):
+    def _do_password_grant(self, data):
         try:
             client_id = data.pop('client_id')
         except KeyError:
@@ -125,10 +65,10 @@ class TokenHelper(models.AbstractModel):
         data['azp'] = client.name or client_id
         data['sub_type'] = "user"
 
-        return super().do_password_grant(data)
+        return super()._do_password_grant(data)
 
     @api.model
-    def do_client_credentials(self, data):
+    def _do_client_credentials(self, data):
 
         # try basic auth
         client_id, client_secret = self.get_basic_auth()
@@ -170,7 +110,7 @@ class TokenHelper(models.AbstractModel):
             'expires_in': expires_in,
         }
 
-    def do_client_assertion(self, assertion, data):
+    def _do_client_assertion(self, assertion, data):
         token_endpoint = self.get_token_endpoint()
         if not assertion:
             return {'status': 401, 'error': "invalid_grant", 'error_description': 'No assertion.'}
@@ -278,7 +218,7 @@ class TokenHelper(models.AbstractModel):
         }
 
     @api.model
-    def do_refresh_grant(self, refresh_token=None):
+    def _do_refresh_grant(self, refresh_token=None):
         if not refresh_token:
             return {'status': 400, 'error': "invalid_grant"}
 

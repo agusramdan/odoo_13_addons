@@ -77,13 +77,14 @@ class PackageContract(unittest.TestCase):
         self.assertTrue(refresh._description)
         self.assertEqual(refresh.user_id.args, ("res.users",))
 
-    def test_helper_parent_delegation_with_synthetic_unhandled_sentinel(self):
+    def test_helper_parent_dispatch_rejects_unhandled_grants(self):
         helper = self.model("models/helper.py", "TokenHelper")
         self.assertEqual(helper._inherit, "amr.token.helper")
-        # No real grant, token, auth method, Discovery or endpoint is exercised.
-        self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7),
-                         ("unit_sentinel", {"marker": 7}))
-        self.assertEqual(helper().oidc_token(), (None, {}))
+        # The isolated parent contract is fail-closed; no real token/auth flow runs.
+        expected = {"status": 400, "error": "unsupported_grant_type"}
+        self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7), expected)
+        self.assertEqual(helper().oidc_token(), expected)
+        self.assertNotIn("oidc_token", helper.__dict__)
 
     def test_wizard_identity_only_not_export_or_generation(self):
         wizard = self.model("wizard/service_account.py", "OidcServiceAccountWizard")

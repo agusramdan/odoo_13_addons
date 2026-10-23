@@ -158,7 +158,7 @@ class OidcClient(models.Model):
     def export_service_account(self, algorithm):
         self.ensure_one()
         key_pair = self.env['amr.token.helper'].generate_key(algorithm)
-        result = self.env['amr.token.helper'].openid_configuration()
+        result = self.env['amr.token.helper']._service_account_endpoint_defaults()
         # "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         # "token_uri": "https://oauth2.googleapis.com/token",
         # "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",

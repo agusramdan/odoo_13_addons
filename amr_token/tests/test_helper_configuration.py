@@ -89,21 +89,21 @@ class TestHelperConfigurationAndDiscovery(unittest.TestCase):
         self.assertEqual(self.module.TokenHelper.get_expires_in(self.helper), 86400)
         self.assertEqual(self.module.TokenHelper.get_retention_in(self.helper), 14400)
 
-    def test_discovery_configuration_and_token_endpoint(self):
+    def test_incomplete_oidc_discovery_helper_is_not_available(self):
         self._require("get_token_endpoint")
-        self._require("openid_configuration")
+        self.assertFalse(callable(getattr(self.module.TokenHelper, "openid_configuration", None)))
         self.assertEqual(
             self.module.TokenHelper.get_token_endpoint(self.helper),
             "https://issuer.example.invalid/oidc/token",
         )
-        config = self.module.TokenHelper.openid_configuration(self.helper)
-        self.assertEqual(config["issuer"], "https://issuer.example.invalid")
-        self.assertEqual(config["token_endpoint"], "https://issuer.example.invalid/oidc/token")
-        self.assertEqual(config["jwks_uri"], "https://issuer.example.invalid/.well-known/jwks.json")
-        self.assertEqual(config["id_token_signing_alg_values_supported"], ["ES256"])
-        self.assertIn("authorization_endpoint", config)
-        self.assertIn("introspection_endpoint", config)
-        self.assertIn("userinfo_endpoint", config)
+        self.assertEqual(
+            self.module.TokenHelper._service_account_endpoint_defaults(self.helper),
+            {
+                "issuer": "https://issuer.example.invalid",
+                "authorization_endpoint": "https://issuer.example.invalid/oidc/authorize",
+                "token_endpoint": "https://issuer.example.invalid/oidc/token",
+            },
+        )
 
     def test_jwks_wrapper_uses_sudo_public_key_model(self):
         self._require("oidc_jwks")
