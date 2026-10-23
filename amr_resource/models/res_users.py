@@ -20,10 +20,7 @@ class Base(models.AbstractModel):
         if not user:
             return self
 
-        if user.is_user_machine():
-            return self.with_env(self.env(user=user, su=True))
-
-        return self.with_env(self.env(user=user))
+        return self.with_user(user)
 
 
 class ResUsers(models.Model):
@@ -78,18 +75,16 @@ class ResUsers(models.Model):
 
     def with_access_token_context(self, validate=True):
         helper = self.env['amr.resource.helper']
-        if self.env.context.get('__access_token_context'):
+        marker = self.env.context.get('__access_token_context')
+        if helper._verified(marker) and helper.get_uid(marker) == self.id:
             return self
-        token = helper.get_bearer_token()
-        if not token:
-            raise UserError('Without token')
         if validate:
-            payload = helper.validate(token)
+            payload = helper.validate(helper.get_bearer_token())
         else:
             payload = self.env['ir.http'].get_jwt_payload()
-
-        uid = helper.get_uid(payload)
-        if uid != self.id:
+        if not helper._verified(payload):
+            from werkzeug.exceptions import Unauthorized
+            raise Unauthorized()
+        if helper.get_uid(payload) != self.id:
             return self
-
         return self.with_context(__access_token_context=payload)

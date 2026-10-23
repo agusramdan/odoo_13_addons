@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo><data>
+    <record id="view_resource_issuer_tree" model="ir.ui.view">
+        <field name="name">amr.resource.issuer.tree</field>
+        <field name="model">amr.resource.issuer</field>
+        <field name="arch" type="xml">
+            <tree string="Trusted Issuers">
+                <field name="issuer"/><field name="company_id"/><field name="token_profile"/>
+                <field name="resolver_mode"/><field name="active"/>
+            </tree>
+        </field>
+    </record>
+    <record id="view_resource_issuer_form" model="ir.ui.view">
+        <field name="name">amr.resource.issuer.form</field>
+        <field name="model">amr.resource.issuer</field>
+        <field name="arch" type="xml">
+            <form string="Trusted Issuer">
+                <sheet>
+                    <group>
+                        <field name="issuer"/><field name="company_id"/><field name="active"/>
+                        <field name="token_profile"/><field name="client_id"/>
+                        <field name="azp"/><field name="allow_missing_azp"/>
+                    </group>
+                    <group string="Static endpoints / protected local key">
+                        <field name="jwks_uri"/><field name="token_endpoint"/>
+                        <field name="introspection_endpoint"/>
+                        <field name="credential_ref" groups="amr_resource.group_oidc_trust_admin"/>
+                        <field name="local_public_key" groups="amr_resource.group_oidc_trust_admin"/>
+                    </group>
+                    <group string="User resolution (no automatic selection)">
+                        <field name="resolver_mode"/>
+                        <field name="fixed_user_id" attrs="{'invisible': [('resolver_mode', '!=', 'fixed_user')], 'required': [('resolver_mode', '=', 'fixed_user')]}"/>
+                        <field name="resolver_key" attrs="{'invisible': [('resolver_mode', '!=', 'resolver')]}"/>
+                    </group>
+                    <notebook>
+                        <page string="Audiences"><field name="audience_ids">
+                            <tree editable="bottom"><field name="value"/></tree>
+                        </field></page>
+                        <page string="Exact subject bindings"><field name="binding_ids">
+                            <tree editable="bottom"><field name="sub"/><field name="user_id"/></tree>
+                        </field></page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="view_resource_issuer_source_form" model="ir.ui.view">
+        <field name="name">amr.resource.issuer.source.form</field>
+        <field name="model">amr.resource.issuer</field>
+        <field name="arch" type="xml">
+            <form string="Stored Source — Execution Disabled" create="false" delete="false">
+                <sheet>
+                    <div class="alert alert-warning" role="alert">Stored Python is never executed in v1. Editing source does not activate it.</div>
+                    <group><field name="issuer" readonly="1"/><field name="company_id" readonly="1"/></group>
+                    <group groups="amr_resource.group_oidc_code_admin">
+                        <field name="python_code"/>
+                        <field name="code_revision"/><field name="code_digest"/>
+                        <field name="code_actor_id"/><field name="code_date"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_resource_issuers" model="ir.actions.act_window">
+        <field name="name">Trusted Issuers</field><field name="res_model">amr.resource.issuer</field>
+        <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
+        <field name="groups_id" eval="[(6, 0, [ref('group_oidc_trust_admin')])]"/>
+    </record>
+    <record id="action_resource_issuers_form" model="ir.actions.act_window.view">
+        <field name="sequence">2</field><field name="view_mode">form</field>
+        <field name="view_id" ref="view_resource_issuer_form"/>
+        <field name="act_window_id" ref="action_resource_issuers"/>
+    </record>
+    <record id="action_resource_sources" model="ir.actions.act_window">
+        <field name="name">Stored Source (Disabled)</field><field name="res_model">amr.resource.issuer</field>
+        <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
+        <field name="groups_id" eval="[(6, 0, [ref('group_oidc_code_admin')])]"/>
+        <field name="context">{'create': False, 'delete': False}</field>
+    </record>
+    <record id="action_resource_sources_form" model="ir.actions.act_window.view">
+        <field name="sequence">2</field><field name="view_mode">form</field>
+        <field name="view_id" ref="view_resource_issuer_source_form"/>
+        <field name="act_window_id" ref="action_resource_sources"/>
+    </record>
+    <menuitem id="menu_resource_trust" name="Resource Trust" parent="base.menu_administration"
+              groups="amr_resource.group_oidc_trust_admin,amr_resource.group_oidc_code_admin"/>
+    <menuitem id="menu_resource_issuers" name="Trusted Issuers" parent="menu_resource_trust"
+              action="action_resource_issuers" groups="amr_resource.group_oidc_trust_admin"/>
+    <menuitem id="menu_resource_sources" name="Stored Source (Disabled)" parent="menu_resource_trust"
+              action="action_resource_sources" groups="amr_resource.group_oidc_code_admin"/>
+</data></odoo>

@@ -39,93 +39,47 @@ class IrHttp(models.AbstractModel):
             session.login = None
 
     @classmethod
+    def _authenticate_token(cls, token):
+        try:
+            helper = request.env['amr.resource.helper']
+            payload = helper.get_validate_user(token)
+            user = helper.get_user_match(payload)
+            if not user:
+                raise Unauthorized()
+            if request.uid != user.id:
+                request.uid = user.id
+                request.jwt_token = token
+                request.jwt_payload = payload
+            return None
+        except Exception:
+            pass
+        raise Unauthorized() from None
+
+    @classmethod
     def _auth_method_machine(cls):
-        # Menggunakan token oidc untuk handle API call
-        helper = request.env['amr.resource.helper'].sudo()
-        token = helper.get_bearer_token()
-        # VALIDASI TOKEN
-        validate = helper.get_validate_user(token)
-        if not validate:
-            raise Unauthorized('Invalid token')
-
-        user = helper.get_user_match(validate)
-
-        if not user:
-            raise Unauthorized('User not found')
-
-        if request.uid != user.id:
-            request.uid = user.id
-            request.jwt_token = token
-            request.jwt_payload = validate
+        return cls._authenticate_token(request.env['amr.resource.helper'].get_bearer_token())
 
     @classmethod
     def _auth_method_params(cls):
-        # Menggunakan token oidc untuk handle API call
-        helper = request.env['amr.resource.helper'].sudo()
-        token = helper.get_param_token()
-        # VALIDASI TOKEN
-        validate = helper.get_validate_user(token)
-        if not validate:
-            raise Unauthorized('Invalid token')
-
-        user = helper.get_user_match(validate)
-
-        if not user:
-            raise Unauthorized('User not found')
-
-        if request.uid != user.id:
-            request.uid = user.id
-            request.jwt_token = token
-            request.jwt_payload = validate
+        return cls._authenticate_token(request.env['amr.resource.helper'].get_param_token())
 
     @classmethod
     def _auth_method_user_or_param(cls):
         try:
             return cls._auth_method_user()
-        except:
+        except Unauthorized:
             pass
-        # Menggunakan token oidc untuk handle API call
-        try:
-            return cls._auth_method_params()
-        except:
-            pass
-
-        helper = request.env['amr.resource.helper'].sudo()
+        helper = request.env['amr.resource.helper']
         token = helper.get_bearer_token()
-        # VALIDASI TOKEN
-        validate = helper.get_validate_user(token)
-        if not validate:
-            raise Unauthorized('Invalid token')
-
-        user = helper.get_user_match(validate)
-
-        if not user:
-            raise Unauthorized('User not found')
-
-        if request.uid != user.id:
-            request.uid = user.id
-            request.jwt_token = token
-            request.jwt_payload = validate
-
-
-    # @classmethod
-    # def _auth_method_user_or_apikey_or_param_or_jwt(cls):
-    #     try:
-    #         return cls._auth_method_user()
-    #     except:
-    #         pass
-    #     try:
-    #         return cls._auth_method_apikey()
-    #     except:
-    #         pass
-    #     try:
-    #         cls._auth_method_params()
-    #     except:
-    #         cls._auth_method_jwt()
+        if token is not None:
+            return cls._authenticate_token(token)
+        return cls._auth_method_params()
 
     @classmethod
     def get_jwt_payload(cls):
-        return getattr(request, 'jwt_payload', {})
+        payload = getattr(request, 'jwt_payload', {})
+        helper = request.env['amr.resource.helper']
+        return payload if helper._verified(payload) else {}
 
     @classmethod
     def check_scope(cls, required_scope):
