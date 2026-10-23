@@ -48,11 +48,6 @@ class ControllerToken(Controller):
             content_type="application/json; charset=utf-8",
         )
 
-    @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)
-    def well_known_openid_configuration(self):
-        payload = request.env['amr.token.helper'].openid_configuration()
-        return self.make_response(**payload)
-
     @route("/.well-known/jwks.json", type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_jwks(self):
         payload = request.env['amr.token.helper'].oidc_jwks()

@@ -66,29 +66,30 @@ class TestControllerContract(unittest.TestCase):
         with self.assertRaises(StubHTTPException):
             self.module.ControllerToken.handle_exception(StubHTTPException("already handled"))
 
-    def test_public_discovery_and_jwks_endpoints(self):
-        self._require("well_known_openid_configuration")
+    def test_base_controller_does_not_publish_oidc_discovery_but_keeps_jwks(self):
+        self.assertFalse(hasattr(self.module.ControllerToken, "well_known_openid_configuration"))
         self._require("well_known_jwks")
         service = mock.Mock()
-        service.openid_configuration.return_value = {"issuer": "https://issuer.example.invalid"}
         service.oidc_jwks.return_value = {"keys": [{"kid": "synthetic-kid"}]}
         self.module.request.env = {"amr.token.helper": service}
 
-        config = self.controller.well_known_openid_configuration()
         jwks = self.controller.well_known_jwks()
 
-        self.assertEqual(self._json(config), {"issuer": "https://issuer.example.invalid"})
         self.assertEqual(self._json(jwks), {"keys": [{"kid": "synthetic-kid"}]})
 
-    def test_token_endpoint_maps_helper_errors_to_401(self):
+    def test_token_endpoint_passes_unsupported_grant_status_and_maps_exceptions(self):
         self._require("api_oidc_token")
         service = mock.Mock()
         service.sudo.return_value = service
-        service.oidc_token.return_value = {"access_token": "synthetic-token", "token_type": "Bearer"}
+        service.oidc_token.return_value = {
+            "status": 400,
+            "error": "unsupported_grant_type",
+        }
         self.module.request.env = {"amr.token.helper": service}
         response = self.controller.api_oidc_token(grant_type="password")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self._json(response), {"access_token": "synthetic-token", "token_type": "Bearer"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self._json(response), {"error": "unsupported_grant_type"})
+        self.assertNotIn("access_token", self._json(response))
 
         service.oidc_token.side_effect = ValueError("bad request")
         with self.assertLogs(self.module._logger, level="ERROR") as captured:
@@ -118,7 +119,6 @@ class TestControllerContract(unittest.TestCase):
 
     def test_routes_remain_public_no_csrf_and_expected_http_methods(self):
         expected = {
-            "well_known_openid_configuration": ("/.well-known/openid-configuration", ["GET"]),
             "well_known_jwks": ("/.well-known/jwks.json", ["GET"]),
             "api_oidc_token": ("/oidc/token", ["POST"]),
             "api_oidc_introspect": ("/oidc/introspect", ["GET", "POST"]),
