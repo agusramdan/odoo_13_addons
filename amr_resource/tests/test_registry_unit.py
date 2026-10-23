@@ -74,7 +74,7 @@ def load_registry():
     odoo.fields.Datetime = DateTimeField()
     odoo.SUPERUSER_ID = 1
     odoo.api = SimpleNamespace(model=lambda method: method, model_create_multi=lambda method: method,
-                               constrains=lambda *names: lambda method: method)
+                               depends=lambda *args: lambda method: method, constrains=lambda *names: lambda method: method)
     errors = ModuleType('odoo.exceptions')
     errors.AccessError, errors.ValidationError = AccessError, ValidationError
 
@@ -104,7 +104,7 @@ class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
 
 
 class ChildProbe(registry.RegistryAccess):
-    _name = 'amr.resource.binding'
+    _name = 'oidc.issuer.subject'
 
     def __init__(self, groups=(), share=False, su=False):
         self.env = IssuerProbe(groups, share, su).env
@@ -125,7 +125,7 @@ class RegistryUnitTests(unittest.TestCase):
         row = SimpleNamespace(issuer='https://issuer.example', token_profile='jwt',
                               jwks_uri='https://keys.example/jwks', token_endpoint=False,
                               introspection_endpoint=False, client_id='resource-client', azp='resource-client',
-                              allow_missing_azp=False, local_public_key=False, audience_ids=[object()],
+                              allow_missing_azp=False, local_public_key=False, local_key_ref=False, credential_ref=False, audience_ids=[object()],
                               resolver_mode=False, fixed_user_id=False, company_id=7)
         row.__dict__.update(values)
         return row
@@ -148,6 +148,10 @@ class RegistryUnitTests(unittest.TestCase):
                        {'token_endpoint': 'http://issuer.example/token'}):
             with self.subTest(values=values), self.assertRaises(ValidationError):
                 self.check_profile(**values)
+        for field in ('local_key_ref', 'credential_ref'):
+            with self.subTest(reference_field=field):
+                with self.assertRaises(ValidationError):
+                    self.check_profile(**{field: 'https://not-a-key.invalid'})
 
     def test_endpoint_syntax_policy_without_dns(self):
         self.assertTrue(registry._https_url('https://issuer.example:443/token'))
@@ -377,7 +381,11 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertFalse(names.intersection({'eval', 'exec', 'safe_eval', 'compile'}))
         sudo_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                       and isinstance(node.func, ast.Attribute) and node.func.attr == 'sudo']
-        self.assertEqual(len(sudo_calls), 1)
+        sudo_methods = sorted(n.name for n in ast.walk(tree)
+                              if isinstance(n, ast.FunctionDef) and any(
+                                  isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                                  and c.func.attr == 'sudo' for c in ast.walk(n)))
+        self.assertEqual(sudo_methods, ['_compute_local_public_key', '_lookup', '_migrate_legacy_v1'])
 
     def test_security_and_ui_files_are_wired_and_restricted(self):
         manifest = ast.literal_eval((ROOT / '__manifest__.py').read_text())

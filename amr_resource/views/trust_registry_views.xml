@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo><data>
     <record id="view_resource_issuer_tree" model="ir.ui.view">
-        <field name="name">amr.resource.issuer.tree</field>
-        <field name="model">amr.resource.issuer</field>
+        <field name="name">oidc.issuer.register.tree</field>
+        <field name="model">oidc.issuer.register</field>
         <field name="arch" type="xml">
             <tree string="Trusted Issuers">
                 <field name="issuer"/><field name="company_id"/><field name="token_profile"/>
@@ -11,8 +11,8 @@
         </field>
     </record>
     <record id="view_resource_issuer_form" model="ir.ui.view">
-        <field name="name">amr.resource.issuer.form</field>
-        <field name="model">amr.resource.issuer</field>
+        <field name="name">oidc.issuer.register.form</field>
+        <field name="model">oidc.issuer.register</field>
         <field name="arch" type="xml">
             <form string="Trusted Issuer">
                 <sheet>
@@ -25,7 +25,7 @@
                         <field name="jwks_uri"/><field name="token_endpoint"/>
                         <field name="introspection_endpoint"/>
                         <field name="credential_ref" groups="amr_resource.group_oidc_trust_admin"/>
-                        <field name="local_public_key" groups="amr_resource.group_oidc_trust_admin"/>
+                        <field name="local_key_ref" groups="amr_resource.group_oidc_trust_admin"/>
                     </group>
                     <group string="User resolution (no automatic selection)">
                         <field name="resolver_mode"/>
@@ -45,8 +45,8 @@
         </field>
     </record>
     <record id="view_resource_issuer_source_form" model="ir.ui.view">
-        <field name="name">amr.resource.issuer.source.form</field>
-        <field name="model">amr.resource.issuer</field>
+        <field name="name">oidc.issuer.register.source.form</field>
+        <field name="model">oidc.issuer.register</field>
         <field name="arch" type="xml">
             <form string="Stored Source — Execution Disabled" create="false" delete="false">
                 <sheet>
@@ -62,7 +62,7 @@
         </field>
     </record>
     <record id="action_resource_issuers" model="ir.actions.act_window">
-        <field name="name">Trusted Issuers</field><field name="res_model">amr.resource.issuer</field>
+        <field name="name">Trusted Issuers</field><field name="res_model">oidc.issuer.register</field>
         <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
         <field name="groups_id" eval="[(6, 0, [ref('group_oidc_trust_admin')])]"/>
     </record>
@@ -72,7 +72,7 @@
         <field name="act_window_id" ref="action_resource_issuers"/>
     </record>
     <record id="action_resource_sources" model="ir.actions.act_window">
-        <field name="name">Stored Source (Disabled)</field><field name="res_model">amr.resource.issuer</field>
+        <field name="name">Stored Source (Disabled)</field><field name="res_model">oidc.issuer.register</field>
         <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
         <field name="groups_id" eval="[(6, 0, [ref('group_oidc_code_admin')])]"/>
         <field name="context">{'create': False, 'delete': False}</field>

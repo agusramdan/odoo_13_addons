@@ -46,7 +46,7 @@ class ResourceHelper(models.AbstractModel):
     _description = 'Resource Server'
 
     def _profile(self, issuer=None, token_profile=None):
-        registry = self.env['amr.resource.issuer']
+        registry = self.env['oidc.issuer.register']
         if issuer is not None:
             return registry._lookup(issuer, token_profile)
         # sudo: protected registry read only, never user resolver execution.
@@ -68,7 +68,7 @@ class ResourceHelper(models.AbstractModel):
     @api.model
     @_sanitized
     def is_local_issuer(self, issuer):
-        return bool(self._profile(issuer).local_public_key)
+        return bool(self._profile(issuer).local_key_ref)
 
     @api.model
     @_sanitized
@@ -105,6 +105,15 @@ class ResourceHelper(models.AbstractModel):
         if not isinstance(result, dict) or not isinstance(result.get('keys'), list):
             raise Unauthorized()
         return result
+
+    def _local_public_key(self, profile):
+        if not profile.local_key_ref:
+            raise Unauthorized()
+        # sudo: public key access only after exact trusted-profile selection.
+        value = self.env['ir.config_parameter'].sudo().get_param(profile.local_key_ref)
+        if not isinstance(value, str) or not value:
+            raise Unauthorized()
+        return value
 
     def _headers(self, profile):
         if not profile.credential_ref:
@@ -213,8 +222,8 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         profile = self._profile(hint['iss'], 'jwt')
         self._claims(hint, profile)
-        if profile.local_public_key:
-            key = serialization.load_pem_public_key(profile.local_public_key.encode('ascii'), default_backend())
+        if profile.local_key_ref:
+            key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
         else:
             if not _string(header.get('kid')):
                 raise Unauthorized()

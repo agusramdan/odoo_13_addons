@@ -11,26 +11,16 @@
                     <div id="amr_resource_config" groups="base.group_erp_manager">
                         <h2>Resource</h2>
                         <div class="row mt16 o_settings_container" id="amr_token_enabled_setting">
-                            <div class="col-xs-12 col-md-6 o_setting_box" >
-                                <div class="o_setting_right_pane">
-                                    <div class="row">
-                                        <label for="amr_select_audience" class="col-3 col-lg-3 o_light_label"/>
-                                        <field name="amr_select_audience" nolabel="1"/>
-                                    </div>
-                                    <div class="row">
-                                        <label for="amr_web_base_url_freeze" class="col-3 col-lg-3 o_light_label"/>
-                                        <field name="amr_web_base_url_freeze" attrs="{'invisible':[('amr_select_audience','!=','web.base.url')]}"/>
-                                        <div class="col-9" attrs="{'invisible':[('amr_select_audience','!=','web.base.url')]}">
-                                            <button name="action_edit_web_base_url" type="object" string="Edit" class="oe_highlight"/>
-                                        </div>
-                                    </div>
-                                    <div class="mt16 row">
-                                        <div class="col-9">
-                                            <field name="amr_resource_audience" nolabel="1" widget="CopyClipboardChar"/>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <h6>Trusted issuer registry</h6>
+                                <div class="text-muted">Issuer, audience, key and credential references are configured in Resource Trust. Legacy selectors do not authenticate requests.</div>
+                                <button name="action_open_resource_issuers" type="object" string="Trusted Issuers"
+                                        groups="amr_resource.group_oidc_trust_admin" class="oe_link"/>
+                                <label for="amr_web_base_url_freeze" string="Freeze global web.base.url (not resource trust)"/>
+                                <field name="amr_web_base_url_freeze"/>
                             </div>
+                        </div>
 
                             <div class="col-xs-12 col-md-6 o_setting_box" >
                                 <div class="o_setting_left_pane">

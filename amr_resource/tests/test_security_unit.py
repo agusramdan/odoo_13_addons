@@ -118,7 +118,7 @@ class Env:
         self.parameters.sudo.return_value = self.parameters
 
     def __getitem__(self, name):
-        if name == 'amr.resource.issuer':
+        if name == 'oidc.issuer.register':
             return self.registry
         if name == 'res.users':
             def browse(uid):
@@ -153,7 +153,7 @@ class SecurityUnitTests(unittest.TestCase):
         self.env.users[self.user.id] = self.user
         self.profile = SimpleNamespace(issuer='https://issuer.example', active=True,
             company_id=self.env.company, token_profile='jwt', jwks_uri='https://keys.example/jwks',
-            local_public_key=False, token_endpoint='https://issuer.example/token',
+            local_public_key=False, local_key_ref=False, token_endpoint='https://issuer.example/token',
             introspection_endpoint='https://issuer.example/introspect', credential_ref=False,
             client_id='synthetic-client', azp='synthetic-client', allow_missing_azp=False,
             audience_ids=Rows([SimpleNamespace(value='first'), SimpleNamespace(value='second')]),
@@ -266,10 +266,15 @@ class SecurityUnitTests(unittest.TestCase):
             self.reject(self.helper.validate, self.token())
 
     def test_uat06_local_key_no_loopback_or_local_bypass(self):
+        self.profile.local_key_ref = "amr_resource.keys.synthetic"
         self.profile.local_public_key, self.profile.jwks_uri = self.pem, False
+        self.env.parameters.get_param.return_value = self.profile.local_public_key
         self.assertTrue(self.helper.is_local_token(self.token()))
         self.assertTrue(self.helper._verified(self.helper.validate(self.token())))
         self.reject(self.helper.validate, self.token(key=self.other_key))
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.return_value = 'invalid rotated public key'
+        self.reject(self.helper.validate, self.token())
         self.fetch.assert_not_called()
 
     def opaque(self):

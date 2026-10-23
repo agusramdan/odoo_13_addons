@@ -44,6 +44,53 @@ def _https_url(value):
         return False
 
 
+
+def _legacy_plan(get_param, values, audiences, bindings, company_id):
+    """Resolve legacy *keys* once; require an administrator-authored exact plan."""
+    import json
+    import re
+
+    allowed = {'issuer', 'client_id', 'token_profile', 'jwks_uri', 'token_endpoint',
+               'introspection_endpoint', 'credential_ref', 'local_key_ref',
+               'azp', 'allow_missing_azp', 'resolver_mode', 'fixed_user_id'}
+    if (not isinstance(values, dict) or set(values) - allowed or
+            values.get('resolver_mode') not in ('get_user_match', 'fixed_user', 'resolver')):
+        raise ValidationError('An explicit supported migration plan is required.')
+    selectors, resolved = [], []
+    for name in ('issuer', 'audience'):
+        selector = get_param('amr_resource.' + name)
+        if not isinstance(selector, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', selector):
+            raise ValidationError('Legacy configuration must contain an explicit parameter key.')
+        value = get_param(selector)
+        if not _exact_string(value):
+            raise ValidationError('Legacy configuration reference is missing or invalid.')
+        selectors.append(selector)
+        resolved.append(value)
+    if (values.get('issuer') != resolved[0] or not isinstance(audiences, list) or
+            not audiences or any(not _exact_string(a) for a in audiences) or
+            len(set(audiences)) != len(audiences) or resolved[1] not in audiences):
+        raise ValidationError('Legacy issuer or audience conflicts with the migration plan.')
+    if not isinstance(bindings, list):
+        raise ValidationError('Explicit subject bindings are required.')
+    subjects = set()
+    for binding in bindings:
+        if (not isinstance(binding, dict) or set(binding) != {'sub', 'user_id'} or
+                not _exact_string(binding['sub']) or type(binding['user_id']) is not int or
+                binding['user_id'] <= 0 or binding['sub'] in subjects):
+            raise ValidationError('Ambiguous or invalid subject binding.')
+        subjects.add(binding['sub'])
+    normalized = dict(jwks_uri=False, token_endpoint=False, introspection_endpoint=False,
+                      credential_ref=False, local_key_ref=False, azp=False,
+                      allow_missing_azp=False, fixed_user_id=False)
+    normalized.update(values)
+    plan: dict = dict(version=1, values=dict(normalized, company_id=company_id),
+                audiences=sorted(audiences), bindings=sorted(
+                    [dict(b) for b in bindings], key=lambda b: b['sub']),
+                legacy_selectors=selectors, legacy_values=resolved)
+    plan['digest'] = hashlib.sha256(json.dumps(
+        plan, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+    return plan
+
 class RegistryAccess(models.AbstractModel):
     _name = 'amr.resource.registry.access'
     _description = 'Trust Registry Access Guard'
@@ -57,7 +104,7 @@ class RegistryAccess(models.AbstractModel):
     def check_access_rights(self, operation, raise_exception=True):
         if not self.env.su:
             allowed = self._registry_role(TRUST_GROUP)
-            if self._name == 'amr.resource.issuer' and operation in ('read', 'write'):
+            if self._name == 'oidc.issuer.register' and operation in ('read', 'write'):
                 allowed = allowed or self._registry_role(CODE_GROUP)
             if not allowed:
                 if raise_exception:
@@ -75,7 +122,7 @@ class RegistryAccess(models.AbstractModel):
         if 'company_id' in values and values['company_id'] != self.env.company.id:
             raise AccessError('Registry access denied.')
         if 'issuer_id' in values:
-            parent = self.env['amr.resource.issuer'].browse(values['issuer_id']).exists()
+            parent = self.env['oidc.issuer.register'].browse(values['issuer_id']).exists()
             parent.check_access_rights('read')
             parent.check_access_rule('read')
             if len(parent) != 1 or parent.company_id != self.env.company:
@@ -116,7 +163,7 @@ class RegistryAccess(models.AbstractModel):
 
 
 class AmrResourceIssuer(models.Model):
-    _name = 'amr.resource.issuer'
+    _name = 'oidc.issuer.register'
     _description = 'Resource Token Issuer'
     _inherit = 'amr.resource.registry.access'
     _rec_name = 'issuer'
@@ -132,7 +179,9 @@ class AmrResourceIssuer(models.Model):
     azp = fields.Char()
     allow_missing_azp = fields.Boolean(default=False)
     credential_ref = fields.Char(groups=TRUST_GROUP)
-    local_public_key = fields.Text(groups=TRUST_GROUP,
+    local_key_ref = fields.Char(groups='amr_resource.group_oidc_trust_admin',
+                                help='Protected ir.config_parameter key containing an RSA public PEM.')
+    local_public_key = fields.Text(compute='_compute_local_public_key', groups=TRUST_GROUP,
                                    help='Protected RSA public PEM; no loopback key fetch.')
     resolver_mode = fields.Selection([('get_user_match', 'Default'),
                                       ('fixed_user', 'Fixed User'),
@@ -149,12 +198,78 @@ class AmrResourceIssuer(models.Model):
     fixed_user_id = fields.Many2one('res.users', ondelete='restrict')
     code_actor_id = fields.Many2one('res.users', readonly=True, copy=False,
                                    ondelete='restrict', groups=CODE_GROUP)
-    audience_ids = fields.One2many('amr.resource.audience', 'issuer_id')
-    binding_ids = fields.One2many('amr.resource.binding', 'issuer_id')
+    audience_ids = fields.One2many('oidc.issuer.register.audience', 'issuer_id')
+    binding_ids = fields.One2many('oidc.issuer.subject', 'issuer_id')
 
     _sql_constraints = [('issuer_unique', 'unique(issuer)', 'Issuer must be unique.')]
 
+    @api.model
+    def _migrate_legacy_v1(self, values, audiences, bindings, dry_run=True):
+        """Explicit additive migration; never called during install or token handling."""
+        if type(dry_run) is not bool or not self._registry_role('amr_resource.group_oidc_trust_admin'):
+            raise AccessError('Registry access denied.')
+        self.check_access_rights('create')
+        # sudo: legacy parameters/marker are read only after the designated admin guard.
+        params = self.env['ir.config_parameter'].sudo()
+        plan = _legacy_plan(params.get_param, values, audiences, bindings, self.env.company.id)
+        data = plan['values']
+        marker = 'amr_resource.migration.v1.company.%s' % self.env.company.id
+        previous = params.get_param(marker)
+        if previous and previous != plan['digest']:
+            raise ValidationError('Migration revision conflicts with the recorded plan.')
+        domain = [('issuer', '=', data['issuer'])]
+        rows = self.with_context(active_test=False).search(domain)
+        # sudo: detect a global issuer collision without returning another company profile.
+        global_rows = self.sudo().with_context(active_test=False).search(domain)
+        if len(global_rows) != len(rows) or len(rows) > 1:
+            raise ValidationError('Migration issuer conflict.')
+        commands = [(0, 0, {'value': value}) for value in plan['audiences']]
+        candidate = self.new(dict(data, audience_ids=commands))
+        candidate._check_profile()
+        for binding in plan['bindings']:
+            user = self.env['res.users'].browse(binding['user_id']).exists()
+            try:
+                self.env['amr.resource.helper']._eligible_user(user)
+            except Unauthorized:
+                raise ValidationError('Migration requires an eligible exact subject binding.') from None
+        if rows:
+            if not rows.active or any(rows[field] != value if field != 'fixed_user_id'
+                                      else rows[field].id != value
+                                      for field, value in data.items() if field != 'company_id'):
+                raise ValidationError('Existing issuer configuration conflicts with migration.')
+            if rows.company_id != self.env.company or sorted(rows.audience_ids.mapped('value')) != plan['audiences']:
+                raise ValidationError('Existing issuer scope or audience conflict.')
+            actual = sorted([{'sub': b.sub, 'user_id': b.user_id.id} for b in rows.binding_ids],
+                            key=lambda b: b['sub'])
+            if actual != plan['bindings']:
+                raise ValidationError('Existing subject bindings conflict with migration.')
+        elif previous:
+            raise ValidationError('Recorded migration issuer is missing.')
+        result = {'version': 1, 'issuer_count': 1, 'binding_count': len(bindings),
+                  'dry_run': dry_run, 'already_applied': bool(previous)}
+        if dry_run or previous:
+            return result
+        # A savepoint keeps registry creation and the revision marker atomic even for a caught error.
+        with self.env.cr.savepoint():
+            if not rows:
+                self.create(dict(data, audience_ids=commands, binding_ids=[
+                    (0, 0, binding) for binding in plan['bindings']]))
+            params.set_param(marker, plan['digest'])
+        _logger.info('Trust migration version=1 company=%s actor=%s bindings=%s',
+                     self.env.company.id, self.env.uid, len(bindings))
+        return result
+
+    @api.depends('local_key_ref')
+    def _compute_local_public_key(self):
+        # sudo: read only the protected administrator-selected public key reference.
+        params = self.env['ir.config_parameter'].sudo()
+        for record in self:
+            record.local_public_key = (params.get_param(record.local_key_ref)
+                                       if record.local_key_ref else False)
+
     def _guard_issuer_values(self, values, creating=False):
+        if 'local_public_key' in values or (creating and 'default_local_public_key' in self.env.context):
+            raise AccessError('Use a protected local key reference.')
         if AUDIT_FIELDS.intersection(values):
             raise AccessError('Registry access denied.')
         if 'resolver_key' in values and (not creating or values['resolver_key'] != 'get_user_match'):
@@ -201,10 +316,15 @@ class AmrResourceIssuer(models.Model):
 
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
-                    'local_public_key', 'resolver_mode', 'fixed_user_id', 'company_id',
+                    'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id', 'company_id',
                     'audience_ids')
     def _check_profile(self):
         for record in self:
+            import re
+            for reference in (record.local_key_ref, record.credential_ref):
+                if reference and (not isinstance(reference, str) or
+                                  not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
+                    raise ValidationError('Configure an exact protected parameter key, not a URL.')
             try:
                 issuer = urlsplit(record.issuer or '')
                 valid_issuer = (_exact_string(record.issuer) and issuer.scheme == 'https'
@@ -265,13 +385,13 @@ class AmrResourceIssuer(models.Model):
 
 
 class AmrResourceAudience(models.Model):
-    _name = 'amr.resource.audience'
+    _name = 'oidc.issuer.register.audience'
     _description = 'Resource Issuer Audience'
     _inherit = 'amr.resource.registry.access'
     _rec_name = 'value'
 
     value = fields.Char(required=True)
-    issuer_id = fields.Many2one('amr.resource.issuer', required=True, ondelete='cascade', index=True)
+    issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
     company_id = fields.Many2one(related='issuer_id.company_id', store=True, readonly=True)
 
     _sql_constraints = [('audience_unique', 'unique(issuer_id, value)', 'Audience must be unique per issuer.')]
@@ -283,7 +403,7 @@ class AmrResourceAudience(models.Model):
                 raise ValidationError('An exact nonempty audience is required.')
 
     def write(self, values):
-        parents = self.mapped('issuer_id') if 'issuer_id' in values else self.env['amr.resource.issuer']
+        parents = self.mapped('issuer_id') if 'issuer_id' in values else self.env['oidc.issuer.register']
         result = super(AmrResourceAudience, self).write(values)
         if parents.exists().filtered(lambda record: not record.audience_ids):
             raise ValidationError('At least one audience is required.')
@@ -298,13 +418,13 @@ class AmrResourceAudience(models.Model):
 
 
 class AmrResourceBinding(models.Model):
-    _name = 'amr.resource.binding'
+    _name = 'oidc.issuer.subject'
     _description = 'Resource Issuer Subject Binding'
     _inherit = 'amr.resource.registry.access'
     _rec_name = 'sub'
 
     sub = fields.Char(required=True)
-    issuer_id = fields.Many2one('amr.resource.issuer', required=True, ondelete='cascade', index=True)
+    issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
     user_id = fields.Many2one('res.users', required=True, ondelete='restrict')
     company_id = fields.Many2one(related='issuer_id.company_id', store=True, readonly=True)
 

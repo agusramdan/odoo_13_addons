@@ -24,120 +24,141 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class TestResourceContracts(ResourceCase):
     def test_ut02_settings_action_and_declarations(self):
+        settings = self.env['res.config.settings'].with_user(self.admin).create({})
+        action = settings.action_open_resource_issuers()
+        self.assertEqual(action['res_model'], 'oidc.issuer.register')
+        self.assertEqual(action['type'], 'ir.actions.act_window')
+        self.assertEqual(action['view_mode'], 'tree,form')
         params = self.env['ir.config_parameter'].sudo()
         params.set_param('web.base.url', 'http://127.0.0.1:19000')
         parameter = params.search([('key', '=', 'web.base.url')], limit=1)
-        settings = self.env['res.config.settings'].new({})
-        action = settings.action_edit_web_base_url()
-        self.assertEqual(action, {'type': 'ir.actions.act_window', 'res_model': 'ir.config_parameter',
-                                  'res_id': parameter.id, 'view_mode': 'form'})
+        self.assertEqual(settings.action_edit_web_base_url(), {
+            'type': 'ir.actions.act_window', 'res_model': 'ir.config_parameter',
+            'res_id': parameter.id, 'view_mode': 'form',
+        })
         self.assertEqual(parameter.value, 'http://127.0.0.1:19000')
         parameter.unlink()
         self.assertFalse(settings.action_edit_web_base_url()['res_id'])
         self.assertFalse(params.search([('key', '=', 'web.base.url')]))
-        defaults = settings.default_get(['amr_select_audience', 'amr_select_issuer'])
-        self.assertEqual(defaults['amr_select_audience'], 'web.base.url')
-        self.assertEqual(defaults['amr_select_issuer'], 'web.base.url')
-        for name, key in (('amr_select_audience', 'amr_resource.audience'),
-                          ('amr_select_issuer', 'amr_resource.issuer'),
-                          ('amr_web_base_url_freeze', 'web.base.url.freeze')):
-            self.assertEqual(settings._fields[name].config_parameter, key)
-        # Static source contract, not a rendered view or ACL test.
-        tree = ElementTree.parse(str(ROOT / 'views/res_config_settings_views.xml'))
-        block = tree.find(".//div[@id='amr_resource_addons']")
+        self.assertNotIn('amr_select_issuer', settings._fields)
+        self.assertNotIn('amr_select_audience', settings._fields)
+        self.assertNotIn('amr_select_issuer', settings.default_get(['amr_select_issuer']))
+        self.assertNotIn('amr_select_audience', settings.default_get(['amr_select_audience']))
+        self.assertEqual(settings._fields['amr_web_base_url_freeze'].config_parameter,
+                         'web.base.url.freeze')
+        root = ElementTree.parse(str(ROOT / 'views/res_config_settings_views.xml')).getroot()
+        block = root.find(".//div[@id='amr_resource_addons']")
         self.assertEqual(block.get('string'), 'Server Resource')
         self.assertEqual(block.get('data-string'), 'amr_resource_addons')
         self.assertEqual(block.get('groups'), 'base.group_erp_manager')
-        self.assertIsNone(tree.find(".//field[@name='amr_select_issuer']"))
-        freeze = tree.find(".//field[@name='amr_web_base_url_freeze']")
-        self.assertEqual(ast.literal_eval(freeze.get('attrs'))['invisible'],
-                         [('amr_select_audience', '!=', 'web.base.url')])
-        edit = tree.find(".//button[@name='action_edit_web_base_url']")
+        self.assertIsNone(root.find(".//field[@name='amr_select_issuer']"))
+        self.assertIsNone(root.find(".//field[@name='amr_select_audience']"))
+        edit = root.find(".//button[@name='action_open_resource_issuers']")
         self.assertIsNotNone(edit)
+        self.assertEqual(edit.get('groups'), 'amr_resource.group_oidc_trust_admin')
+        self.assertEqual(edit.get('type'), 'object')
+        freeze = root.find(".//field[@name='amr_web_base_url_freeze']")
+        self.assertIsNotNone(freeze)
+        self.assertIsNone(freeze.get('attrs'))
         settings_ast = ast.parse((ROOT / 'models/res_config_settings.py').read_text())
-        freeze_decl = next(n.value for n in ast.walk(settings_ast) if isinstance(n, ast.Assign)
-                           and any(isinstance(t, ast.Name) and t.id == 'amr_web_base_url_freeze'
-                                   for t in n.targets))
+        freeze_decl = next(n.value for n in ast.walk(settings_ast)
+                           if isinstance(n, ast.Assign) and any(
+                               isinstance(t, ast.Name) and t.id == 'amr_web_base_url_freeze'
+                               for t in n.targets))
         self.assertNotIn('default', [k.arg for k in freeze_decl.keywords])
 
     def test_ut07_auth_machine_params_and_metadata(self):
+        payload = {'synthetic': True}
         helper = Mock()
-        helper.sudo.return_value = helper
-        helper.get_validate_user.return_value = {'sub': 'synthetic'}
-        helper.get_user_match.return_value = SimpleNamespace(id=2468)
+        helper._verified.return_value = False
+        helper.get_validate_user.return_value = payload
+        helper.get_user_match.return_value = self.admin
         helper.get_bearer_token.return_value = self.token
         helper.get_param_token.return_value = self.token
-        request = SimpleNamespace(env={'amr.resource.helper': helper}, uid=0)
+        request = SimpleNamespace(env={'amr.resource.helper': helper}, uid=False)
         with patch.object(ir_http, 'request', request):
             self.assertEqual(ir_http.IrHttp.get_jwt_payload(), {})
             self.assertIsNone(ir_http.IrHttp.check_scope('ungranted'))
-            for method in (ir_http.IrHttp._auth_method_machine, ir_http.IrHttp._auth_method_params):
-                request.uid = 0
-                method()
-                self.assertEqual(request.uid, 2468)
+            for method, extraction in (
+                    (ir_http.IrHttp._auth_method_machine, helper.get_bearer_token),
+                    (ir_http.IrHttp._auth_method_params, helper.get_param_token)):
+                request.uid = False
+                helper.reset_mock()
+                self.assertIsNone(method())
+                extraction.assert_called_once_with()
+                helper.get_validate_user.assert_called_once_with(self.token)
+                helper.get_user_match.assert_called_once_with(payload)
+                self.assertEqual(request.uid, self.admin.id)
                 self.assertIs(request.jwt_token, self.token)
-                self.assertEqual(request.jwt_payload, {'sub': 'synthetic'})
-                request.jwt_payload = {'old': True}
+                self.assertIs(request.jwt_payload, payload)
+                request.jwt_payload = 'existing-metadata'
                 method()
-                self.assertEqual(request.jwt_payload, {'old': True})
-                helper.get_validate_user.return_value = None
+                self.assertEqual(request.jwt_payload, 'existing-metadata')
+                helper.get_validate_user.side_effect = Unauthorized()
+                helper.get_user_match.reset_mock()
                 with self.assertRaises(Unauthorized):
                     method()
-                helper.get_validate_user.return_value = {'sub': 'synthetic'}
+                helper.get_user_match.assert_not_called()
+                self.assertEqual(request.uid, self.admin.id)
+                self.assertEqual(request.jwt_payload, 'existing-metadata')
+                helper.get_validate_user.side_effect = None
                 helper.get_user_match.return_value = None
                 with self.assertRaises(Unauthorized):
                     method()
-                helper.get_user_match.return_value = SimpleNamespace(id=2468)
+                self.assertEqual(request.uid, self.admin.id)
+                self.assertEqual(request.jwt_payload, 'existing-metadata')
+                helper.get_user_match.return_value = self.admin
             helper.get_header_token.assert_not_called()
 
     def test_ut07_session_params_bearer_order(self):
-        # Invoke real dispatch body on a small class with only boundary methods replaced.
-        events = []
-
+        calls = []
         class AuthProbe:
             _auth_method_user_or_param = classmethod(ir_http.IrHttp._auth_method_user_or_param.__func__)
-
+            _authenticate_token = classmethod(ir_http.IrHttp._authenticate_token.__func__)
             @classmethod
             def _auth_method_user(cls):
-                events.append('session')
-                if cls.session_error:
-                    raise Unauthorized()
-                return 'session-result'
-
+                calls.append('session')
+                if session_valid[0]:
+                    return 'session-result'
+                raise Unauthorized()
             @classmethod
             def _auth_method_params(cls):
-                events.append('params')
-                if cls.params_error:
-                    raise Unauthorized()
-                return 'params-result'
-
+                calls.append('params')
+                if params_valid[0]:
+                    return 'params-result'
+                raise Unauthorized()
         helper = Mock()
-        helper.sudo.return_value = helper
-        helper.get_validate_user.return_value = {'sub': 'synthetic'}
-        helper.get_user_match.return_value = SimpleNamespace(id=2468)
-        helper.get_bearer_token.side_effect = lambda: events.append('bearer') or self.token
-        request = SimpleNamespace(env={'amr.resource.helper': helper}, uid=0)
+        helper.get_bearer_token.side_effect = lambda: calls.append('bearer') or bearer[0]
+        helper.get_validate_user.return_value = {'synthetic': True}
+        helper.get_user_match.return_value = self.admin
+        session_valid, params_valid, bearer = [True], [True], [self.token]
+        request = SimpleNamespace(env={'amr.resource.helper': helper}, uid=False)
         with patch.object(ir_http, 'request', request):
-            AuthProbe.session_error = False
-            AuthProbe.params_error = False
             self.assertEqual(AuthProbe._auth_method_user_or_param(), 'session-result')
-            self.assertEqual(events, ['session'])
-            events.clear()
-            AuthProbe.session_error = True
+            self.assertEqual(calls, ['session'])
+            helper.get_bearer_token.assert_not_called()
+            session_valid[0] = False
+            calls[:] = []
+            self.assertIsNone(AuthProbe._auth_method_user_or_param())
+            self.assertEqual(calls, ['session', 'bearer'])
+            self.assertEqual(request.uid, self.admin.id)
+            for failure in ('validation', 'resolver'):
+                calls[:] = []
+                helper.get_validate_user.side_effect = Unauthorized() if failure == 'validation' else None
+                helper.get_user_match.return_value = None if failure == 'resolver' else self.admin
+                with self.assertRaises(Unauthorized):
+                    AuthProbe._auth_method_user_or_param()
+                self.assertEqual(calls, ['session', 'bearer'])
+                self.assertEqual(request.uid, self.admin.id)
+            calls[:] = []
+            bearer[0] = None
             self.assertEqual(AuthProbe._auth_method_user_or_param(), 'params-result')
-            self.assertEqual(events, ['session', 'params'])
-            events.clear()
-            AuthProbe.params_error = True
-            AuthProbe._auth_method_user_or_param()
-            self.assertEqual(events, ['session', 'params', 'bearer'])
-            self.assertEqual(request.uid, 2468)
-            helper.get_validate_user.return_value = None
+            self.assertEqual(calls, ['session', 'bearer', 'params'])
+            calls[:] = []
+            params_valid[0] = False
             with self.assertRaises(Unauthorized):
                 AuthProbe._auth_method_user_or_param()
-            helper.get_validate_user.return_value = {'sub': 'synthetic'}
-            helper.get_user_match.return_value = None
-            with self.assertRaises(Unauthorized):
-                AuthProbe._auth_method_user_or_param()
+            self.assertEqual(calls, ['session', 'bearer', 'params'])
 
     def synthetic_user(self, suffix, groups=()):
         return self.env['res.users'].with_context(no_reset_password=True).create({
@@ -160,11 +181,11 @@ class TestResourceContracts(ResourceCase):
         self.assertIs(self.helper.user_machine_sudo(self.env['res.users']), self.helper)
         elevated = self.helper.user_machine_sudo(machine)
         self.assertEqual(elevated.env.uid, machine.id)
-        self.assertTrue(elevated.env.su)
+        self.assertFalse(elevated.env.su)
         self.assertEqual(self.helper.user_machine_sudo(ordinary).env.uid, ordinary.id)
         self.assertTrue(machine.is_user_allow_create_token())
         for method in (machine.get_access_token, machine.create_access_token):
-            with self.assertRaises(TypeError):  # source raises NotImplemented singleton
+            with self.assertRaises(UserError):  # source raises NotImplemented singleton
                 method()
         url = 'http://127.0.0.1:19000/fixture'
         self.assertEqual(machine.add_url_access_token(url), url)
@@ -178,25 +199,46 @@ class TestResourceContracts(ResourceCase):
         self.assertIsNone(machine.decode(self.token))
 
     def test_ut08_context(self):
-        user = self.synthetic_user('context', [self.env.ref('base.group_user')])
-        marked = user.with_context(__access_token_context={'existing': True})
-        bearer = self.patch_model(self.helper, 'get_bearer_token', return_value=None)
-        self.assertIs(marked.with_access_token_context(), marked)
-        bearer.assert_not_called()
-        with self.assertRaises(UserError):
-            user.with_access_token_context()
-        bearer.return_value = self.token
-        payload = {'sub': 'synthetic'}
-        validate = self.patch_model(self.helper, 'validate', return_value=payload)
-        uid = self.patch_model(self.helper, 'get_uid', return_value=user.id)
-        self.assertEqual(user.with_access_token_context().env.context['__access_token_context'], payload)
-        uid.return_value = 0
-        self.assertIs(user.with_access_token_context(), user)
-        self.patch_model(self.env['ir.http'], 'get_jwt_payload', return_value=payload)
-        validate.reset_mock()
-        uid.return_value = user.id
-        self.assertEqual(user.with_access_token_context(validate=False).env.context['__access_token_context'], payload)
-        validate.assert_not_called()
+        from odoo.addons.amr_resource.models.helper import _VerifiedClaims
+        from ..models import res_users as users_module
+        self.profile.binding_ids = [(0, 0, {'sub': 'subject-a', 'user_id': self.admin.id})]
+        payload = _VerifiedClaims(dict(iss=self.profile.issuer, sub='subject-a'),
+                                  self.env.company.id, self.admin.id)
+        user = self.admin.with_user(self.admin)
+        with patch.object(type(self.helper), 'get_bearer_token', return_value=self.token) as bearer, \
+                patch.object(type(self.helper), 'validate', return_value=payload) as validate:
+            result = user.with_access_token_context()
+            self.assertIs(result.env.context['__access_token_context'], payload)
+            bearer.reset_mock()
+            validate.reset_mock()
+            self.assertIs(result.with_access_token_context(), result)
+            bearer.assert_not_called()
+            validate.assert_not_called()
+            other = self.synthetic_user('context-other', [self.env.ref('base.group_user')])
+            other = other.with_user(self.admin)
+            self.assertIs(other.with_access_token_context(), other)
+        forged = user.with_context(__access_token_context={'sub': 'subject-a'})
+        with patch.object(type(self.helper), 'get_bearer_token', return_value=self.token) as bearer, \
+                patch.object(type(self.helper), 'validate', side_effect=Unauthorized()) as validate:
+            with self.assertRaises(Unauthorized):
+                forged.with_access_token_context()
+            bearer.assert_called_once_with()
+            validate.assert_called_once_with(self.token)
+        with patch.object(type(self.helper), 'get_bearer_token', return_value=None), \
+                patch.object(type(self.helper), 'validate', side_effect=Unauthorized()):
+            with self.assertRaises(Unauthorized):
+                user.with_access_token_context()
+        with patch.object(users_module, 'request', SimpleNamespace(env=self.helper.env)), \
+                patch.object(type(self.env['ir.http']), 'get_jwt_payload', return_value=payload), \
+                patch.object(type(self.helper), 'validate') as validate:
+            self.assertIs(user.with_access_token_context(validate=False).env.context[
+                '__access_token_context'], payload)
+            validate.assert_not_called()
+        with patch.object(type(self.env['ir.http']), 'get_jwt_payload', return_value=dict(payload)), \
+                patch.object(type(self.helper), 'validate') as validate:
+            with self.assertRaises(Unauthorized):
+                user.with_access_token_context(validate=False)
+            validate.assert_not_called()
 
     def test_ut08_session_helper(self):
         user = SimpleNamespace(id=2468, login='synthetic')
@@ -334,7 +376,7 @@ class TestResourceContracts(ResourceCase):
         self.assertEqual(seed.find("field[@name='share']").get('eval'), 'False')
         self.assertIn('group_machine', seed.find("field[@name='groups_id']").get('eval'))
         manifest = ast.literal_eval((ROOT / '__manifest__.py').read_text())
-        self.assertEqual(manifest['version'], '13.0.0.0.8')
+        self.assertEqual(manifest['version'], '13.0.1.0.0')
         self.assertEqual(manifest['depends'], ['base', 'web', 'base_setup'])
         for path in ('security/res_groups.xml', 'views/res_config_settings_views.xml',
                      'wizard/create_user_wizard.xml'):
