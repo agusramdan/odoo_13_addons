@@ -9,7 +9,7 @@ import sys
 import time
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -616,6 +616,189 @@ class SecurityUnitTests(unittest.TestCase):
         self.request.jwt_payload = self.helper.validate(self.token())
         result = consumer.with_access_token_context(validate=False)
         self.assertTrue(self.helper._verified(result['__access_token_context']))
+
+    def test_explicit_jwt_no_jwks_uses_authoritative_introspection_after_prefilter(self):
+        for name, value in dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='accepted.contract.ref',
+            introspection_credential_endpoint='https://issuer.example/introspect',
+            allow_jwt_introspection=True).items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'jwt'
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
+        response = dict(self.claims, active=True)
+        self.fetch.return_value = response
+        token = self.token()
+        result = self.helper.validate(token)
+        self.assertTrue(self.helper._verified(result))
+        self.assertEqual(result['jti'], 'synthetic-jti')
+        self.fetch.assert_called_once_with(self.profile.introspection_endpoint,
+            data={'token': token}, headers={'Authorization': helper_module._introspection_basic_header(
+                'auth-client', 'synthetic-secret')})
+        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+        self.fetch.reset_mock()
+        self.env.parameters.get_param.reset_mock()
+        self.profile.introspection_source = 'rfc8414'
+        self.profile.introspection_endpoint = False
+        metadata = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
+                    'authorization_endpoint': 'https://issuer.example/authorize',
+                    'introspection_endpoint': 'https://issuer.example/introspect',
+                    'introspection_endpoint_auth_methods_supported': ['client_secret_basic']}
+        self.fetch.side_effect = [metadata, response]
+        self.assertTrue(self.helper._verified(self.helper.validate(token)))
+        self.assertEqual(self.fetch.call_count, 2)
+        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+
+    def test_prohibited_jwt_introspection_paths_do_not_read_secret_or_post(self):
+        settings = dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='accepted.contract.ref',
+            introspection_credential_endpoint='https://issuer.example/introspect',
+            allow_jwt_introspection=True)
+        for name, value in settings.items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'jwt'
+        cases = ('unknown', 'inactive', 'source', 'key', 'not-allowed', 'bad-signature', 'bad-header')
+        for case in cases:
+            with self.subTest(case=case):
+                for name, value in settings.items():
+                    setattr(self.profile, name, value)
+                self.profile.active = True
+                self.profile.local_key_ref = False
+                self.profile.verification_source = 'none'
+                self.profile.allow_jwt_introspection = True
+                token = self.token()
+                if case == 'unknown':
+                    token = self.token(dict(self.claims, iss='https://unknown.example'))
+                elif case == 'inactive':
+                    self.profile.active = False
+                elif case == 'source':
+                    self.profile.verification_source = 'jwks'
+                elif case == 'key':
+                    self.profile.local_key_ref = 'protected.local.key'
+                elif case == 'not-allowed':
+                    self.profile.allow_jwt_introspection = False
+                elif case == 'bad-signature':
+                    token = self.token(key=self.other_key)
+                    self.profile.verification_source = 'jwks'
+                    self.profile.jwks_uri = 'https://issuer.example/jwks'
+                    self.fetch.return_value = {'keys': [self.jwk]}
+                elif case == 'bad-header':
+                    token = self.token(headers={'typ': 'JWT'})
+                self.fetch.reset_mock()
+                self.env.parameters.get_param.reset_mock()
+                self.reject(self.helper.validate, token)
+                self.env.parameters.get_param.assert_not_called()
+                posts = [item for item in self.fetch.call_args_list if item[1].get('data') == {'token': token}]
+                self.assertEqual(posts, [])
+
+    def test_rfc8414_introspection_capability_is_retained_and_enforced_before_secret(self):
+        values = dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='rfc8414', introspection_endpoint=False,
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='accepted.contract.ref',
+            introspection_credential_endpoint='https://issuer.example/introspect')
+        for name, value in values.items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'opaque'
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
+        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
+                                       aud='second', azp='synthetic-client')
+        base = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
+                'authorization_endpoint': 'https://issuer.example/authorize',
+                'introspection_endpoint': self.profile.introspection_credential_endpoint}
+        cases = (
+            ('valid', {'introspection_endpoint_auth_methods_supported': ['client_secret_basic']}, True),
+            ('absent-with-contract', {}, True),
+            ('malformed', {'introspection_endpoint_auth_methods_supported': 'client_secret_basic'}, False),
+            ('empty', {'introspection_endpoint_auth_methods_supported': []}, False),
+            ('excluded', {'introspection_endpoint_auth_methods_supported': ['client_secret_post']}, False),
+        )
+        for label, capability, succeeds in cases:
+            with self.subTest(case=label):
+                self.fetch.reset_mock()
+                self.env.parameters.get_param.reset_mock()
+                self.fetch.side_effect = None
+                self.fetch.return_value = dict(base, **capability)
+                if succeeds:
+                    config = self.helper.get_oidc_config(self.profile.issuer)
+                    self.assertEqual(set(config), {'issuer', 'jwks_uri', 'token_endpoint', 'introspection_endpoint'})
+                    self.fetch.assert_called_once()
+                    self.fetch.reset_mock()
+                    internal_config, methods = self.helper._get_oidc_config(self.profile.issuer)
+                    self.assertEqual(internal_config, config)
+                    self.assertEqual(methods, capability.get('introspection_endpoint_auth_methods_supported'))
+                    self.fetch.assert_called_once()
+                    self.fetch.reset_mock()
+                    self.fetch.side_effect = [dict(base, **capability), dict(active=True, sub='subject',
+                        client_id='synthetic-client', aud='second', azp='synthetic-client')]
+                    self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
+                    self.assertEqual(self.fetch.call_count, 2)
+                    self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+                else:
+                    self.fetch.side_effect = [dict(base, **capability), {}]
+                    self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
+                    self.assertEqual(self.fetch.call_count, 1)
+                    self.env.parameters.get_param.assert_not_called()
+        self.profile.introspection_basic_contract_ref = False
+        self.fetch.reset_mock()
+        self.fetch.side_effect = [dict(base), {}]
+        self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
+        self.assertEqual(self.fetch.call_count, 1)
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_generation_and_introspection_keep_distinct_credential_references(self):
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'manual'
+        self.profile.discovery_unavailable_declared = True
+        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery'
+        self.profile.verification_source = 'none'
+        self.profile.jwks_uri = False
+        self.profile.no_jwks_declaration = True
+        self.profile.no_jwks_evidence_ref = 'evidence.keys'
+        self.profile.introspection_source = 'manual'
+        self.profile.token_profile = 'opaque'
+        self.profile.introspection_endpoint = 'https://issuer.example/introspect'
+        self.profile.credential_ref = 'fixture.generation.secret'
+        self.profile.introspection_credential_ref = 'fixture.introspection.secret'
+        self.profile.introspection_credential_endpoint = self.profile.introspection_endpoint
+        self.profile.introspection_auth_client_id = 'auth-client'
+        self.profile.introspection_auth_method = 'client_secret_basic'
+        self.profile.introspection_basic_contract_ref = 'accepted.contract.ref'
+        self.env.parameters.get_param.side_effect = lambda key: {
+            'fixture.generation.secret': 'generation-secret',
+            'fixture.introspection.secret': 'introspection-secret'}.get(key)
+        self.fetch.side_effect = [dict(access_token='generated-access'),
+            dict(active=True, iss=self.profile.issuer, sub='subject', client_id=self.profile.client_id,
+                 aud='second', exp=int(time.time()) + 300, iat=int(time.time()) - 1,
+                 jti='introspection-jti', azp=self.profile.azp)]
+        self.assertEqual(self.helper.encode(iss=self.profile.issuer,
+            grant_type='client_credentials'), 'generated-access')
+        validation = self.helper.introspect_token('opaque-access', iss=self.profile.issuer)
+        self.assertTrue(self.helper._verified(validation))
+        self.assertEqual(self.fetch.call_args_list[0][0], (self.profile.token_endpoint,))
+        self.assertEqual(self.fetch.call_args_list[0][1]['data'], {'grant_type': 'client_credentials'})
+        self.assertEqual(self.fetch.call_args_list[0][1]['headers']['Authorization'],
+            helper_module._introspection_basic_header(self.profile.client_id, 'generation-secret'))
+        self.assertEqual(self.fetch.call_args_list[1][0], (self.profile.introspection_endpoint,))
+        self.assertEqual(self.fetch.call_args_list[1][1]['headers']['Authorization'],
+            helper_module._introspection_basic_header('auth-client', 'introspection-secret'))
+        self.assertEqual(self.env.parameters.get_param.call_args_list,
+            [call('fixture.generation.secret'), call('fixture.introspection.secret')])
 
     def test_mvp_introspection_uses_separate_credential_and_authoritative_claims(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
