@@ -2,4 +2,5 @@ id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_oidc_issuer_trust,Trust issuer administration,model_oidc_issuer_register,amr_resource.group_oidc_trust_admin,1,1,1,1
 access_oidc_audience_trust,Trust audience administration,model_oidc_issuer_register_audience,amr_resource.group_oidc_trust_admin,1,1,1,1
 access_oidc_binding_trust,Trust binding administration,model_oidc_issuer_subject,amr_resource.group_oidc_trust_admin,1,1,1,1
+access_oidc_user_mapping_trust,Trust user mapping administration,model_oidc_issuer_user_mapping,amr_resource.group_oidc_trust_admin,1,1,1,1
 access_oidc_issuer_code,Trust source editing,model_oidc_issuer_register,amr_resource.group_oidc_code_admin,1,1,0,0

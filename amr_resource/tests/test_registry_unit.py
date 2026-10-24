@@ -121,19 +121,81 @@ CODE = registry.CODE_GROUP
 
 
 class RegistryUnitTests(unittest.TestCase):
+    def test_algorithm_catalog_is_code_owned_and_policy_intersection_is_strict(self):
+        catalog = registry._ALGORITHM_CATALOG
+        self.assertEqual(set(catalog), {'RS256', 'PS256'})
+        self.assertEqual(catalog['RS256'], {'key_family': 'RSA', 'min_key_bits': 2048,
+                                             'purpose': 'access_token_verification',
+                                             'support_state': 'supported'})
+        self.assertEqual(catalog['PS256'], {'key_family': 'RSA', 'min_key_bits': 2048,
+                                             'purpose': 'access_token_verification',
+                                             'support_state': 'target'})
+        self.assertEqual(registry._effective_algorithms(['RS256', 'PS256'], ['PS256']),
+                         frozenset(['PS256']))
+        for enabled, supported in (([], ['RS256']), (['HS256'], ['RS256']),
+                                   (['PS256'], ['RS256'])):
+            with self.assertRaises(ValidationError):
+                registry._effective_algorithms(enabled, supported)
+
     def profile(self, **values):
         row = SimpleNamespace(issuer='https://issuer.example', token_profile='jwt',
                               jwks_uri='https://keys.example/jwks', token_endpoint=False,
                               introspection_endpoint=False, client_id='resource-client', azp='resource-client',
                               allow_missing_azp=False, local_public_key=False, local_key_ref=False, credential_ref=False, audience_ids=[object()],
-                              resolver_mode=False, fixed_user_id=False, company_id=7)
+                              resolver_mode=False, fixed_user_id=False, user_mapping_ids=[],
+                              mvp_enabled=False, metadata_mode=False,
+                              discovery_unavailable_declared=False,
+                              discovery_unavailable_evidence_ref=False,
+                              verification_source=False, introspection_source='none',
+                              no_jwks_declaration=False, no_jwks_evidence_ref=False,
+                              introspection_credential_ref=False, introspection_auth_client_id=False,
+                              introspection_auth_method=False, introspection_basic_contract_ref=False,
+                              introspection_credential_endpoint=False, allow_jwt_introspection=False,
+                              allow_introspection_iss_absent=False, company_id=7)
         row.__dict__.update(values)
         return row
 
     def check_profile(self, **values):
         registry.AmrResourceIssuer._check_profile([self.profile(**values)])
 
+    def test_mapping_resolver_is_first_unique_and_rejects_ambiguity(self):
+        rows = [
+            {'sequence': 20, 'field_user': 'partner_id.email', 'jwt_key': 'email'},
+            {'sequence': 10, 'field_user': 'login', 'jwt_key': 'preferred_username'},
+        ]
+        calls = []
+        def lookup(field, value):
+            calls.append((field, value))
+            return [] if value == 'no-match' else [7]
+        self.assertEqual(registry._mapping_candidate(rows, {
+            'email': 'not-evaluated@example.invalid', 'preferred_username': 'user7'}, lookup), 7)
+        self.assertEqual(calls, [('login', 'user7')])
+        with self.assertRaises(ValidationError):
+            registry._mapping_candidate(rows, {'preferred_username': 'ambiguous', 'email': 'later'},
+                                        lambda field, value: [7, 8] if value == 'ambiguous' else [7])
+
+    def test_mapping_configuration_bounds_and_sequence_validation(self):
+        rows = [{'sequence': index + 1, 'field_user': 'login', 'jwt_key': 'sub', 'active': True}
+                for index in range(20)]
+        self.assertTrue(registry._validate_mapping_rows(rows))
+        self.assertTrue(registry._validate_mapping_rows(
+            rows + [dict(rows[-1], sequence=21, active=False)]))
+        with self.assertRaises(ValidationError):
+            registry._validate_mapping_rows(rows + [dict(rows[-1], sequence=21)])
+        with self.assertRaises(ValidationError):
+            registry._validate_mapping_rows(rows + [dict(rows[-1], sequence=1, active=False)])
+        with self.assertRaises(ValidationError):
+            registry._validate_mapping_rows([dict(rows[0], sequence=True)])
+
     def test_profile_valid_jwt_opaque_and_unselected_resolver(self):
+        self.assertEqual(registry._validate_mapping_claim('claim', '  exact  '), '  exact  ')
+        for value in ('', ' ', chr(0), chr(127), chr(128), 'x' * 1025, 12, True):
+            with self.subTest(value_type=type(value).__name__, value_length=len(value) if isinstance(value, str) else None):
+                with self.assertRaises(ValidationError):
+                    registry._validate_mapping_claim('claim', value)
+        for key in ('a.b', '$.sub', '__class__', '1claim', 'x' * 65):
+            with self.subTest(key=key), self.assertRaises(ValidationError):
+                registry._validate_mapping_claim(key, 'valid')
         self.check_profile()
         self.check_profile(token_profile='opaque', jwks_uri=False,
                            introspection_endpoint='https://issuer.example/introspect')
@@ -364,6 +426,49 @@ class RegistryUnitTests(unittest.TestCase):
                         with self.assertRaises(ValidationError):
                             model.unlink() if operation == 'unlink' else model.write({'issuer_id': 2})
 
+    def test_persistent_mvp_source_and_introspection_fields_are_declared(self):
+        model = registry.AmrResourceIssuer
+        for name in ('metadata_mode', 'discovery_unavailable_declared',
+                     'discovery_unavailable_evidence_ref', 'verification_source',
+                     'introspection_source', 'no_jwks_declaration',
+                     'no_jwks_evidence_ref', 'introspection_credential_ref',
+                     'introspection_auth_client_id', 'introspection_auth_method',
+                     'introspection_basic_contract_ref',
+                     'introspection_credential_endpoint', 'allow_jwt_introspection',
+                     'allow_introspection_iss_absent'):
+            self.assertTrue(hasattr(model, name), name)
+        self.assertEqual(model.metadata_mode.args[0], [
+            ('manual', 'Manual'), ('oidc_discovery', 'OIDC Discovery')])
+        self.assertEqual(model.verification_source.args[0], [
+            ('jwks', 'JWKS'), ('local_public', 'Local public key'), ('none', 'No JWKS')])
+        self.assertEqual(model.introspection_source.args[0], [
+            ('none', 'None'), ('manual', 'Manual'), ('rfc8414', 'RFC 8414')])
+
+    def test_mvp_manual_no_jwks_requires_explicit_source_declarations(self):
+        profile = self.profile(token_profile='opaque', jwks_uri=False,
+                               mvp_enabled=True, metadata_mode='manual',
+                               discovery_unavailable_declared=True,
+                               discovery_unavailable_evidence_ref='evidence-discovery',
+                               verification_source='none', introspection_source='manual',
+                               no_jwks_declaration=True, no_jwks_evidence_ref='evidence-no-jwks',
+                               introspection_endpoint='https://issuer.example/introspect',
+                               introspection_credential_endpoint='https://issuer.example/introspect',
+                               introspection_credential_ref='introspection.secret',
+                               introspection_auth_client_id='auth-client',
+                               introspection_auth_method='client_secret_basic',
+                               introspection_basic_contract_ref='provider-contract')
+        registry.AmrResourceIssuer._check_profile([profile])
+        jwt_profile = self.profile(**dict(profile.__dict__, token_profile='jwt',
+                                          allow_jwt_introspection=True))
+        registry.AmrResourceIssuer._check_profile([jwt_profile])
+        for field, value in (('discovery_unavailable_evidence_ref', False),
+                             ('no_jwks_declaration', False),
+                             ('introspection_credential_ref', False),
+                             ('introspection_basic_contract_ref', False)):
+            invalid = self.profile(**dict(profile.__dict__, **{field: value}))
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile([invalid])
+
     def test_declarations_constraints_no_default_mode_no_execution(self):
         self.assertEqual(registry.AmrResourceIssuer._sql_constraints[0][1], 'unique(issuer)')
         self.assertEqual(registry.AmrResourceAudience._sql_constraints[0][1], 'unique(issuer_id, value)')
@@ -393,7 +498,7 @@ class RegistryUnitTests(unittest.TestCase):
             self.assertIn(filename, manifest['data'])
         with (ROOT / 'security/ir.model.access.csv').open() as source:
             acls = list(csv.DictReader(source))
-        self.assertEqual(len(acls), 4)
+        self.assertEqual(len(acls), 5)
         self.assertEqual({row['group_id:id'] for row in acls}, {TRUST, CODE})
         code_acl = next(row for row in acls if row['group_id:id'] == CODE)
         self.assertEqual((code_acl['perm_create'], code_acl['perm_unlink']), ('0', '0'))
