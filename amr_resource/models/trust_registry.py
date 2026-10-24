@@ -568,14 +568,13 @@ class AmrResourceIssuer(models.Model):
                                   for row in self.algorithm_policy_ids], key=lambda row: row['name']),
         }
 
-    def action_capture_policy_snapshot(self, evidence_ref, reason_code):
+    def action_capture_policy_snapshot(self, evidence_ref):
         import re
         if not self._registry_role(TRUST_GROUP):
             raise AccessError('Registry access denied.')
         self.ensure_one()
-        if (not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)
-                or not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
-            raise ValidationError('A sanitized evidence reference and reason code are required.')
+        if not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref):
+            raise ValidationError('A sanitized evidence reference is required.')
         self._check_profile()
         payload = self._policy_snapshot_tuple()
         self._validate_snapshot_algorithms(payload)
@@ -589,17 +588,16 @@ class AmrResourceIssuer(models.Model):
         })
         _logger.info('Trust policy snapshot captured issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s timestamp=%s',
                      self.id, snapshot.id, self.policy_revision, self.env.uid,
-                     self.verification_source or 'legacy', reason_code, fields.Datetime.now())
+                     self.verification_source or 'legacy', 'snapshot_capture', fields.Datetime.now())
         return snapshot.id
 
-    def action_restore_policy_snapshot(self, snapshot_id, expected_revision, evidence_ref, reason_code):
+    def action_restore_policy_snapshot(self, snapshot_id, expected_revision, evidence_ref):
         import re
         if not self._registry_role(TRUST_GROUP):
             raise AccessError('Registry access denied.')
         self.ensure_one()
         if (type(snapshot_id) is not int or snapshot_id <= 0 or type(expected_revision) is not int
-                or not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)
-                or not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
+                or not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)):
             raise ValidationError('Rollback identifiers or evidence are invalid.')
         self.check_access_rights('write')
         self.check_access_rule('write')
@@ -649,7 +647,7 @@ class AmrResourceIssuer(models.Model):
             super(AmrResourceIssuer, restoring).write(values)
         _logger.info('Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
                      self.id, snapshot.id, expected_revision + 1, self.env.uid,
-                     payload.get('verification_source') or 'legacy', reason_code, evidence_ref,
+                     payload.get('verification_source') or 'legacy', 'snapshot_restore', evidence_ref,
                      fields.Datetime.now())
         return True
 
@@ -842,23 +840,21 @@ class OidcPolicySnapshot(models.Model):
     def unlink(self):
         raise AccessError('Snapshots are append-only.')
 
-    def action_invalidate(self, reason_code):
-        import re
+    def action_invalidate(self):
         if not self.env['oidc.issuer.register']._registry_role(TRUST_GROUP):
             raise AccessError('Registry access denied.')
         self.check_access_rights('read')
         self.check_access_rule('read')
-        if not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code):
-            raise ValidationError('A bounded reason code is required.')
         for snapshot in self:
             if snapshot.invalidated:
                 raise ValidationError('Snapshot is already invalidated.')
         for snapshot in self:
             super(OidcPolicySnapshot, snapshot.sudo()).write({
                 'invalidated': True, 'invalidated_actor_id': self.env.uid,
-                'invalidated_at': fields.Datetime.now(), 'invalidation_reason': reason_code})
+                'invalidated_at': fields.Datetime.now(), 'invalidation_reason': 'snapshot_invalidated'})
             _logger.info('Trust policy snapshot invalidated issuer_id=%s snapshot_id=%s actor=%s reason_code=%s timestamp=%s',
-                         snapshot.issuer_id.id, snapshot.id, self.env.uid, reason_code, fields.Datetime.now())
+                         snapshot.issuer_id.id, snapshot.id, self.env.uid,
+                         'snapshot_invalidated', fields.Datetime.now())
         return True
 
 
