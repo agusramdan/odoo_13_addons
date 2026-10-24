@@ -436,6 +436,13 @@ class SecurityUnitTests(unittest.TestCase):
         self.reject(self.helper.get_user_match, payload)
         self.assertEqual(self.env.user_reads, [])
 
+    def test_oauth_basic_encodes_client_and_secret_components_before_base64(self):
+        value = helper_module._introspection_basic_header('A +:/%', 's +:/%é')
+        self.assertEqual(value, 'Basic QSslMkIlM0ElMkYlMjU6cyslMkIlM0ElMkYlMjUlQzMlQTk=')
+        for client_id, secret in (('', 'secret'), ('client', '')):
+            with self.subTest(client_id=client_id, secret=secret), self.assertRaises(Unauthorized):
+                helper_module._introspection_basic_header(client_id, secret)
+
     def test_mvp_verification_uses_intersected_issuer_algorithm_policy(self):
         self.profile.mvp_enabled = True
         self.profile.metadata_mode = 'manual'
