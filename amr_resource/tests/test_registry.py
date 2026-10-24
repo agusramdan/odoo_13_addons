@@ -10,7 +10,6 @@ class TestResourceRegistry(ResourceCase):
         self.profile.active = False
         values = dict(issuer=self.profile.issuer, client_id='client-a', token_profile='jwt',
                       jwks_uri='https://keys.invalid/jwks', allow_missing_azp=True,
-                      company_id=self.env.company.id,
                       audience_ids=[(0, 0, {'value': 'resource-a'})])
         with self.assertRaises((ValidationError, IntegrityError)), self.cr.savepoint():
             self.registry.create(values)
@@ -28,7 +27,7 @@ class TestResourceRegistry(ResourceCase):
         with self.assertRaises(AccessError):
             self.profile.with_user(ordinary).write({'python_code': 'not executed'})
         with self.assertRaises(AccessError):
-            self.registry.with_user(ordinary)._migrate_legacy_v1({}, [], [])
+            self.registry.with_user(ordinary)._migrate_legacy_v2({}, [], [])
         with self.assertRaises(AccessError):
             self.profile.write({'local_public_key': 'inline input is forbidden'})
 
@@ -57,12 +56,12 @@ class TestResourceRegistry(ResourceCase):
                       allow_missing_azp=True, resolver_mode='get_user_match')
         self.profile.unlink()
         bindings = [{'sub': 'subject-a', 'user_id': self.admin.id}]
-        result = self.registry._migrate_legacy_v1(values, ['resource-a'], bindings)
+        result = self.registry._migrate_legacy_v2(values, ['resource-a'], bindings)
         self.assertTrue(result['dry_run'])
         self.assertFalse(self.registry.search([('issuer', '=', values['issuer'])]))
-        self.assertFalse(params.get_param('amr_resource.migration.v1.company.%s' % self.env.company.id))
-        self.registry._migrate_legacy_v1(values, ['resource-a'], bindings, dry_run=False)
-        self.assertTrue(self.registry._migrate_legacy_v1(values, ['resource-a'], bindings,
+        self.assertFalse(params.get_param('amr_resource.migration.v2.global'))
+        self.registry._migrate_legacy_v2(values, ['resource-a'], bindings, dry_run=False)
+        self.assertTrue(self.registry._migrate_legacy_v2(values, ['resource-a'], bindings,
                                                        dry_run=False)['already_applied'])
         rows = self.registry.search([('issuer', '=', values['issuer'])])
         self.assertEqual(len(rows), 1)
@@ -70,7 +69,7 @@ class TestResourceRegistry(ResourceCase):
         self.assertEqual(params.get_param('amr_resource.issuer'), 'amr_resource.legacy.synthetic_issuer')
         rows.client_id = 'conflicting-client'
         with self.assertRaises(ValidationError):
-            self.registry._migrate_legacy_v1(values, ['resource-a'], bindings, dry_run=False)
+            self.registry._migrate_legacy_v2(values, ['resource-a'], bindings, dry_run=False)
 
     def test_stored_source_audit_without_execution(self):
         self.profile.python_code = 'raise RuntimeError("must never execute")'

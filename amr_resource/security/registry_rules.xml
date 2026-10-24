@@ -1,19 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo><data>
-    <!-- Global rules intersect every role's ACL; one effective company, not all allowed companies. -->
-    <record id="rule_oidc_issuer_company" model="ir.rule">
-        <field name="name">Trust issuer: effective company</field>
-        <field name="model_id" ref="model_oidc_issuer_register"/>
-        <field name="domain_force">[('company_id', '=', company_id)]</field>
-    </record>
-    <record id="rule_oidc_audience_company" model="ir.rule">
-        <field name="name">Trust audience: effective company</field>
-        <field name="model_id" ref="model_oidc_issuer_register_audience"/>
-        <field name="domain_force">[('company_id', '=', company_id)]</field>
-    </record>
-    <record id="rule_oidc_binding_company" model="ir.rule">
-        <field name="name">Trust binding: effective company</field>
-        <field name="model_id" ref="model_oidc_issuer_subject"/>
-        <field name="domain_force">[('company_id', '=', company_id)]</field>
-    </record>
+    <!-- Deliberately no company rule: ACLs and model guards restrict global trust access. -->
 </data></odoo>

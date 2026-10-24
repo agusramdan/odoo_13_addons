@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Company-local trust configuration; no discovery or stored-code execution."""
+"""Global trust configuration; no discovery or stored-code execution."""
 import hashlib
 import ipaddress
 import logging
@@ -45,7 +45,7 @@ def _https_url(value):
 
 
 
-def _legacy_plan(get_param, values, audiences, bindings, company_id):
+def _legacy_plan(get_param, values, audiences, bindings):
     """Resolve legacy *keys* once; require an administrator-authored exact plan."""
     import json
     import re
@@ -83,7 +83,7 @@ def _legacy_plan(get_param, values, audiences, bindings, company_id):
                       credential_ref=False, local_key_ref=False, azp=False,
                       allow_missing_azp=False, fixed_user_id=False)
     normalized.update(values)
-    plan: dict = dict(version=1, values=dict(normalized, company_id=company_id),
+    plan: dict = dict(version=2, values=normalized,
                 audiences=sorted(audiences), bindings=sorted(
                     [dict(b) for b in bindings], key=lambda b: b['sub']),
                 legacy_selectors=selectors, legacy_values=resolved)
@@ -112,27 +112,19 @@ class RegistryAccess(models.AbstractModel):
                 return False
         return super(RegistryAccess, self).check_access_rights(operation, raise_exception)
 
-    def check_access_rule(self, operation):
-        result = super(RegistryAccess, self).check_access_rule(operation)
-        if not self.env.su and any(row.company_id != self.env.company for row in self):
-            raise AccessError('Registry access denied.')
-        return result
-
-    def _guard_company_values(self, values):
-        if 'company_id' in values and values['company_id'] != self.env.company.id:
-            raise AccessError('Registry access denied.')
+    def _guard_parent_values(self, values):
         if 'issuer_id' in values:
             parent = self.env['oidc.issuer.register'].browse(values['issuer_id']).exists()
             parent.check_access_rights('read')
             parent.check_access_rule('read')
-            if len(parent) != 1 or parent.company_id != self.env.company:
+            if len(parent) != 1:
                 raise AccessError('Registry access denied.')
 
     @api.model_create_multi
     def create(self, vals_list):
         self.check_access_rights('create')
         for values in vals_list:
-            self._guard_company_values(values)
+            self._guard_parent_values(values)
         records = super(RegistryAccess, self).create(vals_list)
         _logger.info('Trust registry create model=%s ids=%s actor=%s',
                      self._name, records.ids, self.env.uid)
@@ -141,7 +133,7 @@ class RegistryAccess(models.AbstractModel):
     def write(self, values):
         self.check_access_rights('write')
         self.check_access_rule('write')
-        self._guard_company_values(values)
+        self._guard_parent_values(values)
         result = super(RegistryAccess, self).write(values)
         _logger.info('Trust registry write model=%s ids=%s actor=%s',
                      self._name, self.ids, self.env.uid)
@@ -193,8 +185,7 @@ class AmrResourceIssuer(models.Model):
     code_revision = fields.Integer(readonly=True, copy=False, groups=CODE_GROUP)
     code_digest = fields.Char(readonly=True, copy=False, groups=CODE_GROUP)
     code_date = fields.Datetime(readonly=True, copy=False, groups=CODE_GROUP)
-    company_id = fields.Many2one('res.company', required=True, index=True,
-                                default=lambda self: self.env.company, ondelete='restrict')
+
     fixed_user_id = fields.Many2one('res.users', ondelete='restrict')
     code_actor_id = fields.Many2one('res.users', readonly=True, copy=False,
                                    ondelete='restrict', groups=CODE_GROUP)
@@ -204,48 +195,47 @@ class AmrResourceIssuer(models.Model):
     _sql_constraints = [('issuer_unique', 'unique(issuer)', 'Issuer must be unique.')]
 
     @api.model
-    def _migrate_legacy_v1(self, values, audiences, bindings, dry_run=True):
+    def _migrate_legacy_v2(self, values, audiences, bindings, dry_run=True):
         """Explicit additive migration; never called during install or token handling."""
         if type(dry_run) is not bool or not self._registry_role('amr_resource.group_oidc_trust_admin'):
             raise AccessError('Registry access denied.')
         self.check_access_rights('create')
         # sudo: legacy parameters/marker are read only after the designated admin guard.
         params = self.env['ir.config_parameter'].sudo()
-        plan = _legacy_plan(params.get_param, values, audiences, bindings, self.env.company.id)
+        plan = _legacy_plan(params.get_param, values, audiences, bindings)
         data = plan['values']
-        marker = 'amr_resource.migration.v1.company.%s' % self.env.company.id
+        marker = 'amr_resource.migration.v2.global'
         previous = params.get_param(marker)
         if previous and previous != plan['digest']:
             raise ValidationError('Migration revision conflicts with the recorded plan.')
         domain = [('issuer', '=', data['issuer'])]
-        rows = self.with_context(active_test=False).search(domain)
-        # sudo: detect a global issuer collision without returning another company profile.
+        # sudo: inspect archived and active global rows after the admin guard.
         global_rows = self.sudo().with_context(active_test=False).search(domain)
-        if len(global_rows) != len(rows) or len(rows) > 1:
+        if len(global_rows) > 1:
             raise ValidationError('Migration issuer conflict.')
+        rows = global_rows
         commands = [(0, 0, {'value': value}) for value in plan['audiences']]
         candidate = self.new(dict(data, audience_ids=commands))
         candidate._check_profile()
         for binding in plan['bindings']:
             user = self.env['res.users'].browse(binding['user_id']).exists()
-            try:
-                self.env['amr.resource.helper']._eligible_user(user)
-            except Unauthorized:
-                raise ValidationError('Migration requires an eligible exact subject binding.') from None
+            if (len(user) != 1 or not user.active or user.id == SUPERUSER_ID or user.share
+                    or user.has_group('base.group_public') or user.has_group('base.group_portal')):
+                raise ValidationError('Migration requires an eligible exact subject binding.')
         if rows:
             if not rows.active or any(rows[field] != value if field != 'fixed_user_id'
                                       else rows[field].id != value
-                                      for field, value in data.items() if field != 'company_id'):
+                                      for field, value in data.items()):
                 raise ValidationError('Existing issuer configuration conflicts with migration.')
-            if rows.company_id != self.env.company or sorted(rows.audience_ids.mapped('value')) != plan['audiences']:
-                raise ValidationError('Existing issuer scope or audience conflict.')
+            if sorted(rows.audience_ids.mapped('value')) != plan['audiences']:
+                raise ValidationError('Existing issuer audience conflict.')
             actual = sorted([{'sub': b.sub, 'user_id': b.user_id.id} for b in rows.binding_ids],
                             key=lambda b: b['sub'])
             if actual != plan['bindings']:
                 raise ValidationError('Existing subject bindings conflict with migration.')
         elif previous:
             raise ValidationError('Recorded migration issuer is missing.')
-        result = {'version': 1, 'issuer_count': 1, 'binding_count': len(bindings),
+        result = {'version': 2, 'issuer_count': 1, 'binding_count': len(bindings),
                   'dry_run': dry_run, 'already_applied': bool(previous)}
         if dry_run or previous:
             return result
@@ -255,8 +245,14 @@ class AmrResourceIssuer(models.Model):
                 self.create(dict(data, audience_ids=commands, binding_ids=[
                     (0, 0, binding) for binding in plan['bindings']]))
             params.set_param(marker, plan['digest'])
-        _logger.info('Trust migration version=1 company=%s actor=%s bindings=%s',
-                     self.env.company.id, self.env.uid, len(bindings))
+            for xml_id in ('rule_oidc_issuer_company', 'rule_oidc_audience_company',
+                           'rule_oidc_binding_company'):
+                rule = self.env.ref('amr_resource.' + xml_id, raise_if_not_found=False)
+                if rule:
+                    # sudo: remove obsolete company rules after the designated migration-admin guard.
+                    rule.sudo().unlink()
+        _logger.info('Trust migration version=2 actor=%s bindings=%s',
+                     self.env.uid, len(bindings))
         return result
 
     @api.depends('local_key_ref')
@@ -316,7 +312,7 @@ class AmrResourceIssuer(models.Model):
 
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
-                    'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id', 'company_id',
+                    'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
                     'audience_ids')
     def _check_profile(self):
         for record in self:
@@ -363,9 +359,8 @@ class AmrResourceIssuer(models.Model):
                 user = record.fixed_user_id
                 if (len(user) != 1 or not user.active or user.id == SUPERUSER_ID
                         or user.share or user.has_group('base.group_public')
-                        or user.has_group('base.group_portal')
-                        or record.company_id not in user.company_ids):
-                    raise ValidationError('Fixed user must be an active eligible internal company user.')
+                        or user.has_group('base.group_portal')):
+                    raise ValidationError('Fixed user must be an active eligible internal user.')
 
     @api.model
     def _lookup(self, issuer=None, token_profile=None):
@@ -373,10 +368,9 @@ class AmrResourceIssuer(models.Model):
         if not _exact_string(issuer) or token_profile not in (None, 'jwt', 'opaque'):
             raise Unauthorized()
         try:
-            company_id = self.env.company.id
-            # sudo: read protected trust rows only, pinned to the effective request company.
+            # sudo: read protected global trust rows; user eligibility remains request-scoped.
             records = self.sudo().with_context(active_test=False).search([
-                ('issuer', '=', issuer), ('active', '=', True), ('company_id', '=', company_id)])
+                ('issuer', '=', issuer), ('active', '=', True)])
             if len(records) != 1 or (token_profile and records.token_profile != token_profile):
                 raise Unauthorized()
             return records
@@ -392,8 +386,6 @@ class AmrResourceAudience(models.Model):
 
     value = fields.Char(required=True)
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
-    company_id = fields.Many2one(related='issuer_id.company_id', store=True, readonly=True)
-
     _sql_constraints = [('audience_unique', 'unique(issuer_id, value)', 'Audience must be unique per issuer.')]
 
     @api.constrains('value')
@@ -426,8 +418,6 @@ class AmrResourceBinding(models.Model):
     sub = fields.Char(required=True)
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
     user_id = fields.Many2one('res.users', required=True, ondelete='restrict')
-    company_id = fields.Many2one(related='issuer_id.company_id', store=True, readonly=True)
-
     _sql_constraints = [('binding_unique', 'unique(issuer_id, sub)', 'Subject must be unique per issuer.')]
 
     @api.constrains('sub', 'user_id', 'issuer_id')
@@ -437,6 +427,5 @@ class AmrResourceBinding(models.Model):
                 raise ValidationError('An exact nonempty subject is required.')
             user = record.user_id
             if (not user.active or user.id == SUPERUSER_ID or user.share
-                    or user.has_group('base.group_public') or user.has_group('base.group_portal')
-                    or record.company_id not in user.company_ids):
-                raise ValidationError('Binding requires an active eligible internal company user.')
+                    or user.has_group('base.group_public') or user.has_group('base.group_portal')):
+                raise ValidationError('Binding requires an active eligible internal user.')

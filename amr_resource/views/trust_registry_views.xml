@@ -5,7 +5,7 @@
         <field name="model">oidc.issuer.register</field>
         <field name="arch" type="xml">
             <tree string="Trusted Issuers">
-                <field name="issuer"/><field name="company_id"/><field name="token_profile"/>
+                <field name="issuer"/><field name="token_profile"/>
                 <field name="resolver_mode"/><field name="active"/>
             </tree>
         </field>
@@ -17,7 +17,7 @@
             <form string="Trusted Issuer">
                 <sheet>
                     <group>
-                        <field name="issuer"/><field name="company_id"/><field name="active"/>
+                        <field name="issuer"/><field name="active"/>
                         <field name="token_profile"/><field name="client_id"/>
                         <field name="azp"/><field name="allow_missing_azp"/>
                     </group>
@@ -51,7 +51,7 @@
             <form string="Stored Source — Execution Disabled" create="false" delete="false">
                 <sheet>
                     <div class="alert alert-warning" role="alert">Stored Python is never executed in v1. Editing source does not activate it.</div>
-                    <group><field name="issuer" readonly="1"/><field name="company_id" readonly="1"/></group>
+                    <group><field name="issuer" readonly="1"/></group>
                     <group groups="amr_resource.group_oidc_code_admin">
                         <field name="python_code"/>
                         <field name="code_revision"/><field name="code_digest"/>

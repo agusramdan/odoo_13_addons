@@ -17,6 +17,7 @@ from ..transport import fetch_json
 
 AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
 _PROVENANCE = object()
+_UNSET = object()
 
 
 def _sanitized(method):
@@ -49,9 +50,9 @@ class ResourceHelper(models.AbstractModel):
         registry = self.env['oidc.issuer.register']
         if issuer is not None:
             return registry._lookup(issuer, token_profile)
-        # sudo: protected registry read only, never user resolver execution.
+        # sudo: protected global registry read only; company context never chooses trust.
         rows = registry.sudo().with_context(active_test=False).search([
-            ('company_id', '=', self.env.company.id), ('active', '=', True)] +
+            ('active', '=', True)] +
             ([('token_profile', '=', token_profile)] if token_profile else []))
         if len(rows) != 1:
             raise Unauthorized()
@@ -115,8 +116,10 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return value
 
-    def _headers(self, profile):
-        if not profile.credential_ref:
+    def _headers(self, profile, required=False):
+        if not _string(profile.credential_ref):
+            if required:
+                raise Unauthorized()
             return {}
         # sudo: resolve only the configured protected credential reference.
         secret = self.env['ir.config_parameter'].sudo().get_param(profile.credential_ref)
@@ -133,13 +136,24 @@ class ResourceHelper(models.AbstractModel):
 
     @api.model
     @_sanitized
-    def generate_token(self, client_id=None, client_secret=None, iss=None, issuer=None, issuer_url=None, **kw):
-        profile = self._profile(iss or issuer or issuer_url)
-        if client_secret is not None or (client_id is not None and client_id != profile.client_id):
+    def generate_token(self, client_id=_UNSET, client_secret=_UNSET, iss=_UNSET,
+                       issuer=_UNSET, issuer_url=_UNSET, **kw):
+        selectors = [value for value in (iss, issuer, issuer_url) if value is not _UNSET]
+        if (not selectors or any(not _string(value) for value in selectors)
+                or any(value != selectors[0] for value in selectors[1:])):
+            raise Unauthorized()
+        profile = self._profile(selectors[0])
+        if (client_secret is not _UNSET or
+                (client_id is not _UNSET and
+                 (not _string(client_id) or client_id != profile.client_id))):
+            raise Unauthorized()
+        if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
+            raise Unauthorized()
+        if 'scope' in kw and not isinstance(kw['scope'], str):
             raise Unauthorized()
         if not profile.token_endpoint:
             raise Unauthorized()
-        result = fetch_json(profile.token_endpoint, data=kw, headers=self._headers(profile))
+        result = fetch_json(profile.token_endpoint, data=kw, headers=self._headers(profile, required=True))
         if not isinstance(result, dict) or not _string(result.get('access_token')):
             raise Unauthorized()
         return result

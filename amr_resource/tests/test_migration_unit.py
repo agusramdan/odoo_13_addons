@@ -27,14 +27,16 @@ class MigrationUnitTests(unittest.TestCase):
     def plan(self, **kw):
         return self.module._legacy_plan(
             self.params.get, kw.get('values', self.values),
-            kw.get('audiences', ['resource-a']), kw.get('bindings', self.bindings), 7)
+            kw.get('audiences', ['resource-a']), kw.get('bindings', self.bindings))
 
     def test_explicit_versioned_plan_is_deterministic_and_preserves_inputs(self):
         original = dict(self.params)
         first = self.plan()
         self.assertEqual(first, self.plan())
-        self.assertEqual(first['version'], 1)
-        self.assertEqual(first['values']['company_id'], 7)
+        self.assertEqual(first['version'], 2)
+        self.assertNotIn('company_id', first['values'])
+        self.assertEqual(first, self.module._legacy_plan(
+            self.params.get, self.values, ['resource-a'], self.bindings))
         self.assertEqual(first['audiences'], ['resource-a'])
         self.assertEqual(len(first['digest']), 64)
         self.assertEqual(self.params, original)
@@ -135,14 +137,25 @@ class MigrationUnitTests(unittest.TestCase):
         def savepoint():
             yield
         helper = SimpleNamespace(_eligible_user=Mock())
-        users = SimpleNamespace(browse=lambda uid: SimpleNamespace(exists=lambda: SimpleNamespace(id=uid)))
+        class UserRecord(SimpleNamespace):
+            active, share = True, False
+            def __len__(self):
+                return 1
+            def has_group(self, group):
+                return False
+            def exists(self):
+                return self
+        users = SimpleNamespace(browse=lambda uid: UserRecord(id=uid))
         class Environment(dict):
             user = SimpleNamespace(share=False, has_group=lambda group: True)
             uid = 9
             cr = SimpleNamespace(savepoint=savepoint)
+            def ref(self, xml_id, raise_if_not_found=False):
+                return False
         env = Environment({'ir.config_parameter': params, 'amr.resource.helper': helper,
                            'res.users': users})
         env.company = company
+
         class Row(SimpleNamespace):
             def __getitem__(self, key):
                 return getattr(self, key)
@@ -180,32 +193,33 @@ class MigrationUnitTests(unittest.TestCase):
         registry = Registry()
         registry.env, registry.created = env, 0
         args = (self.values, ['resource-a'], self.bindings)
-        result = registry._migrate_legacy_v1(*args)
+        result = registry._migrate_legacy_v2(*args)
         self.assertTrue(result['dry_run'])
         self.assertEqual(registry.created, 0)
         params.set_param.assert_not_called()
-        result = registry._migrate_legacy_v1(*args, dry_run=False)
+        result = registry._migrate_legacy_v2(*args, dry_run=False)
         self.assertFalse(result['already_applied'])
         self.assertEqual(registry.created, 1)
-        self.assertEqual(registry._migrate_legacy_v1(*args, dry_run=False)['already_applied'], True)
+        self.assertEqual(registry._migrate_legacy_v2(*args, dry_run=False)['already_applied'], True)
         self.assertEqual(registry.created, 1)
         self.assertEqual(params.set_param.call_count, 1)
+        self.assertIn('amr_resource.migration.v2.global', storage)
         self.assertEqual(storage['legacy.issuer'], self.params['legacy.issuer'])
         rows[0].client_id = 'conflicting-client'
         with self.assertRaises(ValidationError):
-            registry._migrate_legacy_v1(*args, dry_run=False)
+            registry._migrate_legacy_v2(*args, dry_run=False)
         rows[0].client_id = self.values['client_id']
         rows[0].binding_ids[0].sub = 'conflicting-subject'
         with self.assertRaises(ValidationError):
-            registry._migrate_legacy_v1(*args, dry_run=False)
+            registry._migrate_legacy_v2(*args, dry_run=False)
         rows[:] = []
         with self.assertRaises(ValidationError):
-            registry._migrate_legacy_v1(*args, dry_run=False)
+            registry._migrate_legacy_v2(*args, dry_run=False)
         with self.assertRaises(ValidationError):
-            registry._migrate_legacy_v1(self.values, ['resource-a'], [], dry_run=False)
+            registry._migrate_legacy_v2(self.values, ['resource-a'], [], dry_run=False)
         env.user = SimpleNamespace(share=False, has_group=lambda group: False)
         with self.assertRaises(AccessError):
-            registry._migrate_legacy_v1(*args)
+            registry._migrate_legacy_v2(*args)
         self.assertEqual(registry.created, 1)
 
 if __name__ == '__main__':

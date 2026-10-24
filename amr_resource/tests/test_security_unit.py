@@ -208,14 +208,15 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.active = False
         self.reject(self.helper.validate, self.token())
         self.profile.active = True
-        self.profile.company_id = SimpleNamespace(id=8)
-        self.reject(self.helper.validate, self.token())
-        self.profile.company_id = self.env.company
+        self.env.company = SimpleNamespace(id=8)
+        payload = self.helper.validate(self.token())
+        self.reject(self.helper.get_uid, payload)
+        self.env.company = SimpleNamespace(id=7)
         self.env.registry.rows.append(self.profile)
         self.reject(self.helper.validate, self.token())
-        self.fetch.assert_not_called()
+        self.fetch.assert_called_once()
         self.env.parameters.get_param.assert_not_called()
-        self.assertEqual(self.env.user_reads, [])
+        self.assertEqual(self.env.user_reads, [self.user.id])
 
     def test_uat04_27_unsupported_token_classes_zero_egress(self):
         for headers in ({'typ': 'JWT'}, {'typ': None}, {'jku': 'https://caller.example'},
@@ -306,6 +307,22 @@ class SecurityUnitTests(unittest.TestCase):
             self.fetch.return_value = bad
             self.reject(self.helper.validate, 'synthetic-opaque')
 
+    def test_opaque_optional_claim_contract(self):
+        good = self.opaque()
+        good.update(exp=int(time.time()) + 30, iat=int(time.time()), nbf=int(time.time()),
+                    extra_uid=1, company_id=999, roles=['admin'])
+        good.pop('azp')
+        self.profile.allow_missing_azp = True
+        self.fetch.return_value = good
+        payload = self.helper.validate('synthetic-opaque')
+        self.assertEqual(payload['iss'], self.profile.issuer)
+        self.assertNotIn('typ', payload)
+        self.assertNotIn('jti', payload)
+        for name, value in (('exp', int(time.time())), ('iat', int(time.time()) + 1),
+                            ('nbf', int(time.time()) + 1), ('iat', True), ('exp', '123')):
+            self.fetch.return_value = dict(good, **{name: value})
+            self.reject(self.helper.validate, 'synthetic-opaque')
+
     def test_uat05_opaque_caller_url_and_credentials_rejected(self):
         self.opaque()
         for kwargs in ({'url': 'https://caller.example'}, {'client_secret': 'synthetic'},
@@ -376,11 +393,37 @@ class SecurityUnitTests(unittest.TestCase):
 
     def test_uat04_generate_static_endpoint_no_caller_secret(self):
         self.fetch.return_value = {'access_token': 'synthetic-opaque'}
+        self.profile.credential_ref = 'amr_resource.credential.synthetic'
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
         self.assertEqual(self.helper.encode(iss=self.profile.issuer, grant_type='client_credentials'), 'synthetic-opaque')
-        self.fetch.assert_called_once_with(self.profile.token_endpoint, data={'grant_type': 'client_credentials'}, headers={})
+        self.fetch.assert_called_once_with(self.profile.token_endpoint,
+            data={'grant_type': 'client_credentials'}, headers={'Authorization': 'Basic c3ludGhldGljLWNsaWVudDpzeW50aGV0aWMtc2VjcmV0'})
         self.fetch.reset_mock()
         self.reject(self.helper.generate_token, iss='https://unknown.example')
         self.reject(self.helper.generate_token, iss=self.profile.issuer, client_secret='synthetic')
+        self.fetch.assert_not_called()
+
+    def test_generate_token_strict_selector_and_parameters(self):
+        self.fetch.return_value = {'access_token': 'synthetic-opaque'}
+        self.profile.credential_ref = 'amr_resource.credential.synthetic'
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
+        issuer = self.profile.issuer
+        for kwargs in ({}, {'iss': issuer, 'issuer': 'https://other.example'},
+                       {'iss': issuer, 'client_secret': ''}, {'iss': issuer, 'client_secret': None},
+                       {'iss': issuer, 'client_id': ''}, {'iss': issuer, 'client_id': None},
+                       {'iss': issuer, 'grant_type': 'password'}, {'iss': issuer, 'scope': []},
+                       {'iss': issuer, 'unexpected': 'value'}):
+            self.reject(self.helper.generate_token, **kwargs)
+        self.fetch.assert_not_called()
+        result = self.helper.generate_token(iss=issuer, issuer=issuer, issuer_url=issuer,
+                                            grant_type='client_credentials', scope='')
+        self.assertEqual(result['access_token'], 'synthetic-opaque')
+        self.fetch.assert_called_once_with(self.profile.token_endpoint,
+            data={'grant_type': 'client_credentials', 'scope': ''},
+            headers={'Authorization': 'Basic c3ludGhldGljLWNsaWVudDpzeW50aGV0aWMtc2VjcmV0'})
+        self.fetch.reset_mock()
+        self.profile.credential_ref = False
+        self.reject(self.helper.generate_token, iss=issuer, grant_type='client_credentials')
         self.fetch.assert_not_called()
 
     def test_uat09_session_bearer_params_and_no_weaker_fallback(self):

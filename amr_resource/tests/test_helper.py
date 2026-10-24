@@ -35,7 +35,7 @@ class ResourceCase(SavepointCase):
             'issuer': 'https://issuer.invalid', 'client_id': 'client-a',
             'token_profile': 'jwt', 'jwks_uri': 'https://keys.invalid/jwks',
             'token_endpoint': 'https://issuer.invalid/token', 'allow_missing_azp': True,
-            'company_id': self.env.company.id, 'resolver_mode': 'get_user_match',
+            'resolver_mode': 'get_user_match',
             'audience_ids': [(0, 0, {'value': 'resource-a'})],
         })
         for target in ('socket.getaddrinfo', 'socket.socket', 'requests.sessions.Session.request'):

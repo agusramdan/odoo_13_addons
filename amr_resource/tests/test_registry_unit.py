@@ -193,10 +193,10 @@ class RegistryUnitTests(unittest.TestCase):
         model.sudo.assert_called_once_with()
         elevated.with_context.assert_called_once_with(active_test=False)
         elevated.search.assert_called_once_with([
-            ('issuer', '=', issuer), ('active', '=', True), ('company_id', '=', 7)])
+            ('issuer', '=', issuer), ('active', '=', True)])
         return result
 
-    def test_lookup_exact_company_active_unique_no_limit(self):
+    def test_lookup_exact_global_active_unique_no_limit(self):
         class Result(list):
             token_profile = 'jwt'
         result = Result([object()])
@@ -247,14 +247,14 @@ class RegistryUnitTests(unittest.TestCase):
         with self.assertRaises(AccessError):
             child.check_access_rights('read')
 
-    def test_company_scope_guards(self):
+    def test_registry_access_is_not_company_scoped(self):
         model = IssuerProbe((ADMIN, TRUST))
         model.check_access_rule('read')
         model.company_id = SimpleNamespace(id=8)
-        with self.assertRaises(AccessError):
-            model.check_access_rule('read')
-        with self.assertRaises(AccessError):
-            model._guard_company_values({'company_id': 8})
+        model.check_access_rule('read')
+        self.assertFalse(hasattr(registry.AmrResourceIssuer, 'company_id'))
+        self.assertFalse(hasattr(registry.AmrResourceAudience, 'company_id'))
+        self.assertFalse(hasattr(registry.AmrResourceBinding, 'company_id'))
         elevated = IssuerProbe(su=True)
         self.assertTrue(elevated.check_access_rights('read'))
         elevated.company_id = SimpleNamespace(id=8)
@@ -299,8 +299,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertEqual(values['code_revision'], 1)
         self.assertEqual(values['code_actor_id'], 27)
         self.assertEqual(values['code_digest'], hashlib.sha256(b'stored only').hexdigest())
-        with self.assertRaises(AccessError):
-            model.create([{'company_id': 8}])
+        self.assertTrue(model.create([{'issuer': 'https://global.example'}]))
 
     def test_context_defaults_cannot_inject_source_or_audit(self):
         trust = IssuerProbe((ADMIN, TRUST))
@@ -322,7 +321,7 @@ class RegistryUnitTests(unittest.TestCase):
         row = SimpleNamespace(sub='subject-001', user_id=user, company_id=7)
         registry.AmrResourceBinding._check_binding([row])
         self.check_profile(resolver_mode='fixed_user', fixed_user_id=user)
-        for change in ({'active': False}, {'share': True}, {'id': 1}, {'company_ids': [8]},
+        for change in ({'active': False}, {'share': True}, {'id': 1},
                        {'has_group': lambda name: name == 'base.group_portal'},
                        {'has_group': lambda name: name == 'base.group_public'}):
             invalid = User(**dict(user.__dict__, **change))
@@ -385,7 +384,7 @@ class RegistryUnitTests(unittest.TestCase):
                               if isinstance(n, ast.FunctionDef) and any(
                                   isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                                   and c.func.attr == 'sudo' for c in ast.walk(n)))
-        self.assertEqual(sudo_methods, ['_compute_local_public_key', '_lookup', '_migrate_legacy_v1'])
+        self.assertEqual(sudo_methods, ['_compute_local_public_key', '_lookup', '_migrate_legacy_v2'])
 
     def test_security_and_ui_files_are_wired_and_restricted(self):
         manifest = ast.literal_eval((ROOT / '__manifest__.py').read_text())
@@ -405,10 +404,9 @@ class RegistryUnitTests(unittest.TestCase):
             self.assertIsNone(record.find("field[@name='users']"))
             self.assertIsNone(record.find("field[@name='implied_ids']"))
         rules = ElementTree.parse(str(ROOT / 'security/registry_rules.xml'))
-        for rule in rules.findall('.//record'):
-            self.assertEqual(rule.find("field[@name='domain_force']").text, "[('company_id', '=', company_id)]")
-            self.assertIsNone(rule.find("field[@name='groups']"))
+        self.assertEqual(rules.findall('.//record'), [])
         views = ElementTree.parse(str(ROOT / 'views/trust_registry_views.xml'))
+        self.assertIsNone(views.find(".//field[@name='company_id']"))
         self.assertIsNotNone(views.find(".//field[@name='python_code']"))
         self.assertIsNotNone(views.find(".//field[@name='audience_ids']"))
         self.assertIsNotNone(views.find(".//field[@name='binding_ids']"))
