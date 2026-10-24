@@ -13,6 +13,27 @@ _logger = logging.getLogger(__name__)
 TRUST_GROUP = 'amr_resource.group_oidc_trust_admin'
 CODE_GROUP = 'amr_resource.group_oidc_code_admin'
 AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date'}
+_ALGORITHM_CATALOG = __import__('types').MappingProxyType({
+    'RS256': __import__('types').MappingProxyType({
+        'key_family': 'RSA', 'min_key_bits': 2048,
+        'purpose': 'access_token_verification', 'support_state': 'supported'}),
+    'PS256': __import__('types').MappingProxyType({
+        'key_family': 'RSA', 'min_key_bits': 2048,
+        'purpose': 'access_token_verification', 'support_state': 'target'}),
+})
+
+
+def _effective_algorithms(enabled, supported):
+    """Intersect issuer policy with a code-owned catalog and verified capability."""
+    if not isinstance(enabled, (list, tuple, set, frozenset)) or not isinstance(
+            supported, (list, tuple, set, frozenset)):
+        raise ValidationError('Algorithm policy is invalid.')
+    if not enabled or any(name not in _ALGORITHM_CATALOG for name in enabled):
+        raise ValidationError('Algorithm policy is empty or unsupported.')
+    effective = frozenset(enabled).intersection(supported)
+    if not effective:
+        raise ValidationError('No configured algorithm is supported.')
+    return effective
 
 
 def _exact_string(value):
@@ -43,6 +64,58 @@ def _https_url(value):
     except ValueError:
         return False
 
+
+
+def _validate_mapping_claim(key, value):
+    """Validate a literal top-level claim value without normalizing it."""
+    import re
+
+    if (not isinstance(key, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', key)
+            or not isinstance(value, str) or not 1 <= len(value) <= 1024
+            or not value.strip()
+            or any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value)):
+        raise ValidationError('Mapping claim is missing or invalid.')
+    return value
+
+
+def _validate_mapping_rows(rows):
+    """Validate the bounded, literal mapping schema shared by model and resolver."""
+    if not isinstance(rows, (list, tuple)):
+        raise ValidationError('Mapping configuration is invalid.')
+    sequences = set()
+    active = 0
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) !=
+                {'sequence', 'field_user', 'jwt_key', 'active'}
+                or type(row['sequence']) is not int or row['sequence'] <= 0
+                or row['field_user'] not in ('login', 'partner_id.email')
+                or type(row['active']) is not bool or row['sequence'] in sequences):
+            raise ValidationError('Mapping configuration is invalid.')
+        _validate_mapping_claim(row['jwt_key'], 'valid')
+        sequences.add(row['sequence'])
+        active += int(row['active'])
+    if active > 20:
+        raise ValidationError('Mapping configuration is invalid.')
+    return True
+
+
+def _mapping_candidate(rows, claims, find_users):
+    """Return the first uniquely matched user ID; caller enforces existing binding."""
+    if not isinstance(claims, dict) or not isinstance(rows, (list, tuple)):
+        raise ValidationError('Mapping configuration is invalid.')
+    configured = [dict(row, active=True) for row in rows]
+    _validate_mapping_rows(configured)
+    for row in sorted(configured, key=lambda item: item['sequence']):
+        if row['jwt_key'] not in claims:
+            raise ValidationError('Mapping claim is missing or invalid.')
+        value = _validate_mapping_claim(row['jwt_key'], claims[row['jwt_key']])
+        matches = find_users(row['field_user'], value)
+        identifiers = {match.id if hasattr(match, 'id') else match for match in matches}
+        if len(identifiers) > 1:
+            raise ValidationError('Mapping is ambiguous.')
+        if identifiers:
+            return next(iter(identifiers))
+    raise ValidationError('No mapping matched a user.')
 
 
 def _legacy_plan(get_param, values, audiences, bindings):
@@ -177,7 +250,27 @@ class AmrResourceIssuer(models.Model):
                                    help='Protected RSA public PEM; no loopback key fetch.')
     resolver_mode = fields.Selection([('get_user_match', 'Default'),
                                       ('fixed_user', 'Fixed User'),
+                                      ('mapping', 'Ordered Claim Mapping'),
                                       ('resolver', 'Allowlisted Resolver')])
+    mvp_enabled = fields.Boolean(default=False)
+    metadata_mode = fields.Selection([('manual', 'Manual'),
+                                      ('oidc_discovery', 'OIDC Discovery')])
+    discovery_unavailable_declared = fields.Boolean(default=False)
+    discovery_unavailable_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP)
+    verification_source = fields.Selection([('jwks', 'JWKS'),
+                                            ('local_public', 'Local public key'),
+                                            ('none', 'No JWKS')])
+    introspection_source = fields.Selection([('none', 'None'), ('manual', 'Manual'),
+                                             ('rfc8414', 'RFC 8414')])
+    no_jwks_declaration = fields.Boolean(default=False)
+    no_jwks_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP)
+    introspection_credential_ref = fields.Char(size=256, groups=TRUST_GROUP)
+    introspection_auth_client_id = fields.Char(groups=TRUST_GROUP)
+    introspection_auth_method = fields.Selection([('client_secret_basic', 'Client Secret Basic')])
+    introspection_basic_contract_ref = fields.Char(size=512, groups=TRUST_GROUP)
+    introspection_credential_endpoint = fields.Char(groups=TRUST_GROUP)
+    allow_jwt_introspection = fields.Boolean(default=False)
+    allow_introspection_iss_absent = fields.Boolean(default=False)
     resolver_key = fields.Selection([('get_user_match', 'Default')],
                                     readonly=True, default='get_user_match', required=True)
     python_code = fields.Text(groups=CODE_GROUP, copy=False,
@@ -191,6 +284,7 @@ class AmrResourceIssuer(models.Model):
                                    ondelete='restrict', groups=CODE_GROUP)
     audience_ids = fields.One2many('oidc.issuer.register.audience', 'issuer_id')
     binding_ids = fields.One2many('oidc.issuer.subject', 'issuer_id')
+    user_mapping_ids = fields.One2many('oidc.issuer.user.mapping', 'issuer_id')
 
     _sql_constraints = [('issuer_unique', 'unique(issuer)', 'Issuer must be unique.')]
 
@@ -313,7 +407,12 @@ class AmrResourceIssuer(models.Model):
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
                     'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
-                    'audience_ids')
+                    'audience_ids', 'mvp_enabled', 'metadata_mode', 'discovery_unavailable_declared',
+                    'discovery_unavailable_evidence_ref', 'verification_source', 'introspection_source',
+                    'no_jwks_declaration', 'no_jwks_evidence_ref', 'introspection_credential_ref',
+                    'introspection_auth_client_id', 'introspection_auth_method',
+                    'introspection_basic_contract_ref', 'introspection_credential_endpoint',
+                    'allow_jwt_introspection', 'allow_introspection_iss_absent', 'user_mapping_ids')
     def _check_profile(self):
         for record in self:
             import re
@@ -334,7 +433,8 @@ class AmrResourceIssuer(models.Model):
             for endpoint in (record.jwks_uri, record.token_endpoint, record.introspection_endpoint):
                 if endpoint and not _https_url(endpoint):
                     raise ValidationError('Endpoints must be public HTTPS URLs on port 443.')
-            if record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key):
+            if (record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key)
+                    and not (record.mvp_enabled and record.verification_source == 'none')):
                 raise ValidationError('JWT requires exactly one static JWKS URL or local public key.')
             if record.local_public_key:
                 if record.token_profile != 'jwt':
@@ -361,6 +461,67 @@ class AmrResourceIssuer(models.Model):
                         or user.share or user.has_group('base.group_public')
                         or user.has_group('base.group_portal')):
                     raise ValidationError('Fixed user must be an active eligible internal user.')
+            if record.resolver_mode == 'mapping' and not record.mvp_enabled:
+                raise ValidationError('Mapping resolver requires explicit MVP enablement.')
+            mapping_rows = [dict(sequence=row.sequence, field_user=row.field_user,
+                                 jwt_key=row.jwt_key, active=row.active)
+                            for row in record.user_mapping_ids]
+            _validate_mapping_rows(mapping_rows)
+            if record.resolver_mode == 'mapping' and not any(row['active'] for row in mapping_rows):
+                raise ValidationError('Mapping resolver requires an active mapping.')
+            if record.mvp_enabled:
+                if (record.metadata_mode not in ('manual', 'oidc_discovery')
+                        or record.verification_source not in ('jwks', 'local_public', 'none')
+                        or record.introspection_source not in ('none', 'manual', 'rfc8414')):
+                    raise ValidationError('MVP source configuration is incomplete.')
+                for reference in (record.discovery_unavailable_evidence_ref,
+                                  record.no_jwks_evidence_ref,
+                                  record.introspection_credential_ref,
+                                  record.introspection_basic_contract_ref):
+                    if reference and (not isinstance(reference, str)
+                                      or len(reference) > 512
+                                      or not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
+                        raise ValidationError('MVP evidence or credential reference is invalid.')
+                if record.metadata_mode == 'manual' and (
+                        not record.discovery_unavailable_declared
+                        or not record.discovery_unavailable_evidence_ref):
+                    raise ValidationError('Manual metadata requires declared Discovery unavailability.')
+                if record.metadata_mode == 'oidc_discovery' and (
+                        record.token_profile != 'jwt' or record.verification_source != 'jwks'
+                        or record.introspection_source != 'none'):
+                    raise ValidationError('OIDC Discovery requires JWT/JWKS and no introspection source.')
+                if record.verification_source == 'jwks' and (
+                        record.token_profile != 'jwt' or not record.jwks_uri
+                        or record.local_key_ref or record.local_public_key
+                        or record.introspection_source != 'none'):
+                    raise ValidationError('JWKS source configuration conflicts.')
+                if record.verification_source == 'local_public' and (
+                        record.token_profile != 'jwt' or record.jwks_uri
+                        or not record.local_key_ref or record.introspection_source != 'none'):
+                    raise ValidationError('Local public-key source configuration conflicts.')
+                if record.verification_source == 'none':
+                    if (record.metadata_mode != 'manual' or record.jwks_uri
+                            or record.local_key_ref or record.local_public_key
+                            or not record.no_jwks_declaration or not record.no_jwks_evidence_ref
+                            or record.introspection_source not in ('manual', 'rfc8414')):
+                        raise ValidationError('NO_JWKS requires an explicit compatible declaration.')
+                    endpoint = (record.introspection_endpoint if record.introspection_source == 'manual'
+                                else record.introspection_credential_endpoint)
+                    if (not endpoint or not record.introspection_credential_endpoint
+                            or endpoint != record.introspection_credential_endpoint
+                            or not _https_url(endpoint)
+                            or not record.introspection_credential_ref
+                            or not _exact_string(record.introspection_auth_client_id)
+                            or record.introspection_auth_method != 'client_secret_basic'
+                            or not record.introspection_basic_contract_ref):
+                        raise ValidationError('Introspection requires a separate authorized Basic configuration.')
+                elif record.introspection_source != 'none':
+                    raise ValidationError('Introspection metadata requires a genuine NO_JWKS source.')
+                if record.allow_jwt_introspection and (
+                        record.token_profile != 'jwt' or record.verification_source != 'none'):
+                    raise ValidationError('JWT introspection requires explicit JWT NO_JWKS mode.')
+                if record.allow_introspection_iss_absent and record.token_profile != 'opaque':
+                    raise ValidationError('Absent issuer policy is only valid for opaque tokens.')
 
     @api.model
     def _lookup(self, issuer=None, token_profile=None):
@@ -429,3 +590,40 @@ class AmrResourceBinding(models.Model):
             if (not user.active or user.id == SUPERUSER_ID or user.share
                     or user.has_group('base.group_public') or user.has_group('base.group_portal')):
                 raise ValidationError('Binding requires an active eligible internal user.')
+
+
+class AmrResourceUserMapping(RegistryAccess):
+    _name = 'oidc.issuer.user.mapping'
+    _description = 'Issuer User Claim Mapping'
+    _rec_name = 'jwt_key'
+
+    issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
+    sequence = fields.Integer(required=True, default=10)
+    active = fields.Boolean(default=True)
+    field_user = fields.Selection([('login', 'User Login'),
+                                   ('partner_id.email', 'Partner Email')], required=True)
+    jwt_key = fields.Char(required=True)
+
+    _sql_constraints = [
+        ('sequence_positive', 'CHECK(sequence > 0)', 'Mapping sequence must be positive.'),
+        ('issuer_sequence_unique', 'unique(issuer_id, sequence)',
+         'Mapping sequence must be unique per issuer.'),
+    ]
+
+    @api.constrains('sequence', 'active', 'field_user', 'jwt_key', 'issuer_id')
+    def _check_mapping(self):
+        for row in self:
+            _validate_mapping_claim(row.jwt_key, 'schema-check')
+            if row.field_user not in ('login', 'partner_id.email'):
+                raise ValidationError('Mapping user field is invalid.')
+            _validate_mapping_rows([dict(sequence=item.sequence, field_user=item.field_user,
+                                          jwt_key=item.jwt_key, active=item.active)
+                                    for item in row.issuer_id.user_mapping_ids])
+            if (row.issuer_id.resolver_mode == 'mapping' and
+                    not any(item.active for item in row.issuer_id.user_mapping_ids)):
+                raise ValidationError('Mapping resolver requires an active mapping.')
+
+    def write(self, values):
+        if 'issuer_id' in values:
+            raise ValidationError('Mappings cannot be moved to another issuer.')
+        return super(AmrResourceUserMapping, self).write(values)

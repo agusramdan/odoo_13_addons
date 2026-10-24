@@ -1,10 +1,11 @@
-"""Static access-token verification; no Discovery, cache, or stored code."""
+"""Access-token verification with opt-in metadata sources; no cache or stored code."""
 import base64
 import functools
 import json
 import math
 import re
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -18,6 +19,97 @@ from ..transport import fetch_json
 AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
 _PROVENANCE = object()
 _UNSET = object()
+
+
+def _issuer_parts(issuer):
+    if (not isinstance(issuer, str) or not issuer or any(ord(char) <= 32 or ord(char) >= 127 for char in issuer)
+            or '\\' in issuer):
+        raise Unauthorized()
+    try:
+        parsed = urlsplit(issuer)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port not in (None, 443)
+                or parsed.query or parsed.fragment):
+            raise Unauthorized()
+        return parsed
+    except (TypeError, ValueError):
+        raise Unauthorized() from None
+
+
+def _metadata_endpoint(value):
+    if (not isinstance(value, str) or not value or any(ord(char) <= 32 or ord(char) >= 127 for char in value)
+            or '\\' in value):
+        raise Unauthorized()
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port not in (None, 443) or parsed.fragment):
+            raise Unauthorized()
+    except (TypeError, ValueError):
+        raise Unauthorized() from None
+    return value
+
+
+def _oidc_discovery_url(issuer):
+    parsed = _issuer_parts(issuer)
+    path = parsed.path[:-1] if parsed.path.endswith('/') else parsed.path
+    return urlunsplit((parsed.scheme, parsed.netloc, path + '/.well-known/openid-configuration', '', ''))
+
+
+def _rfc8414_metadata_url(issuer):
+    parsed = _issuer_parts(issuer)
+    path = parsed.path.lstrip('/')
+    metadata_path = '/.well-known/oauth-authorization-server'
+    if path:
+        metadata_path += '/' + path
+    return urlunsplit((parsed.scheme, parsed.netloc, metadata_path, '', ''))
+
+
+def _metadata_string_list(metadata, name):
+    value = metadata.get(name)
+    if (not isinstance(value, list) or not value
+            or any(not isinstance(item, str) or not item for item in value)):
+        raise Unauthorized()
+    return value
+
+
+def _parse_oidc_metadata(metadata, issuer):
+    if not isinstance(metadata, dict) or metadata.get('issuer') != issuer:
+        raise Unauthorized()
+    _issuer_parts(issuer)
+    for name in ('authorization_endpoint', 'jwks_uri'):
+        _metadata_endpoint(metadata.get(name))
+    response_types = _metadata_string_list(metadata, 'response_types_supported')
+    _metadata_string_list(metadata, 'subject_types_supported')
+    _metadata_string_list(metadata, 'id_token_signing_alg_values_supported')
+    if 'token_endpoint' in metadata:
+        _metadata_endpoint(metadata['token_endpoint'])
+    elif any('code' in item.split() or 'token' in item.split() for item in response_types):
+        raise Unauthorized()
+    return metadata
+
+
+def _parse_rfc8414_metadata(metadata, issuer):
+    if not isinstance(metadata, dict) or metadata.get('issuer') != issuer:
+        raise Unauthorized()
+    _issuer_parts(issuer)
+    if 'jwks_uri' in metadata:
+        raise Unauthorized()
+    response_types = _metadata_string_list(metadata, 'response_types_supported')
+    if 'authorization_endpoint' in metadata:
+        _metadata_endpoint(metadata['authorization_endpoint'])
+    elif any('code' in item.split() or 'token' in item.split() for item in response_types):
+        raise Unauthorized()
+    if 'token_endpoint' in metadata:
+        _metadata_endpoint(metadata['token_endpoint'])
+    if 'introspection_endpoint' not in metadata:
+        raise Unauthorized()
+    _metadata_endpoint(metadata['introspection_endpoint'])
+    if 'introspection_endpoint_auth_methods_supported' in metadata:
+        methods = _metadata_string_list(metadata, 'introspection_endpoint_auth_methods_supported')
+        if 'client_secret_basic' not in methods:
+            raise Unauthorized()
+    return metadata
 
 
 def _sanitized(method):
@@ -92,6 +184,39 @@ class ResourceHelper(models.AbstractModel):
     @_sanitized
     def get_oidc_config(self, issuer):
         profile = self._profile(issuer)
+        if getattr(profile, 'mvp_enabled', False):
+            metadata_mode = getattr(profile, 'metadata_mode', None)
+            if metadata_mode == 'oidc_discovery':
+                if profile.token_profile != 'jwt':
+                    raise Unauthorized()
+                metadata = _parse_oidc_metadata(
+                    fetch_json(_oidc_discovery_url(profile.issuer)), profile.issuer)
+                return {'issuer': profile.issuer, 'jwks_uri': metadata['jwks_uri'],
+                        'token_endpoint': metadata.get('token_endpoint'),
+                        'introspection_endpoint': None}
+            if metadata_mode != 'manual' or not getattr(profile, 'discovery_unavailable_declared', False) or not getattr(
+                    profile, 'discovery_unavailable_evidence_ref', False):
+                raise Unauthorized()
+            source = getattr(profile, 'verification_source', None)
+            if source == 'none':
+                if (not getattr(profile, 'no_jwks_declaration', False)
+                        or not getattr(profile, 'no_jwks_evidence_ref', False)
+                        or profile.jwks_uri or profile.local_key_ref or profile.local_public_key):
+                    raise Unauthorized()
+                introspection_source = getattr(profile, 'introspection_source', None)
+                if introspection_source == 'rfc8414':
+                    if profile.introspection_endpoint:
+                        raise Unauthorized()
+                    metadata = _parse_rfc8414_metadata(
+                        fetch_json(_rfc8414_metadata_url(profile.issuer)), profile.issuer)
+                    return {'issuer': profile.issuer, 'jwks_uri': None,
+                            'token_endpoint': metadata.get('token_endpoint'),
+                            'introspection_endpoint': metadata['introspection_endpoint']}
+                if introspection_source == 'manual' and profile.introspection_endpoint:
+                    return {'issuer': profile.issuer, 'jwks_uri': None,
+                            'token_endpoint': profile.token_endpoint or None,
+                            'introspection_endpoint': profile.introspection_endpoint}
+                raise Unauthorized()
         return {'issuer': profile.issuer, 'jwks_uri': profile.jwks_uri or None,
                 'token_endpoint': profile.token_endpoint or None,
                 'introspection_endpoint': profile.introspection_endpoint or None}
@@ -100,9 +225,15 @@ class ResourceHelper(models.AbstractModel):
     @_sanitized
     def get_jwks_data(self, issuer):
         profile = self._profile(issuer, 'jwt')
-        if profile.local_public_key or not profile.jwks_uri:
+        if profile.local_public_key:
             raise Unauthorized()
-        result = fetch_json(profile.jwks_uri)
+        jwks_uri = profile.jwks_uri
+        if getattr(profile, 'mvp_enabled', False):
+            config = self.get_oidc_config(profile.issuer)
+            jwks_uri = config['jwks_uri']
+        if not jwks_uri:
+            raise Unauthorized()
+        result = fetch_json(jwks_uri)
         if not isinstance(result, dict) or not isinstance(result.get('keys'), list):
             raise Unauthorized()
         return result
@@ -247,7 +378,8 @@ class ResourceHelper(models.AbstractModel):
                 raise Unauthorized()
             jwk = matches[0]
             if (jwk.get('kty') != 'RSA' or jwk.get('alg', 'RS256') != 'RS256'
-                    or jwk.get('use', 'sig') != 'sig' or any(name in jwk for name in ('d', 'p', 'q'))
+                    or jwk.get('use', 'sig') != 'sig'
+                    or any(name in jwk for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
                     or ('key_ops' in jwk and jwk['key_ops'] != ['verify'])):
                 raise Unauthorized()
             key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
@@ -279,6 +411,69 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return self.env['res.users'].browse(matches.user_id.id)
 
+    @staticmethod
+    def _mapping_claim_value(key, value):
+        if (not isinstance(key, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', key)
+                or not isinstance(value, str) or not 1 <= len(value) <= 1024
+                or not value.strip()
+                or any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value)):
+            raise Unauthorized()
+        return value
+
+    def _find_mapping_users(self, field_name, exact_value):
+        if field_name not in ('login', 'partner_id.email'):
+            raise Unauthorized()
+        users = self.env['res.users'].sudo().with_context(active_test=False).search(
+            [(field_name, '=', exact_value)])
+        matched = []
+        seen = set()
+        for user in users:
+            actual = user.login if field_name == 'login' else user.partner_id.email
+            if type(actual) is str and actual == exact_value and user.id not in seen:
+                seen.add(user.id)
+                matched.append(user)
+        return matched
+
+    def _mapping_user(self, profile, validation):
+        if not getattr(profile, 'mvp_enabled', False):
+            raise Unauthorized()
+        rows = profile.user_mapping_ids
+        if len(rows) > 20:
+            raise Unauthorized()
+        seen_sequences = set()
+        active_rows = []
+        for row in rows:
+            if (type(row.sequence) is not int or row.sequence <= 0
+                    or type(row.active) is not bool
+                    or row.field_user not in ('login', 'partner_id.email')
+                    or row.sequence in seen_sequences):
+                raise Unauthorized()
+            self._mapping_claim_value(row.jwt_key, 'schema-check')
+            seen_sequences.add(row.sequence)
+            if row.active:
+                active_rows.append(row)
+        if not active_rows or len(active_rows) > 20:
+            raise Unauthorized()
+        candidate_ids = set()
+        for row in sorted(active_rows, key=lambda item: item.sequence):
+            if row.jwt_key not in validation:
+                raise Unauthorized()
+            value = self._mapping_claim_value(row.jwt_key, validation[row.jwt_key])
+            matches = self._find_mapping_users(row.field_user, value)
+            ids = {user.id for user in matches}
+            if len(ids) > 1:
+                raise Unauthorized()
+            if ids:
+                candidate_ids = ids
+                break
+        if len(candidate_ids) != 1:
+            raise Unauthorized()
+        candidate_id = next(iter(candidate_ids))
+        bindings = profile.binding_ids.filtered(lambda row: row.sub == validation['sub'])
+        if len(bindings) != 1 or bindings.user_id.id != candidate_id:
+            raise Unauthorized()
+        return self.env['res.users'].browse(candidate_id)
+
     @api.model
     @_sanitized
     def get_user_match(self, validation):
@@ -289,6 +484,8 @@ class ResourceHelper(models.AbstractModel):
             user = self.env['res.users'].browse(profile.fixed_user_id.id)
         elif profile.resolver_mode == 'get_user_match':
             user = self._bound_user(profile, validation)
+        elif profile.resolver_mode == 'mapping' and getattr(profile, 'mvp_enabled', False):
+            user = self._mapping_user(profile, validation)
         elif profile.resolver_mode == 'resolver' and profile.resolver_key == 'get_user_match':
             # Only this code-owned resolver exists in v1; no arbitrary ORM dispatch.
             user = self._bound_user(profile, validation)
