@@ -12,6 +12,7 @@
         'security/res_groups.xml',
         'security/ir.model.access.csv',
         'security/registry_rules.xml',
+        'data/oidc_algorithms.xml',
         'views/trust_registry_views.xml',
         'views/res_config_settings_views.xml',
         'wizard/create_user_wizard.xml',
