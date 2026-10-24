@@ -408,9 +408,11 @@ class AmrResourceIssuer(models.Model):
         if 'mvp_enabled' in values:
             if type(values['mvp_enabled']) is not bool or values['mvp_enabled']:
                 raise AccessError('Use the explicit MVP activation action.')
-        if values.get('active') is True and any(
-                record.mvp_enabled and not record.active for record in self):
-            raise AccessError('Use the explicit MVP activation action.')
+        if 'active' in values and any(record.mvp_enabled for record in self):
+            if type(values['active']) is not bool:
+                raise AccessError('Use a Boolean active value for MVP issuers.')
+            if values['active'] and any(record.mvp_enabled and not record.active for record in self):
+                raise AccessError('Use the explicit MVP activation action.')
         if AUDIT_FIELDS.intersection(values):
             raise AccessError('Registry access denied.')
         if 'resolver_key' in values and (not creating or values['resolver_key'] != 'get_user_match'):
