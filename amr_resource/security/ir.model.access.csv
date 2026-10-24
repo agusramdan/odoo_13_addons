@@ -4,3 +4,5 @@ access_oidc_audience_trust,Trust audience administration,model_oidc_issuer_regis
 access_oidc_binding_trust,Trust binding administration,model_oidc_issuer_subject,amr_resource.group_oidc_trust_admin,1,1,1,1
 access_oidc_user_mapping_trust,Trust user mapping administration,model_oidc_issuer_user_mapping,amr_resource.group_oidc_trust_admin,1,1,1,1
 access_oidc_issuer_code,Trust source editing,model_oidc_issuer_register,amr_resource.group_oidc_code_admin,1,1,0,0
+access_oidc_algorithm_read,Read code-owned algorithm catalog,model_oidc_algorithm,amr_resource.group_oidc_trust_admin,1,0,0,0
+access_oidc_issuer_algorithm_policy_trust,Trust issuer algorithm policy,model_oidc_issuer_algorithm_policy,amr_resource.group_oidc_trust_admin,1,1,1,1

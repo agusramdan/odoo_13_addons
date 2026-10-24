@@ -23,6 +23,28 @@ _ALGORITHM_CATALOG = __import__('types').MappingProxyType({
 })
 
 
+def _policy_algorithms(policy, key_metadata):
+    """Return only algorithms supported by code, enabled for issuer and key."""
+    if not isinstance(policy, (list, tuple)) or not isinstance(key_metadata, dict):
+        raise ValidationError('Algorithm policy is invalid.')
+    enabled = set()
+    for row in policy:
+        if (not isinstance(row, (list, tuple)) or len(row) != 2
+                or not isinstance(row[0], str) or type(row[1]) is not bool
+                or row[0] not in _ALGORITHM_CATALOG):
+            raise ValidationError('Algorithm policy is invalid.')
+        if row[1]:
+            enabled.add(row[0])
+    allowed = {name for name in enabled
+               if _ALGORITHM_CATALOG[name]['support_state'] == 'supported'}
+    key_algorithm = key_metadata.get('alg')
+    if key_algorithm is not None:
+        allowed = {name for name in allowed if name == key_algorithm}
+    if not allowed:
+        raise ValidationError('No configured algorithm is supported by the trusted key.')
+    return frozenset(allowed)
+
+
 def _effective_algorithms(enabled, supported):
     """Intersect issuer policy with a code-owned catalog and verified capability."""
     if not isinstance(enabled, (list, tuple, set, frozenset)) or not isinstance(
@@ -285,6 +307,7 @@ class AmrResourceIssuer(models.Model):
     audience_ids = fields.One2many('oidc.issuer.register.audience', 'issuer_id')
     binding_ids = fields.One2many('oidc.issuer.subject', 'issuer_id')
     user_mapping_ids = fields.One2many('oidc.issuer.user.mapping', 'issuer_id')
+    algorithm_policy_ids = fields.One2many('oidc.issuer.algorithm.policy', 'issuer_id')
 
     _sql_constraints = [('issuer_unique', 'unique(issuer)', 'Issuer must be unique.')]
 
@@ -523,6 +546,11 @@ class AmrResourceIssuer(models.Model):
                 if record.allow_introspection_iss_absent and record.token_profile != 'opaque':
                     raise ValidationError('Absent issuer policy is only valid for opaque tokens.')
 
+    def _verification_algorithms(self, key_metadata):
+        self.ensure_one()
+        policy = [(row.algorithm_id.name, row.enabled) for row in self.algorithm_policy_ids]
+        return _policy_algorithms(policy, key_metadata)
+
     @api.model
     def _lookup(self, issuer=None, token_profile=None):
         """Private runtime read only: never use this elevation to execute a resolver."""
@@ -627,3 +655,54 @@ class AmrResourceUserMapping(RegistryAccess):
         if 'issuer_id' in values:
             raise ValidationError('Mappings cannot be moved to another issuer.')
         return super(AmrResourceUserMapping, self).write(values)
+
+
+class OidcAlgorithm(models.Model):
+    _name = 'oidc.algorithm'
+    _description = 'Code-Owned OIDC Verification Algorithm'
+    _rec_name = 'name'
+
+    name = fields.Char(required=True, index=True)
+    key_family = fields.Selection([('RSA', 'RSA')], required=True, readonly=True)
+    min_key_bits = fields.Integer(required=True, readonly=True, default=2048)
+    purpose = fields.Selection([('access_token_verification', 'Access Token Verification')],
+                               required=True, readonly=True)
+    support_state = fields.Selection([('supported', 'Supported'), ('target', 'Target')],
+                                     required=True, readonly=True)
+
+    _sql_constraints = [('algorithm_name_unique', 'unique(name)', 'Algorithm must be unique.')]
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        expected = _ALGORITHM_CATALOG
+        for values in vals_list:
+            name = values.get('name') if isinstance(values, dict) else None
+            if name not in expected or any(
+                    values.get(field) != value for field, value in expected[name].items()):
+                raise AccessError('Algorithm catalog is code-owned.')
+        return super(OidcAlgorithm, self).create(vals_list)
+
+    def write(self, values):
+        raise AccessError('Algorithm catalog is immutable; update it in code.')
+
+    def unlink(self):
+        raise AccessError('Algorithm catalog is immutable; update it in code.')
+
+
+class OidcIssuerAlgorithmPolicy(RegistryAccess):
+    _name = 'oidc.issuer.algorithm.policy'
+    _description = 'Issuer Enabled OIDC Algorithm Policy'
+    _rec_name = 'algorithm_id'
+
+    issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
+    algorithm_id = fields.Many2one('oidc.algorithm', required=True, ondelete='restrict')
+    enabled = fields.Boolean(default=False)
+
+    _sql_constraints = [('issuer_algorithm_unique', 'unique(issuer_id, algorithm_id)',
+                         'Algorithm policy must be unique per issuer.')]
+
+    @api.constrains('issuer_id', 'algorithm_id', 'enabled')
+    def _check_supported_policy(self):
+        for policy in self:
+            if policy.enabled and policy.algorithm_id.support_state != 'supported':
+                raise ValidationError('Algorithm is not enabled for runtime support.')
