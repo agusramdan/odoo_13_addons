@@ -339,6 +339,38 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return claims
 
+    def _mvp_introspect(self, token, profile, jwt_shaped=False):
+        if (not getattr(profile, 'mvp_enabled', False)
+                or getattr(profile, 'verification_source', None) != 'none'
+                or getattr(profile, 'metadata_mode', None) != 'manual'
+                or not getattr(profile, 'no_jwks_declaration', False)
+                or not getattr(profile, 'no_jwks_evidence_ref', False)
+                or profile.jwks_uri or profile.local_key_ref or profile.local_public_key
+                or getattr(profile, 'introspection_source', None) not in ('manual', 'rfc8414')
+                or (jwt_shaped and not getattr(profile, 'allow_jwt_introspection', False))):
+            raise Unauthorized()
+        config = self.get_oidc_config(profile.issuer)
+        endpoint = config['introspection_endpoint']
+        if (not endpoint or endpoint != getattr(profile, 'introspection_credential_endpoint', None)
+                or getattr(profile, 'introspection_auth_method', None) != 'client_secret_basic'
+                or not _string(getattr(profile, 'introspection_auth_client_id', None))
+                or not _string(getattr(profile, 'introspection_credential_ref', None))
+                or not _string(getattr(profile, 'introspection_basic_contract_ref', None))):
+            raise Unauthorized()
+        if getattr(profile, 'introspection_source', None) == 'manual' and not profile.introspection_endpoint:
+            raise Unauthorized()
+        # Capability and endpoint are checked before resolving the protected secret.
+        secret = self.env['ir.config_parameter'].sudo().get_param(profile.introspection_credential_ref)
+        authorization = _introspection_basic_header(profile.introspection_auth_client_id, secret)
+        result = fetch_json(endpoint, data={'token': token}, headers={'Authorization': authorization})
+        claims = self._claims(result, profile, opaque=not jwt_shaped)
+        if jwt_shaped and any(name not in claims for name in ('iss', 'exp', 'iat')):
+            raise Unauthorized()
+        if 'token_type' in claims and (not isinstance(claims['token_type'], str)
+                or claims['token_type'].lower() != 'bearer'):
+            raise Unauthorized()
+        return _VerifiedClaims(claims, self.env.company.id, self.env.uid)
+
     @api.model
     @_sanitized
     def introspect_token(self, token, client_id=None, client_secret=None, url=None, iss=None, **kw):
@@ -347,6 +379,8 @@ class ResourceHelper(models.AbstractModel):
         profile = self._profile(iss, 'opaque')
         if client_id is not None and client_id != profile.client_id:
             raise Unauthorized()
+        if getattr(profile, 'mvp_enabled', False):
+            return self._mvp_introspect(token, profile)
         if not profile.introspection_endpoint:
             raise Unauthorized()
         result = fetch_json(profile.introspection_endpoint, data={'token': token}, headers=self._headers(profile))
