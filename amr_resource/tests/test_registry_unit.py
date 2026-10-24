@@ -766,6 +766,46 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertTrue(child.unlink())
         self.assertEqual(parent.policy_revision, 9)
 
+    def test_child_write_and_unlink_suppress_revision_only_during_restore(self):
+        old_parent = IssuerProbe((ADMIN, TRUST), policy_revision=7)
+        new_parent = IssuerProbe((ADMIN, TRUST), policy_revision=20)
+        new_parent.id = 30
+        child = ChildProbe((ADMIN, TRUST))
+        child.issuer_id = old_parent
+        child.mapped = lambda name: [new_parent if child.issuer_id == new_parent.id
+                                     else child.issuer_id]
+
+        class ParentLookup:
+            def browse(self, identifier):
+                parent = {old_parent.id: old_parent, new_parent.id: new_parent}[identifier]
+                parent.exists = lambda: parent
+                parent.check_access_rights = lambda operation: True
+                parent.check_access_rule = lambda operation: True
+                parent.__class__.__len__ = lambda self: 1
+                return parent
+
+        class ChildEnvironment:
+            su = False
+            uid = 27
+            user = SimpleNamespace(share=False, has_group=lambda group: group in (ADMIN, TRUST))
+            company = SimpleNamespace(id=7)
+            context = {}
+
+            def __getitem__(self, model):
+                return ParentLookup()
+
+        child.env = ChildEnvironment()
+        child.env.context['_policy_restore_token'] = registry._RESTORE_CONTEXT_TOKEN
+        self.assertTrue(child.write({'sub': 'restored'}))
+        self.assertEqual((old_parent.policy_revision, new_parent.policy_revision), (7, 20))
+        self.assertTrue(child.unlink())
+        self.assertEqual((old_parent.policy_revision, new_parent.policy_revision), (7, 20))
+
+        child.env.context.clear()
+        child.issuer_id = old_parent
+        self.assertTrue(child.write({'issuer_id': new_parent.id, 'sub': 'reparented'}))
+        self.assertEqual((old_parent.policy_revision, new_parent.policy_revision), (8, 21))
+
     def test_actual_write_generates_digest_actor_time_revision(self):
         model = IssuerProbe((ADMIN, CODE))
         source = "raise RuntimeError('must never execute')"
