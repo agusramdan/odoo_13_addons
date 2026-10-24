@@ -715,7 +715,9 @@ class SecurityUnitTests(unittest.TestCase):
         for name, value in settings.items():
             setattr(self.profile, name, value)
         self.profile.token_profile = 'jwt'
-        cases = ('unknown', 'inactive', 'source', 'key', 'not-allowed', 'bad-signature', 'bad-header')
+        cases = ('unknown', 'inactive', 'source', 'key', 'not-allowed', 'bad-signature',
+                 'bad-header', 'bad-auth', 'bad-endpoint', 'missing-secret-ref',
+                 'bad-prefilter', 'unsupported-alg')
         for case in cases:
             with self.subTest(case=case):
                 for name, value in settings.items():
@@ -742,6 +744,19 @@ class SecurityUnitTests(unittest.TestCase):
                     self.fetch.return_value = {'keys': [self.jwk]}
                 elif case == 'bad-header':
                     token = self.token(headers={'typ': 'JWT'})
+                elif case == 'bad-auth':
+                    self.profile.introspection_auth_method = 'client_secret_post'
+                elif case == 'bad-endpoint':
+                    self.profile.introspection_credential_endpoint = 'https://wrong.example/introspect'
+                elif case == 'missing-secret-ref':
+                    self.profile.introspection_credential_ref = False
+                elif case == 'bad-prefilter':
+                    invalid_claims = dict(self.claims)
+                    del invalid_claims['aud']
+                    token = self.token(invalid_claims)
+                elif case == 'unsupported-alg':
+                    token = jwt.encode(self.claims, 'synthetic-secret', algorithm='HS256',
+                                       headers={'typ': 'at+jwt'})
                 self.fetch.reset_mock()
                 self.env.parameters.get_param.reset_mock()
                 self.reject(self.helper.validate, token)
@@ -803,6 +818,14 @@ class SecurityUnitTests(unittest.TestCase):
                     self.env.parameters.get_param.assert_not_called()
         self.profile.introspection_basic_contract_ref = False
         self.fetch.reset_mock()
+        self.fetch.side_effect = [dict(base, introspection_endpoint_auth_methods_supported=['client_secret_basic']),
+            dict(active=True, sub='subject', client_id='synthetic-client', aud='second', azp='synthetic-client')]
+        self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
+        self.assertEqual(self.fetch.call_count, 2)
+        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+
+        self.fetch.reset_mock()
+        self.env.parameters.get_param.reset_mock()
         self.fetch.side_effect = [dict(base), {}]
         self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
         self.assertEqual(self.fetch.call_count, 1)
