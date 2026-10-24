@@ -5,3 +5,4 @@ from . import credential_loader
 from . import auth_factory
 from . import providers
 from . import token_cache
+from . import sentry
