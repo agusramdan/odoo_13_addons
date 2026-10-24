@@ -145,7 +145,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertTrue(hasattr(registry.AmrResourceIssuer, 'action_restore_policy_snapshot'))
         self.assertEqual(list(inspect.signature(
             registry.AmrResourceIssuer.action_restore_policy_snapshot).parameters),
-            ['self', 'snapshot_id', 'expected_revision', 'evidence_ref', 'reason_code'])
+            ['self', 'snapshot_id', 'expected_revision', 'evidence_ref'])
         for field in ('issuer_id', 'captured_revision', 'payload', 'integrity_digest',
                       'evidence_ref', 'actor_id', 'captured_at', 'invalidated'):
             self.assertTrue(hasattr(registry.OidcPolicySnapshot, field))
@@ -179,7 +179,7 @@ class RegistryUnitTests(unittest.TestCase):
         issuer._check_profile = Mock()
         issuer._policy_snapshot_tuple = Mock(return_value=payload)
         with patch.object(registry._logger, 'info') as audit:
-            self.assertEqual(issuer.action_capture_policy_snapshot('approval-42', 'recovery'), 88)
+            self.assertEqual(issuer.action_capture_policy_snapshot('approval-42'), 88)
         created = snapshot_model.created_values
         self.assertEqual(created['issuer_id'], 19)
         self.assertEqual(created['captured_revision'], 9)
@@ -193,13 +193,12 @@ class RegistryUnitTests(unittest.TestCase):
         unauthorized = IssuerProbe(issuer='https://issuer.example')
         unauthorized._policy_snapshot_tuple = Mock(return_value=payload)
         with self.assertRaises(AccessError):
-            unauthorized.action_capture_policy_snapshot('approval-42', 'recovery')
+            unauthorized.action_capture_policy_snapshot('approval-42')
         snapshot_model = SnapshotCreateProbe()
         issuer.env['oidc.issuer.policy.snapshot'] = snapshot_model
-        for evidence, reason in ((None, 'recovery'), ('https://secret.invalid', 'recovery'),
-                                 ('approval-42', 'free form')):
-            with self.subTest(evidence=evidence, reason=reason), self.assertRaises(ValidationError):
-                issuer.action_capture_policy_snapshot(evidence, reason)
+        for evidence in (None, 'https://secret.invalid'):
+            with self.subTest(evidence=evidence), self.assertRaises(ValidationError):
+                issuer.action_capture_policy_snapshot(evidence)
         self.assertFalse(hasattr(snapshot_model, 'created_values'))
 
     def test_snapshot_model_denies_direct_mutation_and_acl_is_read_only(self):
@@ -282,7 +281,7 @@ class RegistryUnitTests(unittest.TestCase):
         issuer.env = env
         issuer._policy_snapshot_tuple = Mock(return_value=payload)
         with patch.object(registry._logger, 'info') as audit:
-            self.assertTrue(issuer.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover'))
+            self.assertTrue(issuer.action_restore_policy_snapshot(88, 12, 'approval-43'))
         self.assertEqual(issuer.written_values['policy_revision'], 13)
         self.assertFalse(issuer.written_values['active'])
         self.assertEqual(issuer.written_values['credential_ref'], 'generation.key')
@@ -294,7 +293,7 @@ class RegistryUnitTests(unittest.TestCase):
 
         unauthorized = IssuerProbe(active=False, policy_revision=12, issuer='https://issuer.example')
         with self.assertRaises(AccessError):
-            unauthorized.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover')
+            unauthorized.action_restore_policy_snapshot(88, 12, 'approval-43')
         self.assertFalse(hasattr(unauthorized, 'written_values'))
 
         incomplete = json.dumps({key: value for key, value in payload.items()
@@ -331,7 +330,7 @@ class RegistryUnitTests(unittest.TestCase):
             snapshot_model.exists = changed_snapshot
             try:
                 with self.subTest(active=active, expected_revision=expected_revision), self.assertRaises(ValidationError):
-                    row.action_restore_policy_snapshot(88, expected_revision, 'approval-43', 'recover')
+                    row.action_restore_policy_snapshot(88, expected_revision, 'approval-43')
                 self.assertFalse(hasattr(row, 'written_values'))
             finally:
                 snapshot_model.exists = original_exists
@@ -343,7 +342,7 @@ class RegistryUnitTests(unittest.TestCase):
         candidate = SimpleNamespace(_check_profile=Mock(side_effect=ValidationError('invalid tuple')))
         invalid_profile.new = Mock(return_value=candidate)
         with self.assertRaises(ValidationError):
-            invalid_profile.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover')
+            invalid_profile.action_restore_policy_snapshot(88, 12, 'approval-43')
         self.assertFalse(hasattr(invalid_profile, 'written_values'))
 
         for snapshot_id, revision, evidence in ((True, 12, 'approval-43'),
@@ -352,7 +351,7 @@ class RegistryUnitTests(unittest.TestCase):
             invalid_input = IssuerProbe((ADMIN, TRUST), active=False, policy_revision=12,
                                         issuer='https://issuer.example')
             with self.subTest(snapshot_id=snapshot_id, revision=revision), self.assertRaises(ValidationError):
-                invalid_input.action_restore_policy_snapshot(snapshot_id, revision, evidence, 'recover')
+                invalid_input.action_restore_policy_snapshot(snapshot_id, revision, evidence)
             self.assertFalse(hasattr(invalid_input, 'written_values'))
 
     def test_persistent_algorithm_catalog_and_issuer_policy_models_are_declared(self):
