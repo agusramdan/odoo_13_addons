@@ -365,6 +365,37 @@ class RegistryUnitTests(unittest.TestCase):
             trust.create([{'python_code': 'source'}])
         trust._guard_issuer_values({'resolver_key': 'get_user_match'}, creating=True)
 
+    def test_explicit_mvp_deactivation_is_admin_only_audited_and_fail_closed(self):
+        admin = IssuerProbe((ADMIN, TRUST), mvp_enabled=True,
+                            verification_source='jwks', policy_revision=7)
+        admin.action_deactivate_mvp('operator_disabled')
+        self.assertFalse(admin.active)
+        self.assertEqual(admin.policy_revision, 8)
+        self.assertEqual(admin.written_values, {'active': False, 'policy_revision': 8})
+
+        unauthorized = IssuerProbe(mvp_enabled=True, verification_source='jwks')
+        with self.assertRaises(AccessError):
+            unauthorized.action_deactivate_mvp('operator_disabled')
+        self.assertTrue(unauthorized.active)
+        self.assertEqual(unauthorized.policy_revision, 1)
+
+        for reason in ('', 'free form reason', 'https://secret.example', 'x' * 65, 'café'):
+            row = IssuerProbe((ADMIN, TRUST), mvp_enabled=True,
+                              verification_source='jwks')
+            with self.subTest(reason=reason), self.assertRaises(ValidationError):
+                row.action_deactivate_mvp(reason)
+            self.assertTrue(row.active)
+            self.assertEqual(row.policy_revision, 1)
+
+        repeated = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                               verification_source='jwks')
+        with self.assertRaises(ValidationError):
+            repeated.action_deactivate_mvp('operator_disabled')
+        wrong_mode = IssuerProbe((ADMIN, TRUST), mvp_enabled=False,
+                                 verification_source='jwks')
+        with self.assertRaises(ValidationError):
+            wrong_mode.action_deactivate_mvp('operator_disabled')
+
     def test_policy_revision_is_monotonic_and_not_admin_writable(self):
         self.assertTrue(hasattr(registry.AmrResourceIssuer, 'policy_revision'))
         trust = IssuerProbe((ADMIN, TRUST), policy_revision=7, client_id='before')
@@ -505,6 +536,9 @@ class RegistryUnitTests(unittest.TestCase):
                                introspection_auth_method='client_secret_basic',
                                introspection_basic_contract_ref='provider-contract')
         registry.AmrResourceIssuer._check_profile([profile])
+        rfc_profile = self.profile(**dict(profile.__dict__, introspection_source='rfc8414',
+            introspection_endpoint=False, introspection_basic_contract_ref=False))
+        registry.AmrResourceIssuer._check_profile([rfc_profile])
         jwt_profile = self.profile(**dict(profile.__dict__, token_profile='jwt',
                                           allow_jwt_introspection=True))
         registry.AmrResourceIssuer._check_profile([jwt_profile])

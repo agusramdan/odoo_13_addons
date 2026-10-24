@@ -369,7 +369,11 @@ class ResourceHelper(models.AbstractModel):
                 or getattr(profile, 'introspection_auth_method', None) != 'client_secret_basic'
                 or not _string(getattr(profile, 'introspection_auth_client_id', None))
                 or not _string(getattr(profile, 'introspection_credential_ref', None))
-                or not _string(getattr(profile, 'introspection_basic_contract_ref', None))):
+                or (getattr(profile, 'introspection_source', None) == 'manual'
+                    and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))
+                or (getattr(profile, 'introspection_source', None) == 'rfc8414'
+                    and auth_methods is None
+                    and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))):
             raise Unauthorized()
         if getattr(profile, 'introspection_source', None) == 'manual' and not profile.introspection_endpoint:
             raise Unauthorized()
