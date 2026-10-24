@@ -308,7 +308,7 @@ class ResourceHelper(models.AbstractModel):
     def is_local_token(self, token):
         return self.is_local_issuer(self.validate(token)['iss'])
 
-    def _claims(self, claims, profile, opaque=False):
+    def _claims(self, claims, profile, opaque=False, require_jti=True):
         if not isinstance(claims, dict):
             raise Unauthorized()
         claims = dict(claims)
@@ -316,7 +316,8 @@ class ResourceHelper(models.AbstractModel):
             if claims.get('active') is not True:
                 raise Unauthorized()
             claims.setdefault('iss', profile.issuer)
-        required = ('iss', 'sub', 'client_id') if opaque else ('iss', 'sub', 'client_id', 'jti')
+        required = ('iss', 'sub', 'client_id') if opaque else (
+            ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
         if any(not _string(claims.get(name)) for name in required):
             raise Unauthorized()
         if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
@@ -388,8 +389,8 @@ class ResourceHelper(models.AbstractModel):
                 if not getattr(profile, 'allow_introspection_iss_absent', False):
                     raise Unauthorized()
                 result = dict(result, iss=profile.issuer)
-        claims = self._claims(result, profile, opaque=not jwt_shaped)
-        if jwt_shaped and any(name not in claims for name in ('iss', 'exp', 'iat', 'jti')):
+        claims = self._claims(result, profile, opaque=not jwt_shaped, require_jti=not jwt_shaped)
+        if jwt_shaped and any(name not in claims for name in ('iss', 'exp', 'iat')):
             raise Unauthorized()
         if 'token_type' in claims and (not isinstance(claims['token_type'], str)
                 or claims['token_type'].lower() != 'bearer'):
