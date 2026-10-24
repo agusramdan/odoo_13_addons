@@ -62,11 +62,12 @@ tools = types.SimpleNamespace(ormcache=_ormcache, timedelta=__import__('datetime
 config = types.SimpleNamespace(get=lambda k: None)
 class UserError(Exception): pass
 class ValidationError(Exception): pass
+class AccessError(Exception): pass
 
 def install_odoo_stubs():
     install_external_stubs()
-    odoo = types.ModuleType('odoo'); odoo.api=api; odoo.models=types.SimpleNamespace(Model=_Model, AbstractModel=_Model); odoo.fields=fields; odoo.tools=tools
-    exc=types.ModuleType('odoo.exceptions'); exc.UserError=UserError; exc.ValidationError=ValidationError
+    odoo = types.ModuleType('odoo'); odoo.api=api; odoo.models=types.SimpleNamespace(Model=_Model, AbstractModel=_Model, TransientModel=_Model); odoo.fields=fields; odoo.tools=tools
+    exc=types.ModuleType('odoo.exceptions'); exc.UserError=UserError; exc.ValidationError=ValidationError; exc.AccessError=AccessError
     ot=types.ModuleType('odoo.tools'); ot.config=config; ot.ormcache=_ormcache; ot.timedelta=tools.timedelta
     se=types.ModuleType('odoo.tools.safe_eval'); se.safe_eval=lambda *a,**k: None; se.test_python_expr=lambda *a,**k: None
     of=types.ModuleType('odoo.fields'); of.Datetime=fields.Datetime; of.Date=fields.Date

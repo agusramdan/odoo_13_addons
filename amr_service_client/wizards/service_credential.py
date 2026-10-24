@@ -1,6 +1,7 @@
 import json
 import base64
 from odoo import models, fields
+from odoo.exceptions import ValidationError, AccessError
 
 
 class ServiceCredentialWizard(models.TransientModel):
@@ -30,6 +31,7 @@ class ServiceCredentialWizard(models.TransientModel):
     private_key = fields.Text()
     private_key_file = fields.Char()
     token_uri = fields.Char()
+    issuer_profile_id = fields.Many2one("oidc.issuer.register", string="Issuer Profile", groups="amr_resource.group_oidc_trust_admin")
     client_secret = fields.Char()
     header = fields.Char(default="X-API-Key")
     value = fields.Char()
@@ -45,6 +47,21 @@ class ServiceCredentialWizard(models.TransientModel):
     #     super().__init__(pool, cr)
     #     self.generated_file = None
 
+    def _oauth_token_uri(self):
+        self.ensure_one()
+        if self.credential_type not in ("client_secret", "service_account"):
+            return self.token_uri
+        profile = self.issuer_profile_id
+        if not profile:
+            return self.token_uri
+        if not self.env.user.has_group("amr_resource.group_oidc_trust_admin"):
+            raise AccessError("You are not allowed to use issuer profiles.")
+        if self.token_uri:
+            raise ValidationError("Choose an issuer profile or enter a token URI, not both.")
+        if not profile.active or not profile.token_endpoint or profile.client_id != self.client_id:
+            raise ValidationError("The issuer profile is inactive or does not match this client.")
+        return profile.token_endpoint
+
     def action_generate(self):
         self.ensure_one()
 
@@ -57,7 +74,7 @@ class ServiceCredentialWizard(models.TransientModel):
             data.update({
                 "client_id": self.client_id,
                 "private_key_id": self.private_key_id,
-                "token_uri": self.token_uri,
+                "token_uri": self._oauth_token_uri(),
             })
 
             if self.private_key:
@@ -69,7 +86,7 @@ class ServiceCredentialWizard(models.TransientModel):
             data.update({
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
-                "token_uri": self.token_uri,
+                "token_uri": self._oauth_token_uri(),
             })
         elif self.credential_type == "api_key":
             data.update({
@@ -109,6 +126,7 @@ class ServiceCredentialWizard(models.TransientModel):
 
     def action_save_to_credential(self):
         self.ensure_one()
+        self.action_generate()
         credential = self.env["service.credential"].browse(self.env.context.get("active_id"))
 
         credential.write({
