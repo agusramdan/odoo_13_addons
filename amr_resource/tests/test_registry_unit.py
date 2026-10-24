@@ -443,6 +443,20 @@ class RegistryUnitTests(unittest.TestCase):
         with self.assertRaises(AccessError):
             candidate.create([{'issuer': 'https://issuer.example'}])
 
+    def test_mvp_active_flag_rejects_non_boolean_generic_writes(self):
+        inactive = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                               verification_source='jwks', policy_revision=6)
+        for value in (1, 0, 'true', None):
+            with self.subTest(value=value), self.assertRaises(AccessError):
+                inactive.write({'active': value})
+            self.assertFalse(inactive.active)
+            self.assertEqual(inactive.policy_revision, 6)
+
+        legacy = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=False)
+        self.assertTrue(legacy.write({'active': 1}))
+        self.assertEqual(legacy.active, 1)
+        self.assertEqual(legacy.policy_revision, 2)
+
     def test_mvp_activation_bypasses_reject_malformed_defaults_and_require_action(self):
         for value in (1, 0, 'yes', None):
             candidate = IssuerProbe((ADMIN, TRUST), mvp_enabled=False)
