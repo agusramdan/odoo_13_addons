@@ -1,0 +1,562 @@
+[
+  {
+    "doc": "amr_resource/README.md",
+    "line": 3,
+    "source": "amr_resource/__manifest__.py",
+    "start": 1,
+    "end": 21,
+    "exists": true,
+    "lines": 21,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 5,
+    "source": "amr_resource/__manifest__.py",
+    "start": 1,
+    "end": 21,
+    "exists": true,
+    "lines": 21,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 7,
+    "source": "amr_resource/models/helper.py",
+    "start": 44,
+    "end": 317,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 7,
+    "source": "amr_resource/models/ir_http.py",
+    "start": 66,
+    "end": 76,
+    "exists": true,
+    "lines": 93,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 7,
+    "source": "amr_resource/models/ir_http.py",
+    "start": 41,
+    "end": 56,
+    "exists": true,
+    "lines": 93,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 16,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 165,
+    "end": 384,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 16,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 387,
+    "end": 417,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 16,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 420,
+    "end": 442,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 18,
+    "source": "amr_resource/security/ir.model.access.csv",
+    "start": 1,
+    "end": 5,
+    "exists": true,
+    "lines": 5,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 18,
+    "source": "amr_resource/security/registry_rules.xml",
+    "start": 1,
+    "end": 19,
+    "exists": true,
+    "lines": 19,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 18,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 94,
+    "end": 162,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 18,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 370,
+    "end": 384,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 22,
+    "source": "amr_resource/models/helper.py",
+    "start": 207,
+    "end": 248,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 24,
+    "source": "amr_resource/models/helper.py",
+    "start": 190,
+    "end": 201,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 24,
+    "source": "amr_resource/models/helper.py",
+    "start": 151,
+    "end": 188,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 26,
+    "source": "amr_resource/models/helper.py",
+    "start": 268,
+    "end": 283,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 26,
+    "source": "amr_resource/models/helper.py",
+    "start": 254,
+    "end": 260,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 26,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 282,
+    "end": 287,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 41,
+    "source": "amr_resource/models/helper.py",
+    "start": 44,
+    "end": 317,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 41,
+    "source": "amr_resource/models/res_users.py",
+    "start": 45,
+    "end": 52,
+    "exists": true,
+    "lines": 90,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 41,
+    "source": "amr_resource/models/res_users.py",
+    "start": 76,
+    "end": 90,
+    "exists": true,
+    "lines": 90,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 45,
+    "source": "amr_resource/transport.py",
+    "start": 212,
+    "end": 257,
+    "exists": true,
+    "lines": 257,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 45,
+    "source": "amr_resource/transport.py",
+    "start": 85,
+    "end": 125,
+    "exists": true,
+    "lines": 257,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 45,
+    "source": "amr_resource/transport.py",
+    "start": 163,
+    "end": 185,
+    "exists": true,
+    "lines": 257,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 47,
+    "source": "amr_resource/models/helper.py",
+    "start": 118,
+    "end": 126,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 47,
+    "source": "amr_resource/models/helper.py",
+    "start": 109,
+    "end": 116,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 47,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 262,
+    "end": 268,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 47,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 270,
+    "end": 280,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 51,
+    "source": "amr_resource/models/res_config_settings.py",
+    "start": 49,
+    "end": 55,
+    "exists": true,
+    "lines": 55,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 51,
+    "source": "amr_resource/views/res_config_settings_views.xml",
+    "start": 1,
+    "end": 172,
+    "exists": true,
+    "lines": 172,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 69,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 48,
+    "end": 92,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 69,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 206,
+    "end": 260,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 75,
+    "source": "amr_resource/requirements.txt",
+    "start": 1,
+    "end": 5,
+    "exists": true,
+    "lines": 5,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 75,
+    "source": "amr_resource/tests/test_migration_unit.py",
+    "start": 92,
+    "end": 95,
+    "exists": true,
+    "lines": 212,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 81,
+    "source": "amr_resource/tests/__init__.py",
+    "start": 1,
+    "end": 3,
+    "exists": true,
+    "lines": 3,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 81,
+    "source": "amr_resource/tests/test_registry.py",
+    "start": 1,
+    "end": 82,
+    "exists": true,
+    "lines": 82,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 81,
+    "source": "amr_resource/tests/test_security_unit.py",
+    "start": 1,
+    "end": 438,
+    "exists": true,
+    "lines": 438,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 81,
+    "source": "amr_resource/tests/test_transport_unit.py",
+    "start": 1,
+    "end": 394,
+    "exists": true,
+    "lines": 394,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 85,
+    "source": "amr_resource/models/helper.py",
+    "start": 22,
+    "end": 30,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 85,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 94,
+    "end": 162,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 87,
+    "source": "amr_resource/controllers/main.py",
+    "start": 98,
+    "end": 106,
+    "exists": true,
+    "lines": 106,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 87,
+    "source": "amr_resource/models/ir_http.py",
+    "start": 84,
+    "end": 86,
+    "exists": true,
+    "lines": 93,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/developer.md",
+    "line": 87,
+    "source": "amr_resource/models/res_users.py",
+    "start": 11,
+    "end": 23,
+    "exists": true,
+    "lines": 90,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 5,
+    "source": "amr_resource/security/res_groups.xml",
+    "start": 1,
+    "end": 37,
+    "exists": true,
+    "lines": 37,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 5,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 94,
+    "end": 162,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 9,
+    "source": "amr_resource/views/trust_registry_views.xml",
+    "start": 1,
+    "end": 91,
+    "exists": true,
+    "lines": 91,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 9,
+    "source": "amr_resource/views/res_config_settings_views.xml",
+    "start": 1,
+    "end": 172,
+    "exists": true,
+    "lines": 172,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 20,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 165,
+    "end": 384,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 20,
+    "source": "amr_resource/models/trust_registry.py",
+    "start": 420,
+    "end": 442,
+    "exists": true,
+    "lines": 442,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 20,
+    "source": "amr_resource/models/helper.py",
+    "start": 268,
+    "end": 283,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 24,
+    "source": "amr_resource/models/res_config_settings.py",
+    "start": 1,
+    "end": 55,
+    "exists": true,
+    "lines": 55,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 24,
+    "source": "amr_resource/views/res_config_settings_views.xml",
+    "start": 1,
+    "end": 172,
+    "exists": true,
+    "lines": 172,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 30,
+    "source": "amr_resource/models/ir_http.py",
+    "start": 66,
+    "end": 76,
+    "exists": true,
+    "lines": 93,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 30,
+    "source": "amr_resource/models/helper.py",
+    "start": 207,
+    "end": 248,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 30,
+    "source": "amr_resource/models/helper.py",
+    "start": 254,
+    "end": 260,
+    "exists": true,
+    "lines": 317,
+    "valid": true
+  },
+  {
+    "doc": "amr_resource/docs/user.md",
+    "line": 42,
+    "source": "amr_resource/__manifest__.py",
+    "start": 1,
+    "end": 21,
+    "exists": true,
+    "lines": 21,
+    "valid": true
+  }
+]

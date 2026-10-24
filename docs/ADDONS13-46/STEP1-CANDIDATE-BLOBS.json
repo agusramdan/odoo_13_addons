@@ -1,0 +1,145 @@
+{
+  "content_digest": "b02f9dd4c48ca2239f9ab7cd4727ab1ea08e054c815b9ea2b6dbe7dd21139602",
+  "paths": [
+    {
+      "path": "amr_resource/__manifest__.py",
+      "bytes": 624,
+      "sha256": "dcdb4cc540d3bfcc3a1b79f4588adc2929b48afa80fa5d1077eff189dc2fa170",
+      "git_blob": "0ec1ba873e6141c96ef59b62b17c788d8c70383c"
+    },
+    {
+      "path": "amr_resource/models/__init__.py",
+      "bytes": 155,
+      "sha256": "a89404e5b0145bd3f6dc9a5e092fb8e7e1989d9d8e86e0d1256a0d6123365d2b",
+      "git_blob": "382d91a59c3ccfdeb49ba981b581bf0ab82478a1"
+    },
+    {
+      "path": "amr_resource/models/helper.py",
+      "bytes": 12877,
+      "sha256": "bc9a8cd1bddccbbc849406fcda7fd7d6e82a8c3013baab9a653c5b5e73ab213f",
+      "git_blob": "65d6d8782fcc1b95c216498b5dba89c01d75ad90"
+    },
+    {
+      "path": "amr_resource/models/ir_http.py",
+      "bytes": 2929,
+      "sha256": "811f6afcf6ae5e295ab0db1618836fa215b782bbab7985a49e3e5289bd31bb22",
+      "git_blob": "83f6486342c5340b8647bea90a4d90cde7407996"
+    },
+    {
+      "path": "amr_resource/models/res_users.py",
+      "bytes": 2668,
+      "sha256": "e0a524a5e8ff09011d6291807bf28460e5f1b0340d84bd20a27614732fbf12e0",
+      "git_blob": "19b80cfd7114d6054bab225cf89ff2eab3dbbfb4"
+    },
+    {
+      "path": "amr_resource/models/trust_registry.py",
+      "bytes": 16078,
+      "sha256": "1eab59c674e518ffa453926ca481eaa25416696c9d921df560312f7deccbd7b7",
+      "git_blob": "2b7e085287ba2515a0eb8de683ab42fb3426ac7a"
+    },
+    {
+      "path": "amr_resource/security/ir.model.access.csv",
+      "bytes": 569,
+      "sha256": "a62577fb75894f1df3acf6df414accd1e41cd93493d3dc99d6b640c941d22ec4",
+      "git_blob": "29f8efcf8fc81ffd4d30f46e0d24a18422d21478"
+    },
+    {
+      "path": "amr_resource/security/registry_rules.xml",
+      "bytes": 1026,
+      "sha256": "be42e6910355422f41c78c8deb9b554fe57ac73fec4536a3a6dd24d75a566318",
+      "git_blob": "c1f1c0c44ea6bfe6560e087d888b5f882865c6c6"
+    },
+    {
+      "path": "amr_resource/security/res_groups.xml",
+      "bytes": 1707,
+      "sha256": "4bc39dc365dee322f377ed0b7e3e6f76e8ecc3c4a72b7371a8533e39145d9ff8",
+      "git_blob": "7c358210323245981f5f8ef3a85ad7429276be7e"
+    },
+    {
+      "path": "amr_resource/tests/test_registry_unit.py",
+      "bytes": 20538,
+      "sha256": "b6cb8b8b010c125723a98883d26347b79a7b02278ec91fe60fce6fadc9061dbf",
+      "git_blob": "40efa95126f82cb5481891166649e6caeaa2fc5f"
+    },
+    {
+      "path": "amr_resource/tests/test_security_unit.py",
+      "bytes": 21202,
+      "sha256": "6ba3342e54e86fff96e1b49f0aaaec69d1924b7d921e983154c42dc9d1488e5e",
+      "git_blob": "68360b4c6288317844d34dbfa69beecb26c3d330"
+    },
+    {
+      "path": "amr_resource/tests/test_transport_unit.py",
+      "bytes": 17160,
+      "sha256": "195fa54efd6385e32f2a952784659cee52604067d517dd2c23122b12cd4e7c23",
+      "git_blob": "4b5488e43ef4de7acc9803315fe97f7810c4e897"
+    },
+    {
+      "path": "amr_resource/transport.py",
+      "bytes": 9641,
+      "sha256": "1ceef23fd7fd80f87e6d05fbecb458cf6a2d5128ff712c5a6f89d1e5ba1c1889",
+      "git_blob": "b439f19507231c057fc015d17eb76baccd0ce445"
+    },
+    {
+      "path": "amr_resource/views/trust_registry_views.xml",
+      "bytes": 5617,
+      "sha256": "cb1c3f32497bbbb5d27ac9d1dd3829429e6d3084d790ad3146c0feb347a3b4d2",
+      "git_blob": "faf99f474a878dc5774e6bd2f812c806abb19971"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T141448Z-owner-addon-scope-v4/LEAD-STEP0-CHECK-20261023T154515Z.md",
+      "bytes": 3186,
+      "sha256": "c2e588de8bf8910301c3a0c8d9ce0ee87c34288bb1a12f2c63931c362f84409e",
+      "git_blob": "24ee812592843f39540e0ffffa5566915064d089"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T141448Z-owner-addon-scope-v4/PRD-DRAFT.md",
+      "bytes": 32119,
+      "sha256": "ca7eaf9cc6b633743cf0e2f549578e996e67907ed50b8b383dfc47df05eedcc6",
+      "git_blob": "0871a73e71bf01754b56bf4b360a3533dd6980f7"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/ANALYST-REPORT.md",
+      "bytes": 13018,
+      "sha256": "4f976905a249d1d1737ec475dd2b4ffc09e72d166b01c86621e3c037b1c9b77c",
+      "git_blob": "fc99f87e9c45c6d3261ac6185ce0fb884834511c"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/DECISION-ADDENDUM-OWNER-DELEGATED-ANALYST-01.md",
+      "bytes": 11101,
+      "sha256": "438d9f5fee1386685dd07d41305fa27f8b262055a5d3e61bf99ae54312cf907b",
+      "git_blob": "326df35040e68d935d96d4d52e77acd80fb5d58b"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/PRD-DRAFT.md",
+      "bytes": 25496,
+      "sha256": "699d46c5c98fc1b36b4920f8c42937d7b3b5fbe02798315417b3392d55ef9355",
+      "git_blob": "c7d5881404887419e247190b887e4519be5bb4f5"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/RESULT.json",
+      "bytes": 10176,
+      "sha256": "15fb2a2dcbc5adcda85cff345828286b022f19bfcd50c191ef70baba9c9ef15a",
+      "git_blob": "912db6c0031b642340467e6ee1674f83f2c72b39"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/SOURCE-INVENTORY.md",
+      "bytes": 13072,
+      "sha256": "3b9f0cef9a13c8e13ff4f8e250e2d670672dcfcdf06daa8d2984fcde9d094809",
+      "git_blob": "00bb26904b3864b5e49ec19dc04d7bf28e38598d"
+    },
+    {
+      "path": "docs/ADDONS13-46/analysis-20261023T154515Z-analis-step0/UAT-DRAFT.md",
+      "bytes": 30457,
+      "sha256": "2e938db88310745d0b88d872f29c5291a087610b9899bcae81c462bfcb4fca52",
+      "git_blob": "805ec1913a8996683cc282d4284cd958e21b769a"
+    }
+  ],
+  "scan_rules": [
+    "private-key-material",
+    "github-token",
+    "aws-access-key",
+    "slack-token"
+  ],
+  "findings": [],
+  "scope_allowlist": true
+}

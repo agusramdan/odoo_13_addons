@@ -1,0 +1,15 @@
+{
+  "upstream_commit": "4cc086d330b73514fbc64a7fcf22d8a7a9f1b691",
+  "files": [
+    {
+      "url": "https://raw.githubusercontent.com/odoo/odoo/4cc086d330b73514fbc64a7fcf22d8a7a9f1b691/odoo/models.py",
+      "file": "/home/ubuntu/.hermes/profiles/developer/cache/scratch/ADDONS13-46-recovery-20261024T033052+0800/odoo13-models.py",
+      "sha256": "0043c05494799145a550279009195b399e2f2ea082cb723e9a7531706d6e89b1"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/odoo/odoo/4cc086d330b73514fbc64a7fcf22d8a7a9f1b691/odoo/fields.py",
+      "file": "/home/ubuntu/.hermes/profiles/developer/cache/scratch/ADDONS13-46-recovery-20261024T033052+0800/odoo13-fields.py",
+      "sha256": "e779294c334ae0c4111cd4be48bbfda2500e766c318f9fd4a82048c51ed20e7d"
+    }
+  ]
+}
