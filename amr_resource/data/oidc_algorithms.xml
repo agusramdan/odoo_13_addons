@@ -8,5 +8,12 @@
             <field name="purpose">access_token_verification</field>
             <field name="support_state">supported</field>
         </record>
+        <record id="algorithm_ps256" model="oidc.algorithm">
+            <field name="name">PS256</field>
+            <field name="key_family">RSA</field>
+            <field name="min_key_bits">2048</field>
+            <field name="purpose">access_token_verification</field>
+            <field name="support_state">target</field>
+        </record>
     </data>
 </odoo>
