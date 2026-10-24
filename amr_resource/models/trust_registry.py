@@ -463,6 +463,34 @@ class AmrResourceIssuer(models.Model):
             _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
                          record.ids[0], revision, self.env.uid)
 
+    def action_deactivate_mvp(self, reason_code):
+        """Disable one active MVP issuer through an explicit audited admin action."""
+        import re
+
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        self.check_access_rights('write')
+        self.check_access_rule('write')
+        if (not isinstance(reason_code, str)
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
+            raise ValidationError('A bounded reason code is required.')
+        for record in self:
+            if not record.active or not record.mvp_enabled:
+                raise ValidationError('Only an active MVP issuer can be deactivated.')
+            source_kind = record.verification_source
+            if source_kind not in ('jwks', 'local_public', 'none'):
+                raise ValidationError('MVP issuer source state is invalid.')
+        for record in self:
+            revision = record.policy_revision + 1
+            timestamp = fields.Datetime.now()
+            super(AmrResourceIssuer, record).write({
+                'active': False, 'policy_revision': revision})
+            _logger.info('Trust issuer deactivated issuer_id=%s action=%s source_kind=%s '
+                         'revision=%s actor=%s reason_code=%s timestamp=%s',
+                         record.id, 'deactivate_mvp', record.verification_source,
+                         revision, self.env.uid, reason_code, timestamp)
+        return True
+
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
                     'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
@@ -508,7 +536,8 @@ class AmrResourceIssuer(models.Model):
                         raise ValueError()
                 except (ValueError, TypeError, UnicodeError):
                     raise ValidationError('A valid RSA public PEM of at least 2048 bits is required.')
-            if record.token_profile == 'opaque' and not record.introspection_endpoint:
+            if (record.token_profile == 'opaque' and not record.introspection_endpoint
+                    and not record.mvp_enabled):
                 raise ValidationError('Opaque profiles require a static introspection endpoint.')
             if (not record.allow_missing_azp and not record.azp) or (record.azp and not _exact_string(record.azp)):
                 raise ValidationError('Configure one exact azp or explicitly allow its absence.')
@@ -572,7 +601,8 @@ class AmrResourceIssuer(models.Model):
                             or not record.introspection_credential_ref
                             or not _exact_string(record.introspection_auth_client_id)
                             or record.introspection_auth_method != 'client_secret_basic'
-                            or not record.introspection_basic_contract_ref):
+                            or (record.introspection_source == 'manual'
+                                and not record.introspection_basic_contract_ref)):
                         raise ValidationError('Introspection requires a separate authorized Basic configuration.')
                 elif record.introspection_source != 'none':
                     raise ValidationError('Introspection metadata requires a genuine NO_JWKS source.')
