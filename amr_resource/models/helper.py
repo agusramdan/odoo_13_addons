@@ -135,9 +135,10 @@ def _string(value):
 
 
 class _VerifiedClaims(dict):
-    def __init__(self, claims, company, uid):
+    def __init__(self, claims, company, uid, policy_revision):
         super().__init__(claims)
         self._origin, self._company, self._uid = _PROVENANCE, company, uid
+        self._policy_revision = policy_revision
         self._snapshot = json.dumps(claims, sort_keys=True, allow_nan=False)
 
 
@@ -159,9 +160,12 @@ class ResourceHelper(models.AbstractModel):
 
     def _verified(self, payload):
         try:
-            return (type(payload) is _VerifiedClaims and payload._origin is _PROVENANCE
-                    and payload._company == self.env.company.id and payload._uid == self.env.uid
-                    and payload._snapshot == json.dumps(dict(payload), sort_keys=True, allow_nan=False))
+            if (type(payload) is not _VerifiedClaims or payload._origin is not _PROVENANCE
+                    or payload._company != self.env.company.id or payload._uid != self.env.uid
+                    or payload._snapshot != json.dumps(dict(payload), sort_keys=True, allow_nan=False)):
+                return False
+            profile = self._profile(payload['iss'])
+            return payload._policy_revision == getattr(profile, 'policy_revision', 0)
         except Exception:
             return False
 
@@ -386,7 +390,8 @@ class ResourceHelper(models.AbstractModel):
         if 'token_type' in claims and (not isinstance(claims['token_type'], str)
                 or claims['token_type'].lower() != 'bearer'):
             raise Unauthorized()
-        return _VerifiedClaims(claims, self.env.company.id, self.env.uid)
+        return _VerifiedClaims(claims, self.env.company.id, self.env.uid,
+                               getattr(profile, 'policy_revision', 0))
 
     @api.model
     @_sanitized
@@ -401,7 +406,8 @@ class ResourceHelper(models.AbstractModel):
         if not profile.introspection_endpoint:
             raise Unauthorized()
         result = fetch_json(profile.introspection_endpoint, data={'token': token}, headers=self._headers(profile))
-        return _VerifiedClaims(self._claims(result, profile, opaque=True), self.env.company.id, self.env.uid)
+        return _VerifiedClaims(self._claims(result, profile, opaque=True), self.env.company.id,
+                               self.env.uid, getattr(profile, 'policy_revision', 0))
 
     @api.model
     def validate_hs(self, token, **kw):
@@ -462,7 +468,8 @@ class ResourceHelper(models.AbstractModel):
         claims = self._claims(claims, profile)
         claims.setdefault('kid', header.get('kid'))
         claims.setdefault('alg', 'RS256')
-        return _VerifiedClaims(claims, self.env.company.id, self.env.uid)
+        return _VerifiedClaims(claims, self.env.company.id, self.env.uid,
+                               getattr(profile, 'policy_revision', 0))
 
     @api.model
     def get_validate_user(self, token):

@@ -93,7 +93,10 @@ class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
         self.env = SimpleNamespace(user=SimpleNamespace(share=share, has_group=lambda name: name in groups),
                                    su=su, uid=27, company=SimpleNamespace(id=7), context={})
         self.ids = [19]
+        self.id = 19
         self.code_revision = 0
+        self.policy_revision = 1
+        self.active = True
         self.python_code = False
         self.company_id = self.env.company
         for key, value in values.items():
@@ -362,6 +365,27 @@ class RegistryUnitTests(unittest.TestCase):
             trust.create([{'python_code': 'source'}])
         trust._guard_issuer_values({'resolver_key': 'get_user_match'}, creating=True)
 
+    def test_policy_revision_is_monotonic_and_not_admin_writable(self):
+        self.assertTrue(hasattr(registry.AmrResourceIssuer, 'policy_revision'))
+        trust = IssuerProbe((ADMIN, TRUST), policy_revision=7, client_id='before')
+        self.assertTrue(trust.write({'client_id': 'after'}))
+        self.assertEqual(trust.policy_revision, 8)
+        self.assertTrue(trust.write({'active': False}))
+        self.assertEqual(trust.policy_revision, 9)
+        self.assertFalse(trust.active)
+        with self.assertRaises(AccessError):
+            trust.write({'policy_revision': 100})
+        self.assertEqual(trust.policy_revision, 9)
+
+    def test_child_policy_mutations_advance_parent_revision(self):
+        child = ChildProbe((ADMIN, TRUST))
+        parent = IssuerProbe((ADMIN, TRUST), policy_revision=7)
+        child.mapped = lambda name: [parent]
+        self.assertTrue(child.write({'sub': 'changed-subject'}))
+        self.assertEqual(parent.policy_revision, 8)
+        self.assertTrue(child.unlink())
+        self.assertEqual(parent.policy_revision, 9)
+
     def test_actual_write_generates_digest_actor_time_revision(self):
         model = IssuerProbe((ADMIN, CODE))
         source = "raise RuntimeError('must never execute')"
@@ -440,7 +464,7 @@ class RegistryUnitTests(unittest.TestCase):
 
         for remaining in ([], [object()]):
             for operation in ('unlink', 'write'):
-                model = AudienceProbe(Parents([SimpleNamespace(audience_ids=remaining)]))
+                model = AudienceProbe(Parents([SimpleNamespace(id=10, audience_ids=remaining)]))
                 with self.subTest(remaining=bool(remaining), operation=operation):
                     if remaining:
                         result = model.unlink() if operation == 'unlink' else model.write({'issuer_id': 2})

@@ -12,7 +12,9 @@ from werkzeug.exceptions import Unauthorized
 _logger = logging.getLogger(__name__)
 TRUST_GROUP = 'amr_resource.group_oidc_trust_admin'
 CODE_GROUP = 'amr_resource.group_oidc_code_admin'
-AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date'}
+AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date', 'policy_revision'}
+POLICY_CHILD_MODELS = {'oidc.issuer.register.audience', 'oidc.issuer.subject',
+                       'oidc.issuer.user.mapping', 'oidc.issuer.algorithm.policy'}
 _ALGORITHM_CATALOG = __import__('types').MappingProxyType({
     'RS256': __import__('types').MappingProxyType({
         'key_family': 'RSA', 'min_key_bits': 2048,
@@ -215,12 +217,19 @@ class RegistryAccess(models.AbstractModel):
             if len(parent) != 1:
                 raise AccessError('Registry access denied.')
 
+    def _bump_parent_revisions(self, records):
+        if self._name in POLICY_CHILD_MODELS:
+            for issuer in records.mapped('issuer_id'):
+                if hasattr(issuer, '_bump_policy_revision'):
+                    issuer._bump_policy_revision()
+
     @api.model_create_multi
     def create(self, vals_list):
         self.check_access_rights('create')
         for values in vals_list:
             self._guard_parent_values(values)
         records = super(RegistryAccess, self).create(vals_list)
+        self._bump_parent_revisions(records)
         _logger.info('Trust registry create model=%s ids=%s actor=%s',
                      self._name, records.ids, self.env.uid)
         return records
@@ -229,7 +238,15 @@ class RegistryAccess(models.AbstractModel):
         self.check_access_rights('write')
         self.check_access_rule('write')
         self._guard_parent_values(values)
+        parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
         result = super(RegistryAccess, self).write(values)
+        if self._name in POLICY_CHILD_MODELS:
+            seen = set()
+            for issuer in list(parents) + list(self.mapped('issuer_id')):
+                if issuer.id not in seen:
+                    if hasattr(issuer, '_bump_policy_revision'):
+                        issuer._bump_policy_revision()
+                    seen.add(issuer.id)
         _logger.info('Trust registry write model=%s ids=%s actor=%s',
                      self._name, self.ids, self.env.uid)
         return result
@@ -238,7 +255,11 @@ class RegistryAccess(models.AbstractModel):
         self.check_access_rights('unlink')
         self.check_access_rule('unlink')
         ids = self.ids
+        parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
         result = super(RegistryAccess, self).unlink()
+        for issuer in parents:
+            if hasattr(issuer, '_bump_policy_revision'):
+                issuer._bump_policy_revision()
         _logger.info('Trust registry unlink model=%s ids=%s actor=%s',
                      self._name, ids, self.env.uid)
         return result
@@ -300,6 +321,7 @@ class AmrResourceIssuer(models.Model):
     code_revision = fields.Integer(readonly=True, copy=False, groups=CODE_GROUP)
     code_digest = fields.Char(readonly=True, copy=False, groups=CODE_GROUP)
     code_date = fields.Datetime(readonly=True, copy=False, groups=CODE_GROUP)
+    policy_revision = fields.Integer(readonly=True, copy=False, default=1, groups=TRUST_GROUP)
 
     fixed_user_id = fields.Many2one('res.users', ondelete='restrict')
     code_actor_id = fields.Many2one('res.users', readonly=True, copy=False,
@@ -416,16 +438,30 @@ class AmrResourceIssuer(models.Model):
 
     def write(self, values):
         self._guard_issuer_values(values)
-        if 'python_code' not in values:
-            return super(AmrResourceIssuer, self).write(values)
         self.check_access_rights('write')
         self.check_access_rule('write')
         for record in self:
             updated = dict(values)
-            if values['python_code'] != record.python_code:
+            previous_active = record.active
+            if values and set(values) - AUDIT_FIELDS:
+                updated['policy_revision'] = record.policy_revision + 1
+            if 'python_code' in values and values['python_code'] != record.python_code:
                 updated.update(record._source_audit(values['python_code'], record.code_revision + 1))
             super(AmrResourceIssuer, record).write(updated)
+            if 'policy_revision' in updated:
+                _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
+                             record.ids[0], updated['policy_revision'], self.env.uid)
+                if 'active' in values and values['active'] != previous_active:
+                    _logger.info('Trust activation issuer_id=%s active=%s revision=%s actor=%s',
+                                 record.ids[0], values['active'], updated['policy_revision'], self.env.uid)
         return True
+
+    def _bump_policy_revision(self):
+        for record in self:
+            revision = record.policy_revision + 1
+            super(AmrResourceIssuer, record).write({'policy_revision': revision})
+            _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
+                         record.ids[0], revision, self.env.uid)
 
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
