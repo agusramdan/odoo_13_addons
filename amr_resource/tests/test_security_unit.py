@@ -262,9 +262,102 @@ class SecurityUnitTests(unittest.TestCase):
         self.assertEqual(self.fetch.call_count, 2)
         for keys in ([], [self.jwk, self.jwk], [dict(self.jwk, kty='EC')],
                      [dict(self.jwk, alg='HS256')], [dict(self.jwk, use='enc')],
-                     [dict(self.jwk, key_ops=['sign'])], [dict(self.jwk, d='private')]):
+                     [dict(self.jwk, key_ops=['sign'])]):
             self.fetch.return_value = {'keys': keys}
             self.reject(self.helper.validate, self.token())
+        for private_name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'):
+            self.fetch.return_value = {'keys': [dict(self.jwk, **{private_name: 'private'})]}
+            self.reject(self.helper.validate, self.token())
+
+    def test_x5c_does_not_replace_selected_trusted_rsa_key(self):
+        self.fetch.return_value = {'keys': [dict(self.jwk, x5c=['synthetic-cert'])]}
+        self.assertTrue(self.helper._verified(self.helper.validate(
+            self.token(headers={'x5c': ['attacker-cert']}))))
+        self.reject(self.helper.validate, self.token(key=self.other_key,
+                                                     headers={'x5c': ['attacker-cert']}))
+        self.assertEqual(self.fetch.call_count, 2)
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_metadata_url_and_oidc_metadata_are_strict(self):
+        self.assertEqual(helper_module._oidc_discovery_url('https://id.invalid/tenant/'),
+                         'https://id.invalid/tenant/.well-known/openid-configuration')
+        self.assertEqual(helper_module._rfc8414_metadata_url('https://id.invalid/tenant/'),
+                         'https://id.invalid/.well-known/oauth-authorization-server/tenant/')
+        metadata = {'issuer': self.profile.issuer,
+                    'authorization_endpoint': 'https://id.invalid/authorize',
+                    'jwks_uri': 'https://id.invalid/jwks',
+                    'response_types_supported': ['code'],
+                    'subject_types_supported': ['public'],
+                    'id_token_signing_alg_values_supported': ['RS256'],
+                    'token_endpoint': 'https://id.invalid/token'}
+        self.assertEqual(helper_module._parse_oidc_metadata(metadata, self.profile.issuer)['jwks_uri'],
+                         'https://id.invalid/jwks')
+        for invalid in (dict(metadata, issuer=self.profile.issuer + '/'),
+                        dict(metadata, jwks_uri=None),
+                        dict(metadata, response_types_supported=[]),
+                        {key: value for key, value in metadata.items() if key != 'jwks_uri'}):
+            with self.subTest(metadata=invalid), self.assertRaises(Unauthorized):
+                helper_module._parse_oidc_metadata(invalid, self.profile.issuer)
+
+    def test_rfc8414_present_jwks_uri_is_always_terminal(self):
+        metadata = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
+                    'authorization_endpoint': 'https://id.invalid/authorize',
+                    'token_endpoint': 'https://id.invalid/token',
+                    'introspection_endpoint': 'https://id.invalid/introspect'}
+        self.assertEqual(helper_module._parse_rfc8414_metadata(metadata, self.profile.issuer)['introspection_endpoint'],
+                         'https://id.invalid/introspect')
+        for jwks_value in ('https://id.invalid/jwks', None, '', 7):
+            with self.subTest(jwks_uri=jwks_value), self.assertRaises(Unauthorized):
+                helper_module._parse_rfc8414_metadata(dict(metadata, jwks_uri=jwks_value),
+                                                      self.profile.issuer)
+
+    def test_get_oidc_config_resolves_discovery_or_declared_no_jwks(self):
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'oidc_discovery'
+        self.profile.token_profile = 'jwt'
+        metadata = {'issuer': self.profile.issuer,
+                    'authorization_endpoint': 'https://id.invalid/authorize',
+                    'jwks_uri': 'https://id.invalid/jwks',
+                    'response_types_supported': ['code'],
+                    'subject_types_supported': ['public'],
+                    'id_token_signing_alg_values_supported': ['RS256'],
+                    'token_endpoint': 'https://id.invalid/token'}
+        self.fetch.return_value = metadata
+        result = self.helper.get_oidc_config(self.profile.issuer)
+        self.assertEqual(result['jwks_uri'], metadata['jwks_uri'])
+        self.fetch.assert_called_once_with(helper_module._oidc_discovery_url(self.profile.issuer))
+        self.fetch.reset_mock()
+        self.fetch.side_effect = [metadata, {'keys': [self.jwk]}]
+        self.assertEqual(self.helper.get_jwks_data(self.profile.issuer), {'keys': [self.jwk]})
+        self.assertEqual(self.fetch.call_args_list[0][0],
+                         (helper_module._oidc_discovery_url(self.profile.issuer),))
+        self.assertEqual(self.fetch.call_args_list[1][0], ('https://id.invalid/jwks',))
+        self.fetch.side_effect = None
+        self.fetch.reset_mock()
+        self.profile.metadata_mode = 'manual'
+        self.profile.discovery_unavailable_declared = False
+        with self.assertRaises(Unauthorized):
+            self.helper.get_oidc_config(self.profile.issuer)
+        self.fetch.assert_not_called()
+
+        self.profile.discovery_unavailable_declared = True
+        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery.1'
+        self.profile.verification_source = 'none'
+        self.profile.jwks_uri = False
+        self.profile.no_jwks_declaration = True
+        self.profile.no_jwks_evidence_ref = 'evidence.jwks.absent'
+        self.profile.introspection_source = 'rfc8414'
+        self.profile.introspection_endpoint = False
+        rfc = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
+               'authorization_endpoint': 'https://id.invalid/authorize',
+               'token_endpoint': 'https://id.invalid/token',
+               'introspection_endpoint': 'https://id.invalid/introspect'}
+        self.fetch.return_value = rfc
+        result = self.helper.get_oidc_config(self.profile.issuer)
+        self.assertIsNone(result['jwks_uri'])
+        self.assertEqual(result['introspection_endpoint'], rfc['introspection_endpoint'])
+        self.fetch.assert_called_once_with(helper_module._rfc8414_metadata_url(self.profile.issuer))
+        self.env.parameters.get_param.assert_not_called()
 
     def test_uat06_local_key_no_loopback_or_local_bypass(self):
         self.profile.local_key_ref = "amr_resource.keys.synthetic"
@@ -341,6 +434,27 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.binding_ids = Rows([SimpleNamespace(sub='subject', user_id=self.user)] * 2)
         self.reject(self.helper.get_user_match, payload)
         self.assertEqual(self.env.user_reads, [])
+
+    def test_mapping_resolver_requires_unique_candidate_and_matching_existing_binding(self):
+        self.profile.resolver_mode = 'mapping'
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'manual'
+        self.profile.discovery_unavailable_declared = True
+        self.profile.discovery_unavailable_evidence_ref = 'synthetic.discovery.evidence'
+        self.profile.verification_source = 'jwks'
+        self.profile.user_mapping_ids = Rows([
+            SimpleNamespace(active=True, sequence=20, field_user='login', jwt_key='preferred_username'),
+            SimpleNamespace(active=True, sequence=10, field_user='login', jwt_key='preferred_username'),
+        ])
+        payload = self.helper.validate(self.token(dict(self.claims, preferred_username='synthetic-user')))
+        self.helper._find_mapping_users = Mock(return_value=Rows([self.user]))
+        self.assertEqual(self.helper.get_uid(payload), self.user.id)
+        self.helper._find_mapping_users.assert_called_once_with('login', 'synthetic-user')
+
+        self.profile.binding_ids = Rows([SimpleNamespace(sub='subject', user_id=SimpleNamespace(id=999))])
+        self.reject(self.helper.get_uid, payload)
+        self.helper._find_mapping_users.assert_called_with('login', 'synthetic-user')
+        self.assertEqual(self.helper._find_mapping_users.call_count, 2)
 
     def test_uat20_fixed_user_and_ineligible_results(self):
         self.profile.resolver_mode = 'fixed_user'

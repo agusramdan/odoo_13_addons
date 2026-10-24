@@ -6,7 +6,7 @@
         <field name="arch" type="xml">
             <tree string="Trusted Issuers">
                 <field name="issuer"/><field name="token_profile"/>
-                <field name="resolver_mode"/><field name="active"/>
+                <field name="resolver_mode"/><field name="mvp_enabled"/><field name="active"/>
             </tree>
         </field>
     </record>
@@ -27,8 +27,23 @@
                         <field name="credential_ref" groups="amr_resource.group_oidc_trust_admin"/>
                         <field name="local_key_ref" groups="amr_resource.group_oidc_trust_admin"/>
                     </group>
+                    <group string="MVP metadata source">
+                        <field name="metadata_mode"/><field name="discovery_unavailable_declared"/>
+                        <field name="discovery_unavailable_evidence_ref" groups="amr_resource.group_oidc_trust_admin"/>
+                        <field name="verification_source"/><field name="no_jwks_declaration"/>
+                        <field name="no_jwks_evidence_ref" groups="amr_resource.group_oidc_trust_admin"/>
+                        <field name="introspection_source"/>
+                    </group>
+                    <group string="Introspection authorization" groups="amr_resource.group_oidc_trust_admin">
+                        <field name="introspection_credential_ref"/>
+                        <field name="introspection_auth_client_id"/>
+                        <field name="introspection_auth_method"/>
+                        <field name="introspection_basic_contract_ref"/>
+                        <field name="introspection_credential_endpoint"/>
+                        <field name="allow_jwt_introspection"/><field name="allow_introspection_iss_absent"/>
+                    </group>
                     <group string="User resolution (no automatic selection)">
-                        <field name="resolver_mode"/>
+                        <field name="mvp_enabled"/><field name="resolver_mode"/>
                         <field name="fixed_user_id" attrs="{'invisible': [('resolver_mode', '!=', 'fixed_user')], 'required': [('resolver_mode', '=', 'fixed_user')]}"/>
                         <field name="resolver_key" attrs="{'invisible': [('resolver_mode', '!=', 'resolver')]}"/>
                     </group>
@@ -39,6 +54,14 @@
                         <page string="Exact subject bindings"><field name="binding_ids">
                             <tree editable="bottom"><field name="sub"/><field name="user_id"/></tree>
                         </field></page>
+                        <page string="Ordered claim mappings" attrs="{'invisible': [('resolver_mode', '!=', 'mapping')]}">
+                            <field name="user_mapping_ids" groups="amr_resource.group_oidc_trust_admin">
+                                <tree editable="bottom">
+                                    <field name="sequence"/><field name="active"/>
+                                    <field name="field_user"/><field name="jwt_key"/>
+                                </tree>
+                            </field>
+                        </page>
                     </notebook>
                 </sheet>
             </form>
