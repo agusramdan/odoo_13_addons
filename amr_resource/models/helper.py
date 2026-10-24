@@ -5,7 +5,7 @@ import json
 import math
 import re
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -19,6 +19,13 @@ from ..transport import fetch_json
 AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
 _PROVENANCE = object()
 _UNSET = object()
+
+
+def _introspection_basic_header(client_id, secret):
+    if not isinstance(client_id, str) or not client_id or not isinstance(secret, str) or not secret:
+        raise Unauthorized()
+    credentials = '%s:%s' % (quote_plus(client_id, safe=''), quote_plus(secret, safe=''))
+    return 'Basic ' + base64.b64encode(credentials.encode('ascii')).decode('ascii')
 
 
 def _issuer_parts(issuer):
