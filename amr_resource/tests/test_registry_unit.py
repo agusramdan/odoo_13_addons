@@ -189,6 +189,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertNotIn('company_id', created['payload'])
         self.assertNotIn('binding_ids', created['payload'])
         self.assertIn('Trust policy snapshot captured', repr(audit.call_args_list))
+        self.assertIn('snapshot_capture', repr(audit.call_args_list))
 
         unauthorized = IssuerProbe(issuer='https://issuer.example')
         unauthorized._policy_snapshot_tuple = Mock(return_value=payload)
@@ -290,6 +291,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertNotIn('company_id', issuer.written_values)
         self.assertEqual(snapshot_model.identifier, 88)
         self.assertIn('Trust policy snapshot restored', repr(audit.call_args_list))
+        self.assertIn('snapshot_restore', repr(audit.call_args_list))
 
         unauthorized = IssuerProbe(active=False, policy_revision=12, issuer='https://issuer.example')
         with self.assertRaises(AccessError):
