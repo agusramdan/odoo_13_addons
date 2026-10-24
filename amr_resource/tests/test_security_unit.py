@@ -617,6 +617,30 @@ class SecurityUnitTests(unittest.TestCase):
         result = consumer.with_access_token_context(validate=False)
         self.assertTrue(self.helper._verified(result['__access_token_context']))
 
+    def test_mvp_introspection_uses_separate_credential_and_authoritative_claims(self):
+        for name, value in dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth+client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='evidence.basic',
+            introspection_credential_endpoint='https://issuer.example/introspect').items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'opaque'
+        self.env.parameters.get_param.return_value = 'secret:/+ %'
+        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
+            aud='second', exp=int(time.time()) + 300, azp='synthetic-client')
+        result = self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
+        self.assertTrue(self.helper._verified(result))
+        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+        self.fetch.assert_called_once_with(self.profile.introspection_endpoint,
+            data={'token': 'opaque-token'}, headers={'Authorization': helper_module._introspection_basic_header(
+                'auth+client', 'secret:/+ %')})
+        self.assertEqual(result['client_id'], 'synthetic-client')
+        self.assertNotIn('auth+client', result.values())
+
 
 if __name__ == '__main__':
     unittest.main()
