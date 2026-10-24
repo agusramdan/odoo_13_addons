@@ -462,6 +462,46 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile._verification_algorithms.assert_called_once_with({})
         self.fetch.assert_not_called()
 
+    def test_mapping_cardinality_postcheck_company_and_no_fallback(self):
+        self.profile.resolver_mode = 'mapping'
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'manual'
+        self.profile.discovery_unavailable_declared = True
+        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery'
+        self.profile.verification_source = 'jwks'
+        self.profile.user_mapping_ids = Rows([
+            SimpleNamespace(active=True, sequence=10, field_user='login', jwt_key='primary'),
+            SimpleNamespace(active=True, sequence=20, field_user='login', jwt_key='secondary'),
+        ])
+        claims = dict(self.claims, primary='none', secondary='synthetic-user')
+        validation = self.helper.validate(self.token(claims))
+        self.helper._find_mapping_users = Mock(side_effect=[Rows(), Rows([self.user])])
+        self.assertEqual(self.helper.get_uid(validation), self.user.id)
+        self.assertEqual(self.helper._find_mapping_users.call_args_list,
+                         [call('login', 'none'), call('login', 'synthetic-user')])
+
+        self.helper._find_mapping_users.reset_mock()
+        other = User(SimpleNamespace(id=8), id=28)
+        self.helper._find_mapping_users.side_effect = [Rows([self.user, other]), Rows([self.user])]
+        self.reject(self.helper.get_uid, validation)
+        self.helper._find_mapping_users.assert_called_once_with('login', 'none')
+
+        self.helper._find_mapping_users.reset_mock()
+        self.env.users[28] = other
+        self.profile.binding_ids = Rows([SimpleNamespace(sub='subject', user_id=other)])
+        self.helper._find_mapping_users.side_effect = [Rows([other])]
+        self.reject(self.helper.get_uid, validation)
+        self.helper._find_mapping_users.assert_called_once_with('login', 'none')
+
+        self.profile.binding_ids = Rows([SimpleNamespace(sub='subject', user_id=self.user)])
+        self.profile.resolver_mode = 'fixed_user'
+        self.profile.fixed_user_id = self.user
+        self.helper._find_mapping_users.reset_mock()
+        self.profile.resolver_mode = 'mapping'
+        self.helper._find_mapping_users.side_effect = [Rows(), Rows()]
+        self.reject(self.helper.get_uid, validation)
+        self.assertEqual(self.helper._find_mapping_users.call_count, 2)
+
     def test_mapping_resolver_requires_unique_candidate_and_matching_existing_binding(self):
         self.profile.resolver_mode = 'mapping'
         self.profile.mvp_enabled = True
@@ -653,6 +693,13 @@ class SecurityUnitTests(unittest.TestCase):
         self.assertTrue(self.helper._verified(self.helper.validate(token)))
         self.assertEqual(self.fetch.call_count, 2)
         self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+
+    def test_verified_claims_reject_policy_revision_changes(self):
+        self.profile.policy_revision = 1
+        validation = self.helper.validate(self.token())
+        self.assertTrue(self.helper._verified(validation))
+        self.profile.policy_revision = 2
+        self.assertFalse(self.helper._verified(validation))
 
     def test_prohibited_jwt_introspection_paths_do_not_read_secret_or_post(self):
         settings = dict(mvp_enabled=True, metadata_mode='manual',
