@@ -123,38 +123,24 @@ class ServiceClientSend:
 
     def dispatch_send(self):
         response = None
-        error = None
         active_log = self.active_log
         request_context = {'payload': self.payload}
         try:
             request_context = self.service_client.prepare_request_context(**request_context)
             response = requests.request(**request_context)
             response.raise_for_status()
-            response_text = response.text
-            state = 'done'
-        except requests.RequestException as e:
-            _logger.error("Failed to send %s ", self.payload)
-            response_text = getattr(e.response, 'text', '') + str(e)
-            active_log = True
-            state = 'error'
-        except Exception:
-            # saat error lakukan log agar bisa send ullang
-            active_log = True
-            state = 'error'
-            response_text = response.text if response else traceback.format_exc()
+            if active_log:
+                self.env["service.client.log"].create_error(
+                    'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
+                    request_context=request_context, response_text=response.text
+                )
+
+        except Exception as e:
             _logger.exception("error dispatch_send %s", response.text)
-
-        if active_log:
-            request_context.pop('headers', None)
-            return self.env["service.client.log"].sudo().create({
-                'state': state,
-                'client_id': self.client_id.id if self.client_id else None,
-                'endpoint_id': self.endpoint_id.id if self.endpoint_id else None,
-                'credential_id': self.credential_id.id if self.credential_id else None,
-                'request_context': json.dumps(request_context, indent=4),
-                'response': response_text,
-            })
-
+            self.env["service.client.log"].create_error(
+                e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
+                request_context=request_context
+            )
 
 class ServiceClient:
 
@@ -338,8 +324,8 @@ class ServiceClientFactory(models.Model):
         "Iteration Context",
         default=DEFAULT_INTERATION_CONTEXT_CODE,
         help="Expression returning the interation context"
-            "This context will be available in the python code as"
-            "ctx.get('iteration')."
+             "This context will be available in the python code as"
+             "ctx.get('iteration')."
     )
 
     code = fields.Text(
@@ -410,6 +396,7 @@ class ServiceClientFactory(models.Model):
     def run_action_service_client(self, eval_context=None):
         self.ensure_one()
         action = None
+
         def call_records(records):
             eval_context_result = {}
             eval_interation_context = self._get_eval_context()
@@ -437,8 +424,8 @@ class ServiceClientFactory(models.Model):
                     response = client.call(method, path, params, payload, headers)
                     eval_context_local['response'] = response
                     eval_context_local.update(self._run_action_handle(eval_context_local) or {})
-                    eval_context_local['action']  = self.action_next_id.with_context(eval_context_local).run()
-                except Exception as e :
+                    eval_context_local['action'] = self.action_next_id.with_context(eval_context_local).run()
+                except Exception as e:
                     eval_context_local['exception'] = e
                     if self.error_handle_id:
                         self.error_handle_id.with_context(eval_context_local).run()
@@ -534,6 +521,7 @@ class ServiceClientPayload(models.Model):
     @api.model
     def custom_render(self, template_str, context):
         pattern = re.compile(r'\${(.*?)}')
+
         def replacer(match):
             expr = match.group(1)
             try:
@@ -541,9 +529,10 @@ class ServiceClientPayload(models.Model):
             except Exception as e:
                 _logger.error("Error rendering expression '%s': %s", expr, e)
                 return ''
+
         return pattern.sub(replacer, template_str)
 
-    def get_payload(self,context=None):
+    def get_payload(self, context=None):
         payload = {}
         for param in self:
             value = None

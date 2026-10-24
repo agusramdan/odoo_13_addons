@@ -63,3 +63,33 @@ class ServiceCredential(models.Model):
         except Exception as e:
             _logger.error("Credential test failed (exception_type=%s)", type(e).__name__)
             raise UserError(f"Credential is invalid: {e}")
+
+    def sanitize_headers(self, headers_dict):
+        """
+        Fungsi untuk membersihkan header response dari data sensitif.
+        """
+        if not headers_dict:
+            return headers_dict
+
+        # Daftar key header yang dianggap sensitif dan harus disamarkan
+        sensitive_keys = [
+            'authorization', 'set-cookie', 'cookie',
+            'x-auth-token', 'x-api-key', 'www-authenticate', 'token'
+        ]
+
+        # Buat salinan dictionary agar data asli tidak berubah
+        filtered_headers = {}
+        for key, value in headers_dict.items():
+            # Cek apakah nama header termasuk sensitif (case-insensitive)
+            if key.lower() in sensitive_keys:
+                filtered_headers[key] = "[REDACTED]"
+            else:
+                filtered_headers[key] = value
+
+        return filtered_headers
+
+    def sanitizer_request_context(self, request_context):
+        if request_context:
+            request_context['headers'] = self.sanitize_headers(request_context.get('headers', None))
+
+        return request_context
