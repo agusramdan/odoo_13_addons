@@ -121,7 +121,18 @@ CODE = registry.CODE_GROUP
 
 
 class RegistryUnitTests(unittest.TestCase):
-    def test_algorithm_catalog_is_code_owned_and_policy_intersection_is_strict(self):
+    def test_persistent_algorithm_catalog_and_issuer_policy_models_are_declared(self):
+        catalog = registry.OidcAlgorithm
+        policy = registry.OidcIssuerAlgorithmPolicy
+        self.assertEqual(catalog._name, 'oidc.algorithm')
+        self.assertEqual(policy._name, 'oidc.issuer.algorithm.policy')
+        self.assertTrue(catalog._description)
+        self.assertTrue(policy._description)
+        self.assertTrue(hasattr(catalog, 'name'))
+        for field in ('issuer_id', 'algorithm_id', 'enabled'):
+            self.assertTrue(hasattr(policy, field), field)
+        self.assertIn('unique(issuer_id, algorithm_id)', policy._sql_constraints[0][1])
+
         catalog = registry._ALGORITHM_CATALOG
         self.assertEqual(set(catalog), {'RS256', 'PS256'})
         self.assertEqual(catalog['RS256'], {'key_family': 'RSA', 'min_key_bits': 2048,
@@ -136,6 +147,18 @@ class RegistryUnitTests(unittest.TestCase):
                                    (['PS256'], ['RS256'])):
             with self.assertRaises(ValidationError):
                 registry._effective_algorithms(enabled, supported)
+
+    def test_policy_selection_intersects_code_support_enabled_policy_and_key(self):
+        policy = [('RS256', True), ('PS256', True)]
+        self.assertEqual(registry._policy_algorithms(policy, {'alg': 'RS256'}),
+                         frozenset(['RS256']))
+        self.assertEqual(registry._policy_algorithms(policy, {}), frozenset(['RS256']))
+        with self.assertRaises(ValidationError):
+            registry._policy_algorithms([('PS256', True)], {'alg': 'PS256'})
+        with self.assertRaises(ValidationError):
+            registry._policy_algorithms([('RS256', False)], {'alg': 'RS256'})
+        with self.assertRaises(ValidationError):
+            registry._policy_algorithms([('HS256', True)], {'alg': 'HS256'})
 
     def profile(self, **values):
         row = SimpleNamespace(issuer='https://issuer.example', token_profile='jwt',
@@ -498,7 +521,7 @@ class RegistryUnitTests(unittest.TestCase):
             self.assertIn(filename, manifest['data'])
         with (ROOT / 'security/ir.model.access.csv').open() as source:
             acls = list(csv.DictReader(source))
-        self.assertEqual(len(acls), 5)
+        self.assertEqual(len(acls), 7)
         self.assertEqual({row['group_id:id'] for row in acls}, {TRUST, CODE})
         code_acl = next(row for row in acls if row['group_id:id'] == CODE)
         self.assertEqual((code_acl['perm_create'], code_acl['perm_unlink']), ('0', '0'))

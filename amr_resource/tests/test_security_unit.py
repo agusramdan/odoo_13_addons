@@ -159,6 +159,7 @@ class SecurityUnitTests(unittest.TestCase):
             audience_ids=Rows([SimpleNamespace(value='first'), SimpleNamespace(value='second')]),
             binding_ids=Rows([SimpleNamespace(sub='subject', user_id=self.user)]),
             resolver_mode='get_user_match', resolver_key='get_user_match', fixed_user_id=self.user,
+            _verification_algorithms=lambda key_metadata: frozenset(['RS256']),
             python_code="raise AssertionError('stored code must never execute')")
         self.env.registry.rows.append(self.profile)
         self.claims = dict(iss=self.profile.issuer, sub='subject', aud='second', client_id='synthetic-client',
@@ -434,6 +435,25 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.binding_ids = Rows([SimpleNamespace(sub='subject', user_id=self.user)] * 2)
         self.reject(self.helper.get_user_match, payload)
         self.assertEqual(self.env.user_reads, [])
+
+    def test_mvp_verification_uses_intersected_issuer_algorithm_policy(self):
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'manual'
+        self.profile.discovery_unavailable_declared = True
+        self.profile.discovery_unavailable_evidence_ref = 'synthetic-discovery-evidence'
+        self.profile.verification_source = 'jwks'
+        self.profile.introspection_source = 'none'
+        self.profile._verification_algorithms = Mock(return_value=frozenset(['RS256']))
+        self.helper.validate(self.token())
+        self.assertEqual(self.profile._verification_algorithms.call_count, 2)
+        self.assertEqual(self.profile._verification_algorithms.call_args_list[0][0], ({},))
+        self.assertEqual(self.profile._verification_algorithms.call_args_list[1][0], (self.jwk,))
+
+        self.fetch.reset_mock()
+        self.profile._verification_algorithms = Mock(return_value=frozenset())
+        self.reject(self.helper.validate, self.token())
+        self.profile._verification_algorithms.assert_called_once_with({})
+        self.fetch.assert_not_called()
 
     def test_mapping_resolver_requires_unique_candidate_and_matching_existing_binding(self):
         self.profile.resolver_mode = 'mapping'
