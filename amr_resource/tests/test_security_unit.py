@@ -798,8 +798,8 @@ class SecurityUnitTests(unittest.TestCase):
             setattr(self.profile, name, value)
         self.profile.token_profile = 'opaque'
         self.env.parameters.get_param.return_value = 'synthetic-secret'
-        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
-                                       aud='second', azp='synthetic-client')
+        self.fetch.return_value = dict(iss=self.profile.issuer, active=True, sub='subject',
+            client_id='synthetic-client', aud='second', azp='synthetic-client')
         base = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
                 'authorization_endpoint': 'https://issuer.example/authorize',
                 'introspection_endpoint': self.profile.introspection_credential_endpoint}
@@ -826,8 +826,9 @@ class SecurityUnitTests(unittest.TestCase):
                     self.assertEqual(methods, capability.get('introspection_endpoint_auth_methods_supported'))
                     self.fetch.assert_called_once()
                     self.fetch.reset_mock()
-                    self.fetch.side_effect = [dict(base, **capability), dict(active=True, sub='subject',
-                        client_id='synthetic-client', aud='second', azp='synthetic-client')]
+                    self.fetch.side_effect = [dict(base, **capability), dict(iss=self.profile.issuer,
+                        active=True, sub='subject', client_id='synthetic-client', aud='second',
+                        azp='synthetic-client')]
                     self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
                     self.assertEqual(self.fetch.call_count, 2)
                     self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
@@ -839,7 +840,8 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.introspection_basic_contract_ref = False
         self.fetch.reset_mock()
         self.fetch.side_effect = [dict(base, introspection_endpoint_auth_methods_supported=['client_secret_basic']),
-            dict(active=True, sub='subject', client_id='synthetic-client', aud='second', azp='synthetic-client')]
+            dict(iss=self.profile.issuer, active=True, sub='subject', client_id='synthetic-client',
+                 aud='second', azp='synthetic-client')]
         self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
         self.assertEqual(self.fetch.call_count, 2)
         self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
@@ -890,6 +892,26 @@ class SecurityUnitTests(unittest.TestCase):
         self.assertEqual(self.env.parameters.get_param.call_args_list,
             [call('fixture.generation.secret'), call('fixture.introspection.secret')])
 
+    def test_mvp_opaque_requires_explicit_absent_issuer_policy(self):
+        for name, value in dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='accepted.contract.ref',
+            introspection_credential_endpoint='https://issuer.example/introspect').items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'opaque'
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
+        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
+            aud='second', azp='synthetic-client')
+        self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
+        self.profile.allow_introspection_iss_absent = True
+        self.assertTrue(self.helper._verified(
+            self.helper.introspect_token('opaque-token', iss=self.profile.issuer)))
+
     def test_mvp_introspection_uses_separate_credential_and_authoritative_claims(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
             discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
@@ -903,8 +925,9 @@ class SecurityUnitTests(unittest.TestCase):
             setattr(self.profile, name, value)
         self.profile.token_profile = 'opaque'
         self.env.parameters.get_param.return_value = 'secret:/+ %'
-        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
-            aud='second', exp=int(time.time()) + 300, azp='synthetic-client')
+        self.fetch.return_value = dict(iss=self.profile.issuer, active=True, sub='subject',
+            client_id='synthetic-client', aud='second', exp=int(time.time()) + 300,
+            azp='synthetic-client')
         result = self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
         self.assertTrue(self.helper._verified(result))
         self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
