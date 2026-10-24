@@ -8,6 +8,7 @@ import ast
 import csv
 import hashlib
 import importlib.util
+import inspect
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -102,6 +103,18 @@ class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
         for key, value in values.items():
             setattr(self, key, value)
 
+    def ensure_one(self):
+        return self
+
+    def with_context(self, **values):
+        self.env.context.update(values)
+        return self
+
+    def new(self, values):
+        candidate = SimpleNamespace(**values)
+        candidate._check_profile = Mock()
+        return candidate
+
     def __iter__(self):
         return iter([self])
 
@@ -124,6 +137,224 @@ CODE = registry.CODE_GROUP
 
 
 class RegistryUnitTests(unittest.TestCase):
+    def test_server_owned_rollback_snapshot_model_and_actions_exist(self):
+        self.assertTrue(hasattr(registry, 'OidcPolicySnapshot'))
+        self.assertEqual(registry.OidcPolicySnapshot._name, 'oidc.issuer.policy.snapshot')
+        self.assertTrue(registry.OidcPolicySnapshot._description)
+        self.assertTrue(hasattr(registry.AmrResourceIssuer, 'action_capture_policy_snapshot'))
+        self.assertTrue(hasattr(registry.AmrResourceIssuer, 'action_restore_policy_snapshot'))
+        self.assertEqual(list(inspect.signature(
+            registry.AmrResourceIssuer.action_restore_policy_snapshot).parameters),
+            ['self', 'snapshot_id', 'expected_revision', 'evidence_ref', 'reason_code'])
+        for field in ('issuer_id', 'captured_revision', 'payload', 'integrity_digest',
+                      'evidence_ref', 'actor_id', 'captured_at', 'invalidated'):
+            self.assertTrue(hasattr(registry.OidcPolicySnapshot, field))
+        for field in ('write', 'unlink'):
+            self.assertTrue(callable(getattr(registry.OidcPolicySnapshot, field)))
+
+    def test_snapshot_capture_is_admin_only_complete_and_excludes_identity_state(self):
+        payload = {'issuer': 'https://issuer.example', 'verification_source': 'jwks',
+                   'credential_ref': 'credential.key', 'mappings': [], 'audiences': ['api'],
+                   'algorithms': []}
+
+        class Environment(dict):
+            uid = 27
+            su = False
+            company = SimpleNamespace(id=7)
+            context = {}
+            user = SimpleNamespace(share=False, has_group=lambda name: name in (ADMIN, TRUST))
+
+        class SnapshotCreateProbe(registry.OidcPolicySnapshot):
+            def __init__(self):
+                self.env = Environment()
+                self.id = 88
+
+            def sudo(self):
+                return self
+
+        snapshot_model = SnapshotCreateProbe()
+        env = Environment({'oidc.issuer.policy.snapshot': snapshot_model})
+        issuer = IssuerProbe((ADMIN, TRUST), policy_revision=9, issuer='https://issuer.example')
+        issuer.env = env
+        issuer._check_profile = Mock()
+        issuer._policy_snapshot_tuple = Mock(return_value=payload)
+        with patch.object(registry._logger, 'info') as audit:
+            self.assertEqual(issuer.action_capture_policy_snapshot('approval-42', 'recovery'), 88)
+        created = snapshot_model.created_values
+        self.assertEqual(created['issuer_id'], 19)
+        self.assertEqual(created['captured_revision'], 9)
+        self.assertEqual(created['evidence_ref'], 'approval-42')
+        self.assertEqual(created['actor_id'], 27)
+        self.assertNotIn('user_id', created['payload'])
+        self.assertNotIn('company_id', created['payload'])
+        self.assertNotIn('binding_ids', created['payload'])
+        self.assertIn('Trust policy snapshot captured', repr(audit.call_args_list))
+
+        unauthorized = IssuerProbe(issuer='https://issuer.example')
+        unauthorized._policy_snapshot_tuple = Mock(return_value=payload)
+        with self.assertRaises(AccessError):
+            unauthorized.action_capture_policy_snapshot('approval-42', 'recovery')
+        snapshot_model = SnapshotCreateProbe()
+        issuer.env['oidc.issuer.policy.snapshot'] = snapshot_model
+        for evidence, reason in ((None, 'recovery'), ('https://secret.invalid', 'recovery'),
+                                 ('approval-42', 'free form')):
+            with self.subTest(evidence=evidence, reason=reason), self.assertRaises(ValidationError):
+                issuer.action_capture_policy_snapshot(evidence, reason)
+        self.assertFalse(hasattr(snapshot_model, 'created_values'))
+
+    def test_snapshot_model_denies_direct_mutation_and_acl_is_read_only(self):
+        row = registry.OidcPolicySnapshot()
+        for operation, args in ((row.create, ([{}],)), (row.write, ({'payload': 'forged'},)),
+                                (row.unlink, ())):
+            with self.assertRaises(AccessError):
+                operation(*args)
+        with (ROOT / 'security/ir.model.access.csv').open() as source:
+            acl = next(item for item in csv.DictReader(source)
+                       if item['model_id:id'] == 'model_oidc_issuer_policy_snapshot')
+        self.assertEqual((acl['perm_read'], acl['perm_write'], acl['perm_create'], acl['perm_unlink']),
+                         ('1', '0', '0', '0'))
+
+    def test_snapshot_restore_requires_exact_inactive_issuer_revision_and_integrity(self):
+        import json
+        from types import SimpleNamespace
+        payload = {
+            'issuer': 'https://issuer.example', 'token_profile': 'jwt',
+            'jwks_uri': 'https://issuer.example/keys', 'token_endpoint': False,
+            'introspection_endpoint': False, 'client_id': 'client', 'azp': 'client',
+            'allow_missing_azp': False, 'credential_ref': 'generation.key',
+            'local_key_ref': False, 'resolver_mode': 'mapping', 'mvp_enabled': True,
+            'metadata_mode': 'manual', 'discovery_unavailable_declared': True,
+            'discovery_unavailable_evidence_ref': 'discovery-evidence',
+            'verification_source': 'jwks', 'introspection_source': 'none',
+            'no_jwks_declaration': False, 'no_jwks_evidence_ref': False,
+            'introspection_credential_ref': False, 'introspection_auth_client_id': False,
+            'introspection_auth_method': False, 'introspection_basic_contract_ref': False,
+            'introspection_credential_endpoint': False, 'allow_jwt_introspection': False,
+            'allow_introspection_iss_absent': False, 'audiences': ['api'],
+            'mappings': [{'sequence': 10, 'active': True, 'field_user': 'login', 'jwt_key': 'sub'}],
+            'algorithms': [{'name': 'RS256', 'enabled': True}],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        digest = hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+        class Environment(dict):
+            uid = 27
+            su = False
+            company = SimpleNamespace(id=7)
+            context = {}
+            user = SimpleNamespace(share=False, has_group=lambda name: name in (ADMIN, TRUST))
+
+        class SnapshotRecord:
+            id = 88
+            issuer_id = SimpleNamespace(id=19)
+            captured_revision = 9
+            invalidated = False
+            payload = encoded
+            integrity_digest = digest
+
+            def __len__(self):
+                return 1
+
+        class SnapshotModel:
+            def sudo(self):
+                return self
+
+            def browse(self, identifier):
+                self.identifier = identifier
+                return self
+
+            def exists(self):
+                return SnapshotRecord()
+
+        class AlgorithmModel:
+            def search(self, domain, limit=None):
+                self.domain = domain
+                self.limit = limit
+                class Algorithm(list):
+                    id = 33
+                return Algorithm([object()])
+
+        snapshot_model = SnapshotModel()
+        algorithms = AlgorithmModel()
+        env = Environment({'oidc.issuer.policy.snapshot': snapshot_model, 'oidc.algorithm': algorithms})
+        issuer = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=False,
+                             policy_revision=12, issuer='https://issuer.example')
+        issuer.env = env
+        issuer._policy_snapshot_tuple = Mock(return_value=payload)
+        with patch.object(registry._logger, 'info') as audit:
+            self.assertTrue(issuer.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover'))
+        self.assertEqual(issuer.written_values['policy_revision'], 13)
+        self.assertFalse(issuer.written_values['active'])
+        self.assertEqual(issuer.written_values['credential_ref'], 'generation.key')
+        self.assertEqual(issuer.written_values['user_mapping_ids'][1][2]['jwt_key'], 'sub')
+        self.assertNotIn('user_id', issuer.written_values)
+        self.assertNotIn('company_id', issuer.written_values)
+        self.assertEqual(snapshot_model.identifier, 88)
+        self.assertIn('Trust policy snapshot restored', repr(audit.call_args_list))
+
+        unauthorized = IssuerProbe(active=False, policy_revision=12, issuer='https://issuer.example')
+        with self.assertRaises(AccessError):
+            unauthorized.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover')
+        self.assertFalse(hasattr(unauthorized, 'written_values'))
+
+        incomplete = json.dumps({key: value for key, value in payload.items()
+                                 if key != 'algorithms'}, sort_keys=True, separators=(',', ':'))
+        cases = (
+            (False, 12, 11, encoded, digest, 19, False),
+            (True, 12, 12, encoded, digest, 19, False),
+            (False, 12, 12, encoded.replace('api', 'evil'), digest, 19, False),
+            (False, 12, 12, encoded, digest, 20, False),
+            (False, 12, 12, encoded, digest, 19, True),
+            (False, 12, 12, incomplete,
+             hashlib.sha256(incomplete.encode('utf-8')).hexdigest(), 19, False),
+        )
+        for active, current_revision, expected_revision, changed_payload, changed_digest, \
+                issuer_id, invalidated in cases:
+            row = IssuerProbe((ADMIN, TRUST), active=active, mvp_enabled=False,
+                              policy_revision=current_revision, issuer='https://issuer.example')
+            row.env = env
+            row._policy_snapshot_tuple = Mock(return_value=payload)
+            original_exists = snapshot_model.exists
+            def changed_snapshot():
+                class ChangedSnapshot:
+                    id = 88
+                    captured_revision = 9
+                    payload = changed_payload
+                    integrity_digest = changed_digest
+
+                    def __len__(self):
+                        return 1
+                snapshot = ChangedSnapshot()
+                snapshot.issuer_id = SimpleNamespace(id=issuer_id)
+                snapshot.invalidated = invalidated
+                return snapshot
+            snapshot_model.exists = changed_snapshot
+            try:
+                with self.subTest(active=active, expected_revision=expected_revision), self.assertRaises(ValidationError):
+                    row.action_restore_policy_snapshot(88, expected_revision, 'approval-43', 'recover')
+                self.assertFalse(hasattr(row, 'written_values'))
+            finally:
+                snapshot_model.exists = original_exists
+
+        invalid_profile = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=False,
+                                      policy_revision=12, issuer='https://issuer.example')
+        invalid_profile.env = env
+        invalid_profile._policy_snapshot_tuple = Mock(return_value=payload)
+        candidate = SimpleNamespace(_check_profile=Mock(side_effect=ValidationError('invalid tuple')))
+        invalid_profile.new = Mock(return_value=candidate)
+        with self.assertRaises(ValidationError):
+            invalid_profile.action_restore_policy_snapshot(88, 12, 'approval-43', 'recover')
+        self.assertFalse(hasattr(invalid_profile, 'written_values'))
+
+        for snapshot_id, revision, evidence in ((True, 12, 'approval-43'),
+                                                 (88, True, 'approval-43'),
+                                                 (88, 12, 'https://untrusted.invalid')):
+            invalid_input = IssuerProbe((ADMIN, TRUST), active=False, policy_revision=12,
+                                        issuer='https://issuer.example')
+            with self.subTest(snapshot_id=snapshot_id, revision=revision), self.assertRaises(ValidationError):
+                invalid_input.action_restore_policy_snapshot(snapshot_id, revision, evidence, 'recover')
+            self.assertFalse(hasattr(invalid_input, 'written_values'))
+
     def test_persistent_algorithm_catalog_and_issuer_policy_models_are_declared(self):
         catalog = registry.OidcAlgorithm
         policy = registry.OidcIssuerAlgorithmPolicy
@@ -687,7 +918,9 @@ class RegistryUnitTests(unittest.TestCase):
                               if isinstance(n, ast.FunctionDef) and any(
                                   isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                                   and c.func.attr == 'sudo' for c in ast.walk(n)))
-        self.assertEqual(sudo_methods, ['_compute_local_public_key', '_lookup', '_migrate_legacy_v2'])
+        self.assertEqual(sudo_methods, ['_compute_local_public_key', '_lookup', '_migrate_legacy_v2',
+                                         'action_capture_policy_snapshot', 'action_invalidate',
+                                         'action_restore_policy_snapshot'])
 
     def test_security_and_ui_files_are_wired_and_restricted(self):
         manifest = ast.literal_eval((ROOT / '__manifest__.py').read_text())
@@ -696,7 +929,7 @@ class RegistryUnitTests(unittest.TestCase):
             self.assertIn(filename, manifest['data'])
         with (ROOT / 'security/ir.model.access.csv').open() as source:
             acls = list(csv.DictReader(source))
-        self.assertEqual(len(acls), 7)
+        self.assertEqual(len(acls), 8)
         self.assertEqual({row['group_id:id'] for row in acls}, {TRUST, CODE})
         code_acl = next(row for row in acls if row['group_id:id'] == CODE)
         self.assertEqual((code_acl['perm_create'], code_acl['perm_unlink']), ('0', '0'))

@@ -2,6 +2,7 @@
 """Global trust configuration; no discovery or stored-code execution."""
 import hashlib
 import ipaddress
+import json
 import logging
 from urllib.parse import urlsplit
 
@@ -10,6 +11,7 @@ from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Unauthorized
 
 _logger = logging.getLogger(__name__)
+_RESTORE_CONTEXT_TOKEN = object()
 TRUST_GROUP = 'amr_resource.group_oidc_trust_admin'
 CODE_GROUP = 'amr_resource.group_oidc_code_admin'
 AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date', 'policy_revision'}
@@ -218,6 +220,8 @@ class RegistryAccess(models.AbstractModel):
                 raise AccessError('Registry access denied.')
 
     def _bump_parent_revisions(self, records):
+        if self.env.context.get('_policy_restore_token') is _RESTORE_CONTEXT_TOKEN:
+            return
         if self._name in POLICY_CHILD_MODELS:
             for issuer in records.mapped('issuer_id'):
                 if hasattr(issuer, '_bump_policy_revision'):
@@ -530,6 +534,144 @@ class AmrResourceIssuer(models.Model):
                          revision, self.env.uid, reason_code, timestamp)
         return True
 
+    def _policy_snapshot_tuple(self):
+        self.ensure_one()
+        if self.resolver_mode == 'fixed_user':
+            raise ValidationError('Fixed-user identity state cannot be snapshotted.')
+        return {
+            'issuer': self.issuer, 'token_profile': self.token_profile,
+            'jwks_uri': self.jwks_uri or False, 'token_endpoint': self.token_endpoint or False,
+            'introspection_endpoint': self.introspection_endpoint or False,
+            'client_id': self.client_id, 'azp': self.azp or False,
+            'allow_missing_azp': self.allow_missing_azp,
+            'credential_ref': self.credential_ref or False, 'local_key_ref': self.local_key_ref or False,
+            'resolver_mode': self.resolver_mode or False, 'mvp_enabled': self.mvp_enabled,
+            'metadata_mode': self.metadata_mode or False,
+            'discovery_unavailable_declared': self.discovery_unavailable_declared,
+            'discovery_unavailable_evidence_ref': self.discovery_unavailable_evidence_ref or False,
+            'verification_source': self.verification_source or False,
+            'introspection_source': self.introspection_source or False,
+            'no_jwks_declaration': self.no_jwks_declaration,
+            'no_jwks_evidence_ref': self.no_jwks_evidence_ref or False,
+            'introspection_credential_ref': self.introspection_credential_ref or False,
+            'introspection_auth_client_id': self.introspection_auth_client_id or False,
+            'introspection_auth_method': self.introspection_auth_method or False,
+            'introspection_basic_contract_ref': self.introspection_basic_contract_ref or False,
+            'introspection_credential_endpoint': self.introspection_credential_endpoint or False,
+            'allow_jwt_introspection': self.allow_jwt_introspection,
+            'allow_introspection_iss_absent': self.allow_introspection_iss_absent,
+            'audiences': sorted(self.audience_ids.mapped('value')),
+            'mappings': sorted([{'sequence': row.sequence, 'active': row.active,
+                                 'field_user': row.field_user, 'jwt_key': row.jwt_key}
+                                for row in self.user_mapping_ids], key=lambda row: row['sequence']),
+            'algorithms': sorted([{'name': row.algorithm_id.name, 'enabled': row.enabled}
+                                  for row in self.algorithm_policy_ids], key=lambda row: row['name']),
+        }
+
+    def action_capture_policy_snapshot(self, evidence_ref, reason_code):
+        import re
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        self.ensure_one()
+        if (not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)
+                or not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
+            raise ValidationError('A sanitized evidence reference and reason code are required.')
+        self._check_profile()
+        payload = self._policy_snapshot_tuple()
+        self._validate_snapshot_algorithms(payload)
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+        model = self.env['oidc.issuer.policy.snapshot'].sudo()
+        snapshot = super(OidcPolicySnapshot, model).create({
+            'issuer_id': self.id, 'captured_revision': self.policy_revision,
+            'payload': json.dumps(payload, sort_keys=True, separators=(',', ':')),
+            'integrity_digest': digest, 'evidence_ref': evidence_ref,
+            'actor_id': self.env.uid, 'captured_at': fields.Datetime.now(),
+        })
+        _logger.info('Trust policy snapshot captured issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s timestamp=%s',
+                     self.id, snapshot.id, self.policy_revision, self.env.uid,
+                     self.verification_source or 'legacy', reason_code, fields.Datetime.now())
+        return snapshot.id
+
+    def action_restore_policy_snapshot(self, snapshot_id, expected_revision, evidence_ref, reason_code):
+        import re
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        self.ensure_one()
+        if (type(snapshot_id) is not int or snapshot_id <= 0 or type(expected_revision) is not int
+                or not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)
+                or not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
+            raise ValidationError('Rollback identifiers or evidence are invalid.')
+        self.check_access_rights('write')
+        self.check_access_rule('write')
+        if self.active or self.policy_revision != expected_revision:
+            raise ValidationError('Issuer must be inactive at the expected policy revision.')
+        snapshot = self.env['oidc.issuer.policy.snapshot'].sudo().browse(snapshot_id).exists()
+        if len(snapshot) != 1 or snapshot.issuer_id.id != self.id or snapshot.invalidated:
+            raise ValidationError('Snapshot is unavailable for this issuer.')
+        try:
+            payload = json.loads(snapshot.payload)
+            if not isinstance(payload, dict):
+                raise ValidationError('Snapshot is invalid.')
+            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+        except (TypeError, ValueError):
+            raise ValidationError('Snapshot is invalid.')
+        if (digest != snapshot.integrity_digest or payload.get('issuer') != self.issuer
+                or snapshot.captured_revision <= 0 or snapshot.captured_revision > expected_revision):
+            raise ValidationError('Snapshot integrity or issuer binding failed.')
+        if set(payload) != set(self._policy_snapshot_tuple()) or payload.get('resolver_mode') == 'fixed_user':
+            raise ValidationError('Snapshot tuple is incomplete or contains identity state.')
+        if (not isinstance(payload['audiences'], list) or not payload['audiences']
+                or any(not _exact_string(value) for value in payload['audiences'])
+                or len(set(payload['audiences'])) != len(payload['audiences'])
+                or not isinstance(payload['mappings'], list)
+                or not isinstance(payload['algorithms'], list)):
+            raise ValidationError('Snapshot configuration is incomplete.')
+        self._validate_snapshot_algorithms(payload)
+        candidate = self.new({key: value for key, value in payload.items()
+                               if key not in ('audiences', 'mappings', 'algorithms')})
+        candidate.audience_ids = [(0, 0, {'value': value}) for value in payload['audiences']]
+        candidate.user_mapping_ids = [(0, 0, row) for row in payload['mappings']]
+        candidate._check_profile(mvp_enabled=payload['mvp_enabled'])
+        algorithm_commands = []
+        for row in payload['algorithms']:
+            algorithm = self.env['oidc.algorithm'].search([('name', '=', row['name'])], limit=1)
+            if len(algorithm) != 1:
+                raise ValidationError('Snapshot algorithm is no longer available.')
+            algorithm_commands.append((0, 0, {'algorithm_id': algorithm.id, 'enabled': row['enabled']}))
+        values = {key: value for key, value in payload.items()
+                  if key not in ('issuer', 'audiences', 'mappings', 'algorithms')}
+        values.update({'audience_ids': [(5, 0, 0)] + [(0, 0, {'value': value}) for value in payload['audiences']],
+                       'user_mapping_ids': [(5, 0, 0)] + [(0, 0, row) for row in payload['mappings']],
+                       'algorithm_policy_ids': [(5, 0, 0)] + algorithm_commands,
+                       'active': False, 'policy_revision': expected_revision + 1})
+        for record in self:
+            restoring = record.with_context(_policy_restore_token=_RESTORE_CONTEXT_TOKEN)
+            super(AmrResourceIssuer, restoring).write(values)
+        _logger.info('Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
+                     self.id, snapshot.id, expected_revision + 1, self.env.uid,
+                     payload.get('verification_source') or 'legacy', reason_code, evidence_ref,
+                     fields.Datetime.now())
+        return True
+
+    @staticmethod
+    def _validate_snapshot_algorithms(payload):
+        rows = payload.get('algorithms')
+        if not isinstance(rows, list):
+            raise ValidationError('Snapshot algorithm policy is invalid.')
+        names, enabled = set(), set()
+        for row in rows:
+            if (not isinstance(row, dict) or set(row) != {'name', 'enabled'}
+                    or row['name'] not in _ALGORITHM_CATALOG or type(row['enabled']) is not bool
+                    or row['name'] in names):
+                raise ValidationError('Snapshot algorithm policy is invalid.')
+            names.add(row['name'])
+            if row['enabled']:
+                if _ALGORITHM_CATALOG[row['name']]['support_state'] != 'supported':
+                    raise ValidationError('Snapshot enables an unsupported algorithm.')
+                enabled.add(row['name'])
+        if payload.get('mvp_enabled') and not enabled:
+            raise ValidationError('MVP snapshot requires a supported enabled algorithm.')
+
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
                     'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
@@ -671,6 +813,53 @@ class AmrResourceIssuer(models.Model):
             return records
         except Exception:
             raise Unauthorized() from None
+
+
+class OidcPolicySnapshot(models.Model):
+    _name = 'oidc.issuer.policy.snapshot'
+    _description = 'Immutable Issuer Policy Recovery Snapshot'
+    _rec_name = 'id'
+
+    issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='restrict', index=True)
+    captured_revision = fields.Integer(required=True, readonly=True)
+    payload = fields.Text(required=True, readonly=True)
+    integrity_digest = fields.Char(required=True, readonly=True, size=64)
+    evidence_ref = fields.Char(required=True, readonly=True, size=512)
+    actor_id = fields.Many2one('res.users', required=True, readonly=True, ondelete='restrict')
+    captured_at = fields.Datetime(required=True, readonly=True)
+    invalidated = fields.Boolean(default=False, readonly=True)
+    invalidated_actor_id = fields.Many2one('res.users', readonly=True, ondelete='restrict')
+    invalidated_at = fields.Datetime(readonly=True)
+    invalidation_reason = fields.Char(readonly=True, size=64)
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        raise AccessError('Snapshots are created only by the validated issuer action.')
+
+    def write(self, values):
+        raise AccessError('Snapshot content is immutable.')
+
+    def unlink(self):
+        raise AccessError('Snapshots are append-only.')
+
+    def action_invalidate(self, reason_code):
+        import re
+        if not self.env['oidc.issuer.register']._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        self.check_access_rights('read')
+        self.check_access_rule('read')
+        if not isinstance(reason_code, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code):
+            raise ValidationError('A bounded reason code is required.')
+        for snapshot in self:
+            if snapshot.invalidated:
+                raise ValidationError('Snapshot is already invalidated.')
+        for snapshot in self:
+            super(OidcPolicySnapshot, snapshot.sudo()).write({
+                'invalidated': True, 'invalidated_actor_id': self.env.uid,
+                'invalidated_at': fields.Datetime.now(), 'invalidation_reason': reason_code})
+            _logger.info('Trust policy snapshot invalidated issuer_id=%s snapshot_id=%s actor=%s reason_code=%s timestamp=%s',
+                         snapshot.issuer_id.id, snapshot.id, self.env.uid, reason_code, fields.Datetime.now())
+        return True
 
 
 class AmrResourceAudience(models.Model):
