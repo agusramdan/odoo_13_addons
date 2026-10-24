@@ -1,0 +1,20 @@
+{
+  "head": "c177742c25948fe7cbaad4a9b52f9b3b465849d7",
+  "branch": "ADDONS13-46",
+  "tree": "904cb19421e3eeb6ba1006767430ef61d2367deb",
+  "base": "dae519f29e9c4709dc04796b38148b00d333c58b",
+  "status": "?? docs/ADDONS13-46/STEP1-CANDIDATE-BLOBS.json\n?? docs/ADDONS13-46/STEP1-EXECUTION-REPORT.md\n?? docs/ADDONS13-46/STEP1-FINAL-LOCAL.json",
+  "staged": "",
+  "unstaged": "",
+  "remote": "c177742c25948fe7cbaad4a9b52f9b3b465849d7\trefs/heads/ADDONS13-46\ndae519f29e9c4709dc04796b38148b00d333c58b\trefs/heads/main",
+  "protected_files": {
+    "/home/ubuntu/worktrees/ADDONS13-46-dev/docs/ADDONS13-46/STEP1-CANDIDATE-BLOBS.json": "626a49e35c74dabd92b634b64fbed06431eedce2f1a833378b6993734b58897f",
+    "/home/ubuntu/worktrees/ADDONS13-46-dev/docs/ADDONS13-46/STEP1-EXECUTION-REPORT.md": "6c0b3c6334f2aadcf4003b40762902f4d1dcc80e6bbd689f315710c8349157d2",
+    "/home/ubuntu/worktrees/ADDONS13-46-dev/docs/ADDONS13-46/STEP1-FINAL-LOCAL.json": "00eeaa634bd3cbdb78c223e0b38d7f3e86486167e1abd5416280c4b8b6887978"
+  },
+  "historical_review_logs": {
+    "/home/ubuntu/.hermes/cache/delegation/live/deleg_846b1aee/task-0.log": "82287449b72e75c51fdc0e1c90d9990bc814e807ee2638f1e1c16bae943e0902",
+    "/home/ubuntu/.hermes/cache/delegation/live/deleg_846b1aee/task-1.log": "42ed49e6df27defca52189f5edddf35915fe45023fe5286e9dc304745fa83c21",
+    "/home/ubuntu/.hermes/cache/delegation/live/deleg_846b1aee/task-2.log": "3190af290a98201cee44d23895f790d0ac4b6c9747c59cff6abb969b81fbe43f"
+  }
+}

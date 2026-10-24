@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo><data>
+    <!-- Deliberately no company rule: ACLs and model guards restrict global trust access. -->
+</data></odoo>

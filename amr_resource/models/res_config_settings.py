@@ -6,22 +6,7 @@ from odoo import api, fields, models
 class ResConfigSettings(models.TransientModel):
     _inherit = "res.config.settings"
 
-    amr_select_issuer = fields.Selection([
-        ('web.base.url', 'Web Base URL'),
-    ], "Select Issuer", config_parameter='amr_resource.issuer', default='web.base.url')
-    amr_resource_issuer = fields.Char(
-        "Issuer",
-        compute='_compute_resource_issuer',
-    )
 
-    amr_select_audience = fields.Selection([
-        ('web.base.url', 'Web Base URL'),
-        ('database.uuid', 'Database UUID'),
-    ], "Select Audience", config_parameter='amr_resource.audience', default='web.base.url')
-    amr_resource_audience = fields.Char(
-        "Audience",
-        compute='_compute_resource_audience',
-    )
     amr_web_base_url_freeze = fields.Boolean(
         string="Freeze",
         config_parameter='web.base.url.freeze',
@@ -47,23 +32,7 @@ class ResConfigSettings(models.TransientModel):
     module_amr_approval_task_client = fields.Boolean("Approval Task Client")
     module_amr_notification_client = fields.Boolean("Notification Client")
 
-    @api.depends('amr_select_issuer')
-    def _compute_resource_issuer(self):
-        for record in self:
-            if record.amr_select_issuer:
-                record.amr_resource_issuer = self.env['ir.config_parameter'].sudo().get_param(record.amr_select_issuer, '')
-            else:
-                record.amr_resource_issuer = ''
 
-    @api.depends('amr_select_audience')
-    def _compute_resource_audience(self):
-        for record in self:
-            if record.amr_select_audience:
-                record.amr_resource_audience = self.env['ir.config_parameter'].sudo().get_param(
-                    record.amr_select_audience, ''
-                )
-            else:
-                record.amr_resource_audience = ''
 
     def action_edit_web_base_url(self):
         param = self.env['ir.config_parameter'].sudo().search(
@@ -76,3 +45,11 @@ class ResConfigSettings(models.TransientModel):
             'res_id': param.id,
             'view_mode': 'form',
         }
+
+    def action_open_resource_issuers(self):
+        registry = self.env['oidc.issuer.register']
+        registry.check_access_rights('read')
+        if not registry._registry_role('amr_resource.group_oidc_trust_admin'):
+            from odoo.exceptions import AccessError
+            raise AccessError('Registry access denied.')
+        return self.env.ref('amr_resource.action_resource_issuers').read()[0]

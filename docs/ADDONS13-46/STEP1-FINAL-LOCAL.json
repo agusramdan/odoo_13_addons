@@ -1,0 +1,182 @@
+{
+  "base": "dae519f29e9c4709dc04796b38148b00d333c58b",
+  "checkpoint": "eafaff21e1761970517c2fdab83d1f3166315870",
+  "tests": [
+    {
+      "phase": "final-precommit",
+      "count": 74,
+      "seconds": "0.632",
+      "exit": 0,
+      "ok": true
+    },
+    {
+      "phase": "final-postcommit",
+      "count": 74,
+      "seconds": "1.034",
+      "exit": 0,
+      "ok": true
+    }
+  ],
+  "runtime": {
+    "python": "3.7.9",
+    "dependencies": {
+      "PyJWT": "2.8.0",
+      "cryptography": "39.0.2",
+      "cffi": "1.15.1",
+      "pycparser": "2.21"
+    },
+    "python_xml_parse": "OK"
+  },
+  "command": [
+    "docker",
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-v",
+    "/home/ubuntu/worktrees/ADDONS13-46-dev:/src:ro",
+    "-w",
+    "/src",
+    "--entrypoint",
+    "python",
+    "addons13-34-py379-requirements:local",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "amr_resource/tests",
+    "-p",
+    "test_*_unit.py"
+  ],
+  "scan": {
+    "rules": [
+      "private-key-material",
+      "github-token",
+      "aws-access-key",
+      "slack-token",
+      "jwt-shape"
+    ],
+    "distinct_blobs": 178,
+    "ancestor_blobs": 158,
+    "matches": 0,
+    "generic_ancestor_triage": "Owner verified short low-entropy fixture literals in unchanged ancestor amr_token test; no values emitted; not edited",
+    "not_gate_review": true
+  },
+  "final_commit": "c177742c25948fe7cbaad4a9b52f9b3b465849d7",
+  "remote_verified": true,
+  "files": [
+    {
+      "path": "amr_resource/README.md",
+      "sha256": "3827f71c92c94f82f25011fe1711c1c5d47cff747b7c774922210a86db3668e1",
+      "blob": "e6200f6cabb3fcd1d74ef36f1e95ce6f8ce49baf"
+    },
+    {
+      "path": "amr_resource/__manifest__.py",
+      "sha256": "0e52efee008c82d2aa45e46d9f0908ea8e820921167aa9d62f9d9589e2a332ab",
+      "blob": "ab6ec6cb22f3ccc852d09bd88287d61b8888f615"
+    },
+    {
+      "path": "amr_resource/docs/developer.md",
+      "sha256": "f30ee4f22cbff60cf46bab207081e91b9c71d425c4f0ec740ce49ba929362bd2",
+      "blob": "b387a367caf0ef6ba6fc4b0e40a8690311516f9b"
+    },
+    {
+      "path": "amr_resource/docs/user.md",
+      "sha256": "20937267a00bf88b93fe3bd830199b8ce17bc8665654dff50372c6d084571578",
+      "blob": "e95ab02807d2bd4274521d46848c0e7565f58f42"
+    },
+    {
+      "path": "amr_resource/docs/step1-assertion-reconciliation.md",
+      "sha256": "e006de137248aec9a1d412d0d1c0481cd97f61172fabc3859636bcb1c148f8d2",
+      "blob": "7ec574113b96b7788d512f310f9ed3e12697bb78"
+    },
+    {
+      "path": "amr_resource/models/helper.py",
+      "sha256": "bfe41d1b9c295861d22b3cc472230a14dd3f2a1a9220426c3d3c8f2a9d7dfeae",
+      "blob": "9c435644d1fc061bf383f6c2e9548318f8e8ee1e"
+    },
+    {
+      "path": "amr_resource/models/res_config_settings.py",
+      "sha256": "7e067fcc919c58f881127afe12fad870dec03d62a1fdca0d384cd5e33a59a645",
+      "blob": "6af61fdcfcf0bd709dec59e0afb57d8ee1ab51df"
+    },
+    {
+      "path": "amr_resource/models/trust_registry.py",
+      "sha256": "4eef87dcd39cdc13fb4c59b81ebf04a1a7ded6d67a35ae3539e54689b1be43b2",
+      "blob": "6c244f3fbda3ce8e55080bddac05bc6bf222793f"
+    },
+    {
+      "path": "amr_resource/security/ir.model.access.csv",
+      "sha256": "3f1ffcd517c0673584bcb0c905f0649600400a7c9b291c43ce6d67f3835ed317",
+      "blob": "ebd71ab19f056cae79d5cae0a1c3b4a1194cf1fe"
+    },
+    {
+      "path": "amr_resource/security/registry_rules.xml",
+      "sha256": "cb532a7b65f56a82bdf21321f759f9259c69c6a9a017fec015cfeb1b3cf252c4",
+      "blob": "5eb5ec31ec8f92ca26df560724480694d460c43e"
+    },
+    {
+      "path": "amr_resource/tests/__init__.py",
+      "sha256": "c17c13bddaa538b0396f7428ccf9b3c2a13631bcbd8f313e80fc5b804c2d9f1e",
+      "blob": "a131ed3221321c96b3106abfa038540775a591d5"
+    },
+    {
+      "path": "amr_resource/tests/test_contracts.py",
+      "sha256": "2d356eb60e71730793be5fd1c3a87c5ac06fba6bc679516f53ddb5c580d03b41",
+      "blob": "4b75eaab33e61609d89ff63add60bca24bbf6259"
+    },
+    {
+      "path": "amr_resource/tests/test_helper.py",
+      "sha256": "5b0be81b9ca863fc732e7a70211beba35c362c791fb98de12545c716ad2cd6a8",
+      "blob": "2324483073e1b26c3df2e818209d60ecbd1dca83"
+    },
+    {
+      "path": "amr_resource/tests/test_registry_unit.py",
+      "sha256": "41149dcbfd3ba02538cb2453e0feda9631ba88ea55fbcdec1394cd8350ca8778",
+      "blob": "fe54b2292edf8137411bf7134e571ee70783a402"
+    },
+    {
+      "path": "amr_resource/tests/test_security_unit.py",
+      "sha256": "618e1c491996d38439e998d4b91a0b8d111da6a5783057af7aafc6cea5fcf51d",
+      "blob": "52e6bbed738333b10d0fc1b029168d32afe4b32c"
+    },
+    {
+      "path": "amr_resource/views/res_config_settings_views.xml",
+      "sha256": "baa414c4ae970de8bf0190dc24c29ef92b571f413f4379a7d7dd0a6d4c3bfe68",
+      "blob": "1f79cf4a6d048441f7c76469e9e15d536b1be4f0"
+    },
+    {
+      "path": "amr_resource/views/trust_registry_views.xml",
+      "sha256": "23df3af40f906e7ccfd19ca084fe8da5a1310b12a6d46f9e74cffb689bad50b5",
+      "blob": "0abc60f73677bc22d073481e3f7925a6de8ac29a"
+    },
+    {
+      "path": "amr_resource/requirements.txt",
+      "sha256": "a37ed77fd4316ebd589fe1c9a210390691ba3d693564778aaad75df4acda492c",
+      "blob": "4f59ec78dda508c6ce9f3a61a9095ee1b67a0488"
+    },
+    {
+      "path": "amr_resource/tests/test_migration_unit.py",
+      "sha256": "883d5428ed7ccc7d8140deda05ea101c260a6130b17525dc75d08c3c0c28a404",
+      "blob": "0f236f662fdf6f0a45e9747e882fc4a0a56fbacc"
+    },
+    {
+      "path": "amr_resource/tests/test_registry.py",
+      "sha256": "0675e131e305e719b15c041ac7f51bc0052d5debcf5813640db5107126f5909f",
+      "blob": "8bdc2a17fc4b9dc1ab3b4d97674814d19ef2ae21"
+    }
+  ],
+  "not_run": [
+    "Odoo/native tests/DB/QA/UAT/rollback",
+    "Step2 independent Code Review/Semgrep",
+    "PR/merge/deployment"
+  ]
+}

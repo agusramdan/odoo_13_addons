@@ -1,6 +1,15 @@
 <?xml version="1.0"?>
 <odoo>
     <data noupdate="1">
+        <!-- No users or implied groups: membership is assigned manually. -->
+        <record id="group_oidc_trust_admin" model="res.groups">
+            <field name="name">OIDC Trust Administrator</field>
+            <field name="category_id" ref="base.module_category_hidden"/>
+        </record>
+        <record id="group_oidc_code_admin" model="res.groups">
+            <field name="name">OIDC Source Administrator (execution disabled)</field>
+            <field name="category_id" ref="base.module_category_hidden"/>
+        </record>
         <record id="group_machine" model="res.groups">
             <field name="name">Machine/Client/Service User</field>
             <field name="category_id" ref="base.module_category_hidden"/>

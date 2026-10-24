@@ -1,0 +1,195 @@
+{
+  "task_id": "ADDONS13-46",
+  "issue_uuid": "0932b9ca-60ee-44b7-8c88-3e98a173b15b",
+  "role": "Analis",
+  "revision": "analyst-step0-after-owner-addon-scope-v4",
+  "output_directory": "/home/ubuntu/docs/reports/ADDONS13-46/analysis-20261023T154515Z-analis-step0",
+  "analysis_baseline_capture_utc": "2026-10-23T15:51:13.327588+00:00",
+  "scope": ["amr_resource"],
+  "deliverable_status": "ANALYST_DRAFTS_DELIVERED_DOCUMENT_VALIDATION_ONLY",
+  "acceptance": false,
+  "lead_acceptance": "NOT_GRANTED",
+  "step0_gate": "PENDING_ANALYST_DELIVERED_LEAD_REVIEW_REQUIRED",
+  "development_authorization": "NOT_GRANTED",
+  "test_authorization": "NOT_GRANTED",
+  "risk_acceptance": "NOT_GRANTED",
+  "security_verdict": null,
+  "candidate_sha": null,
+  "git_policy": {
+    "applies_to_every_git_subprocess_from_first_probe": true,
+    "environment": {
+      "GIT_NO_LAZY_FETCH": "1",
+      "GIT_TERMINAL_PROMPT": "0",
+      "GIT_OPTIONAL_LOCKS": "0"
+    },
+    "local_commands_used": ["rev-parse HEAD", "status --porcelain=v1 --untracked-files=normal", "ls-tree -r -z HEAD", "cat-file --batch-check"],
+    "missing_object_or_fetch_indication_observed": false,
+    "stop_on_missing_or_fetch_indication": true,
+    "fetch_or_ls_remote_executed": false,
+    "source_scoped_text_blobs_available_locally": 15,
+    "target_scoped_text_blobs_available_locally": 21
+  },
+  "snapshots_initial": {
+    "source": {
+      "path": "/home/ubuntu/worktrees/ADDONS13-39-SOURCE",
+      "head": "6725f802acde636be0b25e2c140d15dccd37b0db",
+      "clean": true,
+      "matches_expected": true
+    },
+    "target": {
+      "path": "/tmp/ADDONS13-46-target-main",
+      "head": "dae519f29e9c4709dc04796b38148b00d333c58b",
+      "clean": true,
+      "matches_expected": true
+    }
+  },
+  "snapshots_final": {
+    "source": {
+      "head": "6725f802acde636be0b25e2c140d15dccd37b0db",
+      "clean": true,
+      "addon_content_unchanged": true
+    },
+    "target": {
+      "head": "dae519f29e9c4709dc04796b38148b00d333c58b",
+      "clean": true,
+      "addon_content_unchanged": true
+    }
+  },
+  "artifacts": {
+    "PRD-DRAFT.md": {
+      "sha256": "699d46c5c98fc1b36b4920f8c42937d7b3b5fbe02798315417b3392d55ef9355"
+    },
+    "UAT-DRAFT.md": {
+      "sha256": "2e938db88310745d0b88d872f29c5291a087610b9899bcae81c462bfcb4fca52"
+    },
+    "DECISION-ADDENDUM-OWNER-DELEGATED-ANALYST-01.md": {
+      "sha256": "438d9f5fee1386685dd07d41305fa27f8b262055a5d3e61bf99ae54312cf907b"
+    },
+    "OWNER-LEAD-DISCUSSION-RECONCILIATION.md": {
+      "sha256": "ea2a6565b5736af84b35c3ab52c58f45ee689b2b1db7ff902918dc325538c289"
+    },
+    "SOURCE-INVENTORY.md": {
+      "sha256": "3b9f0cef9a13c8e13ff4f8e250e2d670672dcfcdf06daa8d2984fcde9d094809"
+    },
+    "ANALYST-REPORT.md": {
+      "sha256": "4f976905a249d1d1737ec475dd2b4ffc09e72d166b01c86621e3c037b1c9b77c"
+    }
+  },
+  "manifest_hash_policy": "RESULT.json excludes its own hash to avoid recursion; actual SHA-256 is emitted by final readback verifier and final response.",
+  "canonical_lifecycle": {
+    "path": "/home/ubuntu/docs/standards/DEVELOPMENT-WORKFLOW.md",
+    "sha256": "681b54f76cf8dba3478cff0d0866130b13008c18e013f059d226d349d949ddb6",
+    "step0_acceptance_role": "Lead",
+    "development_gates_serial": ["Step 1 Coding", "Step 2 unified Code Review", "Step 3 automatic UAT", "Step 4 Owner review / PR_ACCEPT and verified merge"],
+    "stored_python_security_review": "Candidate-bound manual Security review, general code review and offline Semgrep within one Step 2 Code Review verdict; also bind exact stored-code/context/config revision. No separate Security verdict or safety claim.",
+    "deployment": "Owner CI/CD outside the four Development gates; not run or authorized here"
+  },
+  "owner_explicit_inputs": {
+    "E-01": "Only amr_resource; scope transfers preserved, no cross-addon compatibility claim",
+    "E-02": "Multiple audience child rows per issuer",
+    "E-03": "azp absence governed by token profile; if present must match configured value",
+    "E-04": "Resolver key get_user_match available with exact UI label Default; no preselection/eligibility decision implied",
+    "E-05": "Fixed user, model-method and stored python_code in design; Python privileged executable-code requiring manual Security in unified Step 2"
+  },
+  "original_step0_open_questions_superseded_for_draft_by_owner_delegated_addendum": {
+    "D-01": "Token profile, algorithms, required claims, time/activity semantics per consumer/operation",
+    "D-02": "Issuer trust/cardinality/exact lookup/modes/default/local classification and legacy key-indirection migration",
+    "D-03": "Endpoint/TLS/origin/redirect/DNS/private-address/timeouts/retries/credentials/direct URL and introspection transport",
+    "D-04": "Audience match and azp type/cardinality/configuration rules per token class",
+    "D-05": "Identity binding/legacy email ambiguity/inactive machine eligibility/Default preselection and migration",
+    "D-06": "Fixed-user eligibility/privilege and allowlisted resolver model-method API/uid/context contract",
+    "D-07": "Stored Python execution engine/context/capabilities/permissions/audit/revision/activation review policy",
+    "D-08": "Registry/audience/code ACL/row/company/RPC trust boundary",
+    "D-09": "In-addon and library cache ownership/TTL/keying/rotation/invalidation and known-good rollback tuple",
+    "D-10": "Actual QA target/runtime/dependency/module/MRO matrix and bounded in-addon compatibility",
+    "D-11": "Error/signature/return/auth-source precedence/same-UID metadata and payload/context provenance"
+  },
+  "owner_delegated_decision_addendum": {
+    "path": "DECISION-ADDENDUM-OWNER-DELEGATED-ANALYST-01.md",
+    "sha256": "438d9f5fee1386685dd07d41305fa27f8b262055a5d3e61bf99ae54312cf907b",
+    "status": "ANALYST_SELECTED_UNDER_OWNER_DELEGATION",
+    "lead_acceptance_for_revised_hashes": "NOT_VERIFIED_PENDING",
+    "development_authorization": "NOT_GRANTED",
+    "test_authorization": "NOT_GRANTED"
+  },
+  "uat_summary": {
+    "cases": 25,
+    "NOT_RUN": 23,
+    "DEFERRED_NOT_RUN": 2,
+    "executed": 0
+  },
+  "deferred_uat_ids": ["UAT-24", "UAT-29"],
+  "ac_count": 17,
+  "validation": {
+    "type": "ANALYSIS_DOCUMENT_CHECKS_NOT_PRODUCT_TESTS",
+    "verifier": "/home/ubuntu/.hermes/profiles/analis/cache/scratch/verify_addons13_46_step0.py",
+    "checks": [
+      "Actual SHA-256 of four final documents and manifest readback",
+      "17 unique AC definitions; 25 unique UAT IDs; exact bidirectional AC-to-case mappings",
+      "Every referenced UAT/decision ID exists; each case has target/setup/steps/expected/actual",
+      "Summary counts match individual Actual fields, with no executed cases",
+      "All Markdown links relative and resolving after RESULT.json creation",
+      "Prefixed source/target citation file existence and line ranges, plus manual call-path review",
+      "All 21 inventory file-hash rows match actual snapshot bytes",
+      "Six historical v4/check Lead hashes unchanged, canonical standard unchanged",
+      "Guarded final HEAD/status and all scoped addon contents equal initial baseline"
+    ],
+    "relative_links_checked": 19,
+    "citation_occurrences_in_range": 57,
+    "inventory_hash_rows_checked": 21,
+    "trace_bidirectional_exact": true,
+    "referenced_uat_ids_resolve": true,
+    "status_summary_matches_cases": true,
+    "product_test_pass_claimed": false,
+    "final_integrity_claim_requires_successful_verifier_readback": true
+  },
+  "prior_preservation": {
+    "directory": "/home/ubuntu/docs/reports/ADDONS13-46/analysis-20261023T141448Z-owner-addon-scope-v4",
+    "files_unchanged": 6,
+    "sha256": {
+      "LEAD-ANALYSIS.md": "92c7833886ea9c10ec902033b65dec845ceb162de6e7094cca59a1498970c395",
+      "LEAD-STEP0-CHECK-20261023T154515Z.md": "c2e588de8bf8910301c3a0c8d9ce0ee87c34288bb1a12f2c63931c362f84409e",
+      "PRD-DRAFT.md": "ca7eaf9cc6b633743cf0e2f549578e996e67907ed50b8b383dfc47df05eedcc6",
+      "RESULT.json": "36c08629056ad5d8f1fc03f9223cfa3a96feb495434029555dba6e9ccd9cd625",
+      "SOURCE-INVENTORY.md": "2999e2dba4085c834548c67fdf116e1632e9041796b8f51a29b32c41e56985fe",
+      "UAT-DRAFT.md": "1d66f8f615ff5cc556210e71c48449a618c6df800b9dda9dbc6913324cf7fba6"
+    },
+    "historical_result_stale_artifact_entries": ["PRD-DRAFT.md", "UAT-DRAFT.md", "SOURCE-INVENTORY.md", "LEAD-ANALYSIS.md"],
+    "historical_manifest_edited": false,
+    "lead_check_edited": false
+  },
+  "target_repository_module_manifest_set": ["amr_oidc", "amr_resource", "amr_service_client", "amr_token"],
+  "target_installed_modules": "UNKNOWN_NOT_QUERIED",
+  "scope_transfers": {
+    "amr_token": "ADDONS13-38",
+    "Discovery_route_metadata": "ADDONS13-38/39",
+    "amr_oidc_client_token_validation": "ADDONS13-48",
+    "amr_service_client_cache": "ADDONS13-49",
+    "amr_auto_login": "ADDONS13-50",
+    "amr_mobile": "ADDONS13-51",
+    "amr_oauth": "ADDONS13-52",
+    "amr_oidc_client": "ADDONS13-53",
+    "amr_resource_jwt": "ADDONS13-54",
+    "amr_signature": "ADDONS13-55"
+  },
+  "execution": {
+    "product_tests_executed": 0,
+    "addon_imports": 0,
+    "odoo_registry_acl_http_runtime": "NOT RUN",
+    "unit_tests": "NOT RUN",
+    "uat": "NOT RUN",
+    "rollback_rehearsal": "DEFERRED / NOT RUN",
+    "production_rollout_rollback": "NOT RUN",
+    "network_external_issuer_service_db_access": false,
+    "source_or_test_files_written": false,
+    "git_mutations": false,
+    "plane_read_or_write": false,
+    "gateway_profile_config_changes": false,
+    "credential_env_private_key_files_opened": false,
+    "raw_source_log_token_dumps_saved": false,
+    "analysis_artifacts_and_sanitized_scratch_only": true
+  },
+  "unknowns": ["Current Plane state", "Remote ref freshness", "Installed module/MRO/ACL behavior", "Runtime/library versions and implicit JWK cache/transport defaults", "Actual DNS/TLS/served routes/deployment", "Exploitability and severity", "Future candidate implementation/security"],
+  "claim_boundary": "Local pinned snapshot facts, manual static call-path review, proposed requirements and verified document integrity only. Not acceptance, authorization, test result, exploit proof or security clearance.",
+  "provider_gateway_blocker": null
+}
