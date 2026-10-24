@@ -405,7 +405,11 @@ class AmrResourceIssuer(models.Model):
     def _guard_issuer_values(self, values, creating=False):
         if 'local_public_key' in values or (creating and 'default_local_public_key' in self.env.context):
             raise AccessError('Use a protected local key reference.')
-        if values.get('mvp_enabled') is True:
+        if 'mvp_enabled' in values:
+            if type(values['mvp_enabled']) is not bool or values['mvp_enabled']:
+                raise AccessError('Use the explicit MVP activation action.')
+        if values.get('active') is True and any(
+                record.mvp_enabled and not record.active for record in self):
             raise AccessError('Use the explicit MVP activation action.')
         if AUDIT_FIELDS.intersection(values):
             raise AccessError('Registry access denied.')
@@ -477,15 +481,19 @@ class AmrResourceIssuer(models.Model):
                 or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
             raise ValidationError('A bounded reason code is required.')
         for record in self:
-            if not record.active or record.mvp_enabled:
-                raise ValidationError('Only an active disabled issuer can be activated.')
+            if (record.active and record.mvp_enabled) or (not record.active and not record.mvp_enabled):
+                raise ValidationError('Issuer is not in an activatable state.')
             record._check_profile(mvp_enabled=True)
         for record in self:
             revision = record.policy_revision + 1
             timestamp = fields.Datetime.now()
             source_kind = record.verification_source
-            super(AmrResourceIssuer, record).write({
-                'mvp_enabled': True, 'policy_revision': revision})
+            changes = {'policy_revision': revision}
+            if record.active:
+                changes['mvp_enabled'] = True
+            else:
+                changes['active'] = True
+            super(AmrResourceIssuer, record).write(changes)
             _logger.info('Trust issuer activated issuer_id=%s action=%s source_kind=%s '
                          'revision=%s actor=%s reason_code=%s timestamp=%s',
                          record.id, 'activate_mvp', source_kind, revision,
