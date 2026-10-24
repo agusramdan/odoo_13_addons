@@ -405,6 +405,8 @@ class AmrResourceIssuer(models.Model):
     def _guard_issuer_values(self, values, creating=False):
         if 'local_public_key' in values or (creating and 'default_local_public_key' in self.env.context):
             raise AccessError('Use a protected local key reference.')
+        if values.get('mvp_enabled') is True:
+            raise AccessError('Use the explicit MVP activation action.')
         if AUDIT_FIELDS.intersection(values):
             raise AccessError('Registry access denied.')
         if 'resolver_key' in values and (not creating or values['resolver_key'] != 'get_user_match'):
@@ -427,7 +429,7 @@ class AmrResourceIssuer(models.Model):
         for values in vals_list:
             values = dict(values)
             # Context defaults are RPC input too; audit/source checks must see them.
-            for name in AUDIT_FIELDS | {'python_code', 'resolver_key'}:
+            for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled'}:
                 if name not in values and 'default_' + name in self.env.context:
                     values[name] = self.env.context['default_' + name]
             self._guard_issuer_values(values, creating=True)
@@ -462,6 +464,33 @@ class AmrResourceIssuer(models.Model):
             super(AmrResourceIssuer, record).write({'policy_revision': revision})
             _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
                          record.ids[0], revision, self.env.uid)
+
+    def action_activate_mvp(self, reason_code):
+        """Enable a fully validated MVP profile via an audited trust-admin action."""
+        import re
+
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        self.check_access_rights('write')
+        self.check_access_rule('write')
+        if (not isinstance(reason_code, str)
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
+            raise ValidationError('A bounded reason code is required.')
+        for record in self:
+            if not record.active or record.mvp_enabled:
+                raise ValidationError('Only an active disabled issuer can be activated.')
+            record._check_profile(mvp_enabled=True)
+        for record in self:
+            revision = record.policy_revision + 1
+            timestamp = fields.Datetime.now()
+            source_kind = record.verification_source
+            super(AmrResourceIssuer, record).write({
+                'mvp_enabled': True, 'policy_revision': revision})
+            _logger.info('Trust issuer activated issuer_id=%s action=%s source_kind=%s '
+                         'revision=%s actor=%s reason_code=%s timestamp=%s',
+                         record.id, 'activate_mvp', source_kind, revision,
+                         self.env.uid, reason_code, timestamp)
+        return True
 
     def action_deactivate_mvp(self, reason_code):
         """Disable one active MVP issuer through an explicit audited admin action."""
@@ -500,9 +529,10 @@ class AmrResourceIssuer(models.Model):
                     'introspection_auth_client_id', 'introspection_auth_method',
                     'introspection_basic_contract_ref', 'introspection_credential_endpoint',
                     'allow_jwt_introspection', 'allow_introspection_iss_absent', 'user_mapping_ids')
-    def _check_profile(self):
+    def _check_profile(self, mvp_enabled=None):
         for record in self:
             import re
+            enabled = record.mvp_enabled if mvp_enabled is None else mvp_enabled
             for reference in (record.local_key_ref, record.credential_ref):
                 if reference and (not isinstance(reference, str) or
                                   not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
@@ -521,7 +551,7 @@ class AmrResourceIssuer(models.Model):
                 if endpoint and not _https_url(endpoint):
                     raise ValidationError('Endpoints must be public HTTPS URLs on port 443.')
             if (record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key)
-                    and not (record.mvp_enabled and record.verification_source == 'none')):
+                    and not (enabled and record.verification_source == 'none')):
                 raise ValidationError('JWT requires exactly one static JWKS URL or local public key.')
             if record.local_public_key:
                 if record.token_profile != 'jwt':
@@ -537,7 +567,7 @@ class AmrResourceIssuer(models.Model):
                 except (ValueError, TypeError, UnicodeError):
                     raise ValidationError('A valid RSA public PEM of at least 2048 bits is required.')
             if (record.token_profile == 'opaque' and not record.introspection_endpoint
-                    and not record.mvp_enabled):
+                    and not enabled):
                 raise ValidationError('Opaque profiles require a static introspection endpoint.')
             if (not record.allow_missing_azp and not record.azp) or (record.azp and not _exact_string(record.azp)):
                 raise ValidationError('Configure one exact azp or explicitly allow its absence.')
@@ -549,7 +579,7 @@ class AmrResourceIssuer(models.Model):
                         or user.share or user.has_group('base.group_public')
                         or user.has_group('base.group_portal')):
                     raise ValidationError('Fixed user must be an active eligible internal user.')
-            if record.resolver_mode == 'mapping' and not record.mvp_enabled:
+            if record.resolver_mode == 'mapping' and not enabled:
                 raise ValidationError('Mapping resolver requires explicit MVP enablement.')
             mapping_rows = [dict(sequence=row.sequence, field_user=row.field_user,
                                  jwt_key=row.jwt_key, active=row.active)
@@ -557,7 +587,7 @@ class AmrResourceIssuer(models.Model):
             _validate_mapping_rows(mapping_rows)
             if record.resolver_mode == 'mapping' and not any(row['active'] for row in mapping_rows):
                 raise ValidationError('Mapping resolver requires an active mapping.')
-            if record.mvp_enabled:
+            if enabled:
                 if (record.metadata_mode not in ('manual', 'oidc_discovery')
                         or record.verification_source not in ('jwks', 'local_public', 'none')
                         or record.introspection_source not in ('none', 'manual', 'rfc8414')):
