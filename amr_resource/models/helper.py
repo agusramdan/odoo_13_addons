@@ -190,6 +190,9 @@ class ResourceHelper(models.AbstractModel):
     @api.model
     @_sanitized
     def get_oidc_config(self, issuer):
+        return self._get_oidc_config(issuer)[0]
+
+    def _get_oidc_config(self, issuer):
         profile = self._profile(issuer)
         if getattr(profile, 'mvp_enabled', False):
             metadata_mode = getattr(profile, 'metadata_mode', None)
@@ -198,9 +201,9 @@ class ResourceHelper(models.AbstractModel):
                     raise Unauthorized()
                 metadata = _parse_oidc_metadata(
                     fetch_json(_oidc_discovery_url(profile.issuer)), profile.issuer)
-                return {'issuer': profile.issuer, 'jwks_uri': metadata['jwks_uri'],
-                        'token_endpoint': metadata.get('token_endpoint'),
-                        'introspection_endpoint': None}
+                return ({'issuer': profile.issuer, 'jwks_uri': metadata['jwks_uri'],
+                         'token_endpoint': metadata.get('token_endpoint'),
+                         'introspection_endpoint': None}, None)
             if metadata_mode != 'manual' or not getattr(profile, 'discovery_unavailable_declared', False) or not getattr(
                     profile, 'discovery_unavailable_evidence_ref', False):
                 raise Unauthorized()
@@ -216,17 +219,18 @@ class ResourceHelper(models.AbstractModel):
                         raise Unauthorized()
                     metadata = _parse_rfc8414_metadata(
                         fetch_json(_rfc8414_metadata_url(profile.issuer)), profile.issuer)
-                    return {'issuer': profile.issuer, 'jwks_uri': None,
-                            'token_endpoint': metadata.get('token_endpoint'),
-                            'introspection_endpoint': metadata['introspection_endpoint']}
+                    return ({'issuer': profile.issuer, 'jwks_uri': None,
+                             'token_endpoint': metadata.get('token_endpoint'),
+                             'introspection_endpoint': metadata['introspection_endpoint']},
+                            metadata.get('introspection_endpoint_auth_methods_supported'))
                 if introspection_source == 'manual' and profile.introspection_endpoint:
-                    return {'issuer': profile.issuer, 'jwks_uri': None,
-                            'token_endpoint': profile.token_endpoint or None,
-                            'introspection_endpoint': profile.introspection_endpoint}
+                    return ({'issuer': profile.issuer, 'jwks_uri': None,
+                             'token_endpoint': profile.token_endpoint or None,
+                             'introspection_endpoint': profile.introspection_endpoint}, None)
                 raise Unauthorized()
-        return {'issuer': profile.issuer, 'jwks_uri': profile.jwks_uri or None,
-                'token_endpoint': profile.token_endpoint or None,
-                'introspection_endpoint': profile.introspection_endpoint or None}
+        return ({'issuer': profile.issuer, 'jwks_uri': profile.jwks_uri or None,
+                 'token_endpoint': profile.token_endpoint or None,
+                 'introspection_endpoint': profile.introspection_endpoint or None}, None)
 
     @api.model
     @_sanitized
@@ -349,8 +353,14 @@ class ResourceHelper(models.AbstractModel):
                 or getattr(profile, 'introspection_source', None) not in ('manual', 'rfc8414')
                 or (jwt_shaped and not getattr(profile, 'allow_jwt_introspection', False))):
             raise Unauthorized()
-        config = self.get_oidc_config(profile.issuer)
+        config, auth_methods = self._get_oidc_config(profile.issuer)
         endpoint = config['introspection_endpoint']
+        if (getattr(profile, 'introspection_source', None) == 'rfc8414'
+                and (auth_methods is None
+                     and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))):
+            raise Unauthorized()
+        if (auth_methods is not None and 'client_secret_basic' not in auth_methods):
+            raise Unauthorized()
         if (not endpoint or endpoint != getattr(profile, 'introspection_credential_endpoint', None)
                 or getattr(profile, 'introspection_auth_method', None) != 'client_secret_basic'
                 or not _string(getattr(profile, 'introspection_auth_client_id', None))
@@ -363,8 +373,15 @@ class ResourceHelper(models.AbstractModel):
         secret = self.env['ir.config_parameter'].sudo().get_param(profile.introspection_credential_ref)
         authorization = _introspection_basic_header(profile.introspection_auth_client_id, secret)
         result = fetch_json(endpoint, data={'token': token}, headers={'Authorization': authorization})
+        if jwt_shaped:
+            if not isinstance(result, dict) or result.get('active') is not True:
+                raise Unauthorized()
+            if 'iss' not in result:
+                if not getattr(profile, 'allow_introspection_iss_absent', False):
+                    raise Unauthorized()
+                result = dict(result, iss=profile.issuer)
         claims = self._claims(result, profile, opaque=not jwt_shaped)
-        if jwt_shaped and any(name not in claims for name in ('iss', 'exp', 'iat')):
+        if jwt_shaped and any(name not in claims for name in ('iss', 'exp', 'iat', 'jti')):
             raise Unauthorized()
         if 'token_type' in claims and (not isinstance(claims['token_type'], str)
                 or claims['token_type'].lower() != 'bearer'):
@@ -412,6 +429,10 @@ class ResourceHelper(models.AbstractModel):
         if header.get('alg') not in enabled_algorithms:
             raise Unauthorized()
         self._claims(hint, profile)
+        if getattr(profile, 'mvp_enabled', False) and getattr(profile, 'verification_source', None) == 'none':
+            if not getattr(profile, 'allow_jwt_introspection', False):
+                raise Unauthorized()
+            return self._mvp_introspect(token, profile, jwt_shaped=True)
         if profile.local_key_ref:
             key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
         else:
