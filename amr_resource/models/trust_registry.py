@@ -244,7 +244,8 @@ class RegistryAccess(models.AbstractModel):
         self._guard_parent_values(values)
         parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
         result = super(RegistryAccess, self).write(values)
-        if self._name in POLICY_CHILD_MODELS:
+        if self._name in POLICY_CHILD_MODELS and self.env.context.get(
+                '_policy_restore_token') is not _RESTORE_CONTEXT_TOKEN:
             seen = set()
             for issuer in list(parents) + list(self.mapped('issuer_id')):
                 if issuer.id not in seen:
@@ -261,9 +262,10 @@ class RegistryAccess(models.AbstractModel):
         ids = self.ids
         parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
         result = super(RegistryAccess, self).unlink()
-        for issuer in parents:
-            if hasattr(issuer, '_bump_policy_revision'):
-                issuer._bump_policy_revision()
+        if self.env.context.get('_policy_restore_token') is not _RESTORE_CONTEXT_TOKEN:
+            for issuer in parents:
+                if hasattr(issuer, '_bump_policy_revision'):
+                    issuer._bump_policy_revision()
         _logger.info('Trust registry unlink model=%s ids=%s actor=%s',
                      self._name, ids, self.env.uid)
         return result
