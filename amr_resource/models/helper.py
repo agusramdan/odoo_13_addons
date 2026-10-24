@@ -359,13 +359,17 @@ class ResourceHelper(models.AbstractModel):
         if token.count('.') != 2:
             raise Unauthorized()
         header = jwt.get_unverified_header(token)
-        if (header.get('typ') != 'at+jwt' or header.get('alg') != 'RS256'
+        if (header.get('typ') != 'at+jwt' or header.get('alg') not in ('RS256', 'PS256')
                 or any(name in header for name in ('jku', 'x5u', 'jwk', 'crit'))):
             raise Unauthorized()
         hint = jwt.decode(token, options={'verify_signature': False})
         if not _string(hint.get('iss')):
             raise Unauthorized()
         profile = self._profile(hint['iss'], 'jwt')
+        enabled_algorithms = (profile._verification_algorithms({})
+                              if getattr(profile, 'mvp_enabled', False) else frozenset(['RS256']))
+        if header.get('alg') not in enabled_algorithms:
+            raise Unauthorized()
         self._claims(hint, profile)
         if profile.local_key_ref:
             key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
@@ -377,15 +381,20 @@ class ResourceHelper(models.AbstractModel):
             if len(matches) != 1:
                 raise Unauthorized()
             jwk = matches[0]
-            if (jwk.get('kty') != 'RSA' or jwk.get('alg', 'RS256') != 'RS256'
+            if (jwk.get('kty') != 'RSA' or jwk.get('alg', header['alg']) != header['alg']
                     or jwk.get('use', 'sig') != 'sig'
                     or any(name in jwk for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
                     or ('key_ops' in jwk and jwk['key_ops'] != ['verify'])):
                 raise Unauthorized()
+            if getattr(profile, 'mvp_enabled', False):
+                if header['alg'] not in profile._verification_algorithms(jwk):
+                    raise Unauthorized()
+            elif header['alg'] != 'RS256':
+                raise Unauthorized()
             key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
         if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
             raise Unauthorized()
-        claims = jwt.decode(token, key, algorithms=['RS256'], issuer=profile.issuer,
+        claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
                             audience=profile.audience_ids.mapped('value'), leeway=0,
                             options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
         claims = self._claims(claims, profile)
