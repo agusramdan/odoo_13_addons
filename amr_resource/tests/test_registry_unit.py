@@ -443,6 +443,62 @@ class RegistryUnitTests(unittest.TestCase):
         with self.assertRaises(AccessError):
             candidate.create([{'issuer': 'https://issuer.example'}])
 
+    def test_mvp_activation_bypasses_reject_malformed_defaults_and_require_action(self):
+        for value in (1, 0, 'yes', None):
+            candidate = IssuerProbe((ADMIN, TRUST), mvp_enabled=False)
+            with self.subTest(value=value), self.assertRaises(AccessError):
+                candidate.write({'mvp_enabled': value})
+            self.assertFalse(candidate.mvp_enabled)
+            self.assertEqual(candidate.policy_revision, 1)
+
+            candidate = IssuerProbe((ADMIN, TRUST), mvp_enabled=False)
+            with self.subTest(create_value=value), self.assertRaises(AccessError):
+                candidate.create([{'issuer': 'https://issuer.example', 'mvp_enabled': value}])
+            self.assertFalse(hasattr(candidate, 'created_values'))
+
+            candidate = IssuerProbe((ADMIN, TRUST), mvp_enabled=False)
+            candidate.env.context = {'default_mvp_enabled': value}
+            with self.subTest(context_value=value), self.assertRaises(AccessError):
+                candidate.create([{'issuer': 'https://issuer.example'}])
+            self.assertFalse(hasattr(candidate, 'created_values'))
+            self.assertEqual(candidate.policy_revision, 1)
+
+        inactive = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                               verification_source='jwks')
+        with self.assertRaises(AccessError):
+            inactive.write({'active': True})
+        self.assertFalse(inactive.active)
+        self.assertEqual(inactive.policy_revision, 1)
+
+        reactivated = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                                  verification_source='jwks', policy_revision=9)
+        reactivated._check_profile = Mock()
+        with patch.object(registry._logger, 'info') as audit:
+            reactivated.action_activate_mvp('approved_profile')
+        reactivated._check_profile.assert_called_once_with(mvp_enabled=True)
+        self.assertTrue(reactivated.active)
+        self.assertTrue(reactivated.mvp_enabled)
+        self.assertEqual(reactivated.policy_revision, 10)
+        self.assertEqual(reactivated.written_values, {'active': True, 'policy_revision': 10})
+        self.assertIn('activate_mvp', repr(audit.call_args_list))
+
+        repeated = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                               verification_source='jwks', policy_revision=9)
+        with self.assertRaises(ValidationError):
+            repeated.action_activate_mvp('approved_profile')
+        self.assertFalse(repeated.active)
+        self.assertTrue(repeated.mvp_enabled)
+        self.assertEqual(repeated.policy_revision, 9)
+
+        invalid = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
+                              verification_source='jwks', policy_revision=9)
+        invalid._check_profile = Mock(side_effect=ValidationError('invalid profile'))
+        with self.assertRaises(ValidationError):
+            invalid.action_activate_mvp('approved_profile')
+        self.assertFalse(invalid.active)
+        self.assertTrue(invalid.mvp_enabled)
+        self.assertEqual(invalid.policy_revision, 9)
+
     def test_policy_revision_is_monotonic_and_not_admin_writable(self):
         self.assertTrue(hasattr(registry.AmrResourceIssuer, 'policy_revision'))
         trust = IssuerProbe((ADMIN, TRUST), policy_revision=7, client_id='before')
