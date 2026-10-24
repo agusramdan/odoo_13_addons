@@ -44,7 +44,6 @@
                     </group>
                     <group string="User resolution (no automatic selection)">
                         <field name="mvp_enabled"/><field name="resolver_mode"/>
-                        <field name="policy_revision" groups="amr_resource.group_oidc_trust_admin" readonly="1"/>
                         <field name="fixed_user_id" attrs="{'invisible': [('resolver_mode', '!=', 'fixed_user')], 'required': [('resolver_mode', '=', 'fixed_user')]}"/>
                         <field name="resolver_key" attrs="{'invisible': [('resolver_mode', '!=', 'resolver')]}"/>
                     </group>
@@ -85,16 +84,10 @@
             </form>
         </field>
     </record>
-
     <record id="action_resource_issuers" model="ir.actions.act_window">
         <field name="name">Trusted Issuers</field><field name="res_model">oidc.issuer.register</field>
-        <field name="view_mode">tree,form</field><!-- Bila ir.actions.act_window punya ir.actions.act_window.view maka view_mode akan di abaikan -->
+        <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
         <field name="groups_id" eval="[(6, 0, [ref('group_oidc_trust_admin')])]"/>
-    </record>
-    <record id="action_resource_issuers_tree" model="ir.actions.act_window.view">
-        <field name="sequence">1</field><field name="view_mode">tree</field>
-        <field name="view_id" ref="view_resource_issuer_tree"/>
-        <field name="act_window_id" ref="action_resource_issuers"/>
     </record>
     <record id="action_resource_issuers_form" model="ir.actions.act_window.view">
         <field name="sequence">2</field><field name="view_mode">form</field>
@@ -103,14 +96,9 @@
     </record>
     <record id="action_resource_sources" model="ir.actions.act_window">
         <field name="name">Stored Source (Disabled)</field><field name="res_model">oidc.issuer.register</field>
-        <field name="view_mode">tree,form</field><!-- Bila ir.actions.act_window punya ir.actions.act_window.view maka view_mode akan di abaikan -->
+        <field name="view_mode">tree,form</field><field name="view_id" ref="view_resource_issuer_tree"/>
         <field name="groups_id" eval="[(6, 0, [ref('group_oidc_code_admin')])]"/>
         <field name="context">{'create': False, 'delete': False}</field>
-    </record>
-    <record id="action_resource_sources_tree" model="ir.actions.act_window.view">
-        <field name="sequence">1</field><field name="view_mode">tree</field>
-        <field name="view_id" ref="view_resource_issuer_tree"/>
-        <field name="act_window_id" ref="action_resource_sources"/>
     </record>
     <record id="action_resource_sources_form" model="ir.actions.act_window.view">
         <field name="sequence">2</field><field name="view_mode">form</field>
