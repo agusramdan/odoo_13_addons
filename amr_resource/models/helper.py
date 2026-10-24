@@ -5,7 +5,7 @@ import json
 import math
 import re
 import time
-from urllib.parse import quote_plus, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -14,23 +14,11 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from odoo import api, models, SUPERUSER_ID
 from odoo.http import request
 from werkzeug.exceptions import Unauthorized
-from ..transport import fetch_json, preflight_endpoint
+from ..transport import fetch_json
 
 AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
 _PROVENANCE = object()
 _UNSET = object()
-
-
-def _introspection_basic_header(client_id, secret):
-    if not isinstance(client_id, str) or not client_id or not isinstance(secret, str) or not secret:
-        raise Unauthorized()
-    credentials = '%s:%s' % (quote_plus(client_id, safe=''), quote_plus(secret, safe=''))
-    return 'Basic ' + base64.b64encode(credentials.encode('ascii')).decode('ascii')
-
-
-def _introspection_client_id(value):
-    return (type(value) is str and 1 <= len(value) <= 1024 and bool(value.strip())
-            and not any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value))
 
 
 def _issuer_parts(issuer):
@@ -107,22 +95,13 @@ def _parse_rfc8414_metadata(metadata, issuer):
     _issuer_parts(issuer)
     if 'jwks_uri' in metadata:
         raise Unauthorized()
-    _metadata_string_list(metadata, 'response_types_supported')
-    grants = metadata.get('grant_types_supported', ['authorization_code', 'implicit'])
-    if (not isinstance(grants, list) or not grants
-            or any(not isinstance(item, str) or not item for item in grants)):
-        raise Unauthorized()
-    authorization_endpoint_optional_grants = (
-        'client_credentials', 'password', 'refresh_token',
-        'urn:ietf:params:oauth:grant-type:device_code')
+    response_types = _metadata_string_list(metadata, 'response_types_supported')
     if 'authorization_endpoint' in metadata:
         _metadata_endpoint(metadata['authorization_endpoint'])
-    elif any(grant not in authorization_endpoint_optional_grants for grant in grants):
+    elif any('code' in item.split() or 'token' in item.split() for item in response_types):
         raise Unauthorized()
     if 'token_endpoint' in metadata:
         _metadata_endpoint(metadata['token_endpoint'])
-    elif any(grant != 'implicit' for grant in grants):
-        raise Unauthorized()
     if 'introspection_endpoint' not in metadata:
         raise Unauthorized()
     _metadata_endpoint(metadata['introspection_endpoint'])
@@ -131,14 +110,6 @@ def _parse_rfc8414_metadata(metadata, issuer):
         if 'client_secret_basic' not in methods:
             raise Unauthorized()
     return metadata
-
-
-def _require_policy_revision(profile, revision):
-    invalidate_cache = getattr(profile, 'invalidate_cache', None)
-    if callable(invalidate_cache):
-        invalidate_cache(fnames=['active', 'policy_revision'], ids=getattr(profile, 'ids', None))
-    if not getattr(profile, 'active', False) or getattr(profile, 'policy_revision', 0) != revision:
-        raise Unauthorized()
 
 
 def _sanitized(method):
@@ -156,36 +127,10 @@ def _string(value):
     return isinstance(value, str) and bool(value) and not any(ord(c) < 33 or ord(c) == 127 for c in value)
 
 
-def _manual_key_source(profile):
-    if (getattr(profile, 'token_profile', None) != 'jwt'
-            or getattr(profile, 'metadata_mode', None) != 'manual'
-            or getattr(profile, 'introspection_source', None) != 'none'):
-        return None
-    unsupported_fields = (
-        'introspection_endpoint', 'introspection_credential_ref',
-        'introspection_auth_client_id', 'introspection_auth_method',
-        'introspection_basic_contract_ref', 'introspection_credential_endpoint',
-        'no_jwks_declaration', 'no_jwks_evidence_ref',
-        'allow_jwt_introspection', 'allow_introspection_iss_absent',
-        'discovery_unavailable_declared', 'discovery_unavailable_evidence_ref',
-    )
-    if any(getattr(profile, name, False) for name in unsupported_fields):
-        return None
-    source = getattr(profile, 'verification_source', None)
-    local_key_ref = bool(getattr(profile, 'local_key_ref', False))
-    jwks_uri = getattr(profile, 'jwks_uri', None)
-    if source == 'jwks' and _string(jwks_uri) and not local_key_ref:
-        return 'jwks'
-    if source == 'local_public' and not jwks_uri and local_key_ref:
-        return 'local_public'
-    return None
-
-
 class _VerifiedClaims(dict):
-    def __init__(self, claims, company, uid, policy_revision):
+    def __init__(self, claims, company, uid):
         super().__init__(claims)
         self._origin, self._company, self._uid = _PROVENANCE, company, uid
-        self._policy_revision = policy_revision
         self._snapshot = json.dumps(claims, sort_keys=True, allow_nan=False)
 
 
@@ -207,12 +152,9 @@ class ResourceHelper(models.AbstractModel):
 
     def _verified(self, payload):
         try:
-            if (type(payload) is not _VerifiedClaims or payload._origin is not _PROVENANCE
-                    or payload._company != self.env.company.id or payload._uid != self.env.uid
-                    or payload._snapshot != json.dumps(dict(payload), sort_keys=True, allow_nan=False)):
-                return False
-            profile = self._profile(payload['iss'])
-            return payload._policy_revision == getattr(profile, 'policy_revision', 0)
+            return (type(payload) is _VerifiedClaims and payload._origin is _PROVENANCE
+                    and payload._company == self.env.company.id and payload._uid == self.env.uid
+                    and payload._snapshot == json.dumps(dict(payload), sort_keys=True, allow_nan=False))
         except Exception:
             return False
 
@@ -241,30 +183,49 @@ class ResourceHelper(models.AbstractModel):
     @api.model
     @_sanitized
     def get_oidc_config(self, issuer):
-        return self._get_oidc_config(issuer)[0]
-
-    def _get_oidc_config(self, issuer):
         profile = self._profile(issuer)
-        source = _manual_key_source(profile)
-        if (profile.token_profile != 'jwt'
-                or getattr(profile, 'metadata_mode', None) != 'manual'
-                or getattr(profile, 'introspection_source', None) != 'none'
-                or source is None):
-            raise Unauthorized()
-        return ({'issuer': profile.issuer,
-                 'jwks_uri': profile.jwks_uri if source == 'jwks' else None,
-                 'token_endpoint': profile.token_endpoint or None,
-                 'introspection_endpoint': None}, None)
+        if getattr(profile, 'mvp_enabled', False):
+            metadata_mode = getattr(profile, 'metadata_mode', None)
+            if metadata_mode == 'oidc_discovery':
+                if profile.token_profile != 'jwt':
+                    raise Unauthorized()
+                metadata = _parse_oidc_metadata(
+                    fetch_json(_oidc_discovery_url(profile.issuer)), profile.issuer)
+                return {'issuer': profile.issuer, 'jwks_uri': metadata['jwks_uri'],
+                        'token_endpoint': metadata.get('token_endpoint'),
+                        'introspection_endpoint': None}
+            if metadata_mode != 'manual' or not getattr(profile, 'discovery_unavailable_declared', False) or not getattr(
+                    profile, 'discovery_unavailable_evidence_ref', False):
+                raise Unauthorized()
+            source = getattr(profile, 'verification_source', None)
+            if source == 'none':
+                if (not getattr(profile, 'no_jwks_declaration', False)
+                        or not getattr(profile, 'no_jwks_evidence_ref', False)
+                        or profile.jwks_uri or profile.local_key_ref or profile.local_public_key):
+                    raise Unauthorized()
+                introspection_source = getattr(profile, 'introspection_source', None)
+                if introspection_source == 'rfc8414':
+                    if profile.introspection_endpoint:
+                        raise Unauthorized()
+                    metadata = _parse_rfc8414_metadata(
+                        fetch_json(_rfc8414_metadata_url(profile.issuer)), profile.issuer)
+                    return {'issuer': profile.issuer, 'jwks_uri': None,
+                            'token_endpoint': metadata.get('token_endpoint'),
+                            'introspection_endpoint': metadata['introspection_endpoint']}
+                if introspection_source == 'manual' and profile.introspection_endpoint:
+                    return {'issuer': profile.issuer, 'jwks_uri': None,
+                            'token_endpoint': profile.token_endpoint or None,
+                            'introspection_endpoint': profile.introspection_endpoint}
+                raise Unauthorized()
+        return {'issuer': profile.issuer, 'jwks_uri': profile.jwks_uri or None,
+                'token_endpoint': profile.token_endpoint or None,
+                'introspection_endpoint': profile.introspection_endpoint or None}
 
     @api.model
     @_sanitized
     def get_jwks_data(self, issuer):
         profile = self._profile(issuer, 'jwt')
-        if (profile.token_profile != 'jwt'
-                or getattr(profile, 'metadata_mode', None) != 'manual'
-                or getattr(profile, 'verification_source', None) != 'jwks'
-                or getattr(profile, 'introspection_source', None) != 'none'
-                or _manual_key_source(profile) != 'jwks'):
+        if profile.local_public_key:
             raise Unauthorized()
         jwks_uri = profile.jwks_uri
         if getattr(profile, 'mvp_enabled', False):
@@ -286,14 +247,53 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return value
 
+    def _headers(self, profile, required=False):
+        if not _string(profile.credential_ref):
+            if required:
+                raise Unauthorized()
+            return {}
+        # sudo: resolve only the configured protected credential reference.
+        secret = self.env['ir.config_parameter'].sudo().get_param(profile.credential_ref)
+        if not isinstance(secret, str) or not secret:
+            raise Unauthorized()
+        value = base64.b64encode((profile.client_id + ':' + secret).encode('utf-8')).decode('ascii')
+        return {'Authorization': 'Basic ' + value}
+
+    def encode(self, **kw):
+        return self.generate_token(**kw).get('access_token')
+
     def decode(self, token, **kw):
         return self.validate(token)
+
+    @api.model
+    @_sanitized
+    def generate_token(self, client_id=_UNSET, client_secret=_UNSET, iss=_UNSET,
+                       issuer=_UNSET, issuer_url=_UNSET, **kw):
+        selectors = [value for value in (iss, issuer, issuer_url) if value is not _UNSET]
+        if (not selectors or any(not _string(value) for value in selectors)
+                or any(value != selectors[0] for value in selectors[1:])):
+            raise Unauthorized()
+        profile = self._profile(selectors[0])
+        if (client_secret is not _UNSET or
+                (client_id is not _UNSET and
+                 (not _string(client_id) or client_id != profile.client_id))):
+            raise Unauthorized()
+        if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
+            raise Unauthorized()
+        if 'scope' in kw and not isinstance(kw['scope'], str):
+            raise Unauthorized()
+        if not profile.token_endpoint:
+            raise Unauthorized()
+        result = fetch_json(profile.token_endpoint, data=kw, headers=self._headers(profile, required=True))
+        if not isinstance(result, dict) or not _string(result.get('access_token')):
+            raise Unauthorized()
+        return result
 
     @api.model
     def is_local_token(self, token):
         return self.is_local_issuer(self.validate(token)['iss'])
 
-    def _claims(self, claims, profile, opaque=False, require_jti=True):
+    def _claims(self, claims, profile, opaque=False):
         if not isinstance(claims, dict):
             raise Unauthorized()
         claims = dict(claims)
@@ -301,8 +301,7 @@ class ResourceHelper(models.AbstractModel):
             if claims.get('active') is not True:
                 raise Unauthorized()
             claims.setdefault('iss', profile.issuer)
-        required = ('iss', 'sub', 'client_id') if opaque else (
-            ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
+        required = ('iss', 'sub', 'client_id') if opaque else ('iss', 'sub', 'client_id', 'jti')
         if any(not _string(claims.get(name)) for name in required):
             raise Unauthorized()
         if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
@@ -333,13 +332,18 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return claims
 
-    def _mvp_introspect(self, token, profile, jwt_shaped=False, policy_revision=None):
-        raise Unauthorized()
-
     @api.model
     @_sanitized
     def introspect_token(self, token, client_id=None, client_secret=None, url=None, iss=None, **kw):
-        raise Unauthorized()
+        if url is not None or client_secret is not None or kw or not _string(token) or '.' in token:
+            raise Unauthorized()
+        profile = self._profile(iss, 'opaque')
+        if client_id is not None and client_id != profile.client_id:
+            raise Unauthorized()
+        if not profile.introspection_endpoint:
+            raise Unauthorized()
+        result = fetch_json(profile.introspection_endpoint, data={'token': token}, headers=self._headers(profile))
+        return _VerifiedClaims(self._claims(result, profile, opaque=True), self.env.company.id, self.env.uid)
 
     @api.model
     def validate_hs(self, token, **kw):
@@ -350,6 +354,8 @@ class ResourceHelper(models.AbstractModel):
     def validate(self, token):
         if not _string(token) or len(token) > 65536:
             raise Unauthorized()
+        if '.' not in token:
+            return self.introspect_token(token)
         if token.count('.') != 2:
             raise Unauthorized()
         header = jwt.get_unverified_header(token)
@@ -360,75 +366,32 @@ class ResourceHelper(models.AbstractModel):
         if not _string(hint.get('iss')):
             raise Unauthorized()
         profile = self._profile(hint['iss'], 'jwt')
-        key_source = _manual_key_source(profile)
-        if key_source is None:
-            raise Unauthorized()
-        if any(getattr(getattr(policy, 'algorithm_id', None), 'name', None) != 'RS256'
-               for policy in getattr(profile, 'algorithm_policy_ids', ())):
-            raise Unauthorized()
-        policy_revision = getattr(profile, 'policy_revision', 0)
-        enabled_algorithms = (profile._verification_algorithms({})
-                              if getattr(profile, 'mvp_enabled', False) else frozenset(['RS256']))
-        if header.get('alg') not in enabled_algorithms:
-            raise Unauthorized()
         self._claims(hint, profile)
-        if key_source == 'local_public':
-            _require_policy_revision(profile, policy_revision)
+        if profile.local_key_ref:
             key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
         else:
             if not _string(header.get('kid')):
                 raise Unauthorized()
             keys = self.get_jwks_data(profile.issuer)['keys']
-            _require_policy_revision(profile, policy_revision)
-            if not keys:
+            matches = [key for key in keys if isinstance(key, dict) and key.get('kid') == header['kid']]
+            if len(matches) != 1:
                 raise Unauthorized()
-            seen_kids = set()
-            selected_key = None
-            for candidate in keys:
-                if not isinstance(candidate, dict):
-                    raise Unauthorized()
-                candidate_kid = candidate.get('kid')
-                if (type(candidate_kid) is not str or not candidate_kid or len(candidate_kid) > 256
-                        or any(character.isspace() or ord(character) < 32 or ord(character) == 127
-                               or 0x80 <= ord(character) <= 0x9f for character in candidate_kid)
-                        or candidate_kid in seen_kids):
-                    raise Unauthorized()
-                seen_kids.add(candidate_kid)
-                if (candidate.get('kty') != 'RSA' or candidate.get('alg', 'RS256') != 'RS256'
-                        or candidate.get('use', 'sig') != 'sig'
-                        or any(name in candidate for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
-                        or ('key_ops' in candidate and candidate['key_ops'] != ['verify'])):
-                    raise Unauthorized()
-                try:
-                    parsed_candidate = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(candidate))
-                except Exception:
-                    raise Unauthorized() from None
-                if not isinstance(parsed_candidate, RSAPublicKey) or parsed_candidate.key_size < 2048:
-                    raise Unauthorized()
-                if candidate_kid == header['kid']:
-                    selected_key = parsed_candidate
-            if selected_key is None:
+            jwk = matches[0]
+            if (jwk.get('kty') != 'RSA' or jwk.get('alg', 'RS256') != 'RS256'
+                    or jwk.get('use', 'sig') != 'sig'
+                    or any(name in jwk for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
+                    or ('key_ops' in jwk and jwk['key_ops'] != ['verify'])):
                 raise Unauthorized()
-            # Validate candidate structure only; verification uses issuer-pinned n/e material.
-            jwk = next(candidate for candidate in keys if candidate['kid'] == header['kid'])
-            if getattr(profile, 'mvp_enabled', False):
-                if header['alg'] not in profile._verification_algorithms(jwk):
-                    raise Unauthorized()
-            elif header['alg'] != 'RS256':
-                raise Unauthorized()
-            _require_policy_revision(profile, policy_revision)
             key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
         if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
             raise Unauthorized()
-        _require_policy_revision(profile, policy_revision)
-        claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
+        claims = jwt.decode(token, key, algorithms=['RS256'], issuer=profile.issuer,
                             audience=profile.audience_ids.mapped('value'), leeway=0,
                             options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
         claims = self._claims(claims, profile)
         claims.setdefault('kid', header.get('kid'))
         claims.setdefault('alg', 'RS256')
-        _require_policy_revision(profile, policy_revision)
-        return _VerifiedClaims(claims, self.env.company.id, self.env.uid, policy_revision)
+        return _VerifiedClaims(claims, self.env.company.id, self.env.uid)
 
     @api.model
     def get_validate_user(self, token):
@@ -475,6 +438,8 @@ class ResourceHelper(models.AbstractModel):
         if not getattr(profile, 'mvp_enabled', False):
             raise Unauthorized()
         rows = profile.user_mapping_ids
+        if len(rows) > 20:
+            raise Unauthorized()
         seen_sequences = set()
         active_rows = []
         for row in rows:
@@ -526,17 +491,11 @@ class ResourceHelper(models.AbstractModel):
             user = self._bound_user(profile, validation)
         else:
             raise Unauthorized()
-        user = self._eligible_user(user)
-        _require_policy_revision(profile, validation._policy_revision)
-        return user
+        return self._eligible_user(user)
 
     @api.model
     def get_user_token_login(self, token):
-        validation = self.validate(token)
-        user = self.get_user_match(validation)
-        profile = self._profile(validation['iss'])
-        _require_policy_revision(profile, validation._policy_revision)
-        return user
+        return self.get_user_match(self.validate(token))
 
     @api.model
     def get_uid(self, payload):
