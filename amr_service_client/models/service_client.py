@@ -8,6 +8,8 @@ import re
 import requests
 import traceback
 
+from ..services.sentry_reporting import report_outcome
+
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -129,6 +131,7 @@ class ServiceClientSend:
             request_context = self.service_client.prepare_request_context(**request_context)
             response = requests.request(**request_context)
             response.raise_for_status()
+            self.service_client._report_sentry("success", response=response)
             if active_log:
                 self.env["service.client.log"].create_error(
                     'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
@@ -136,7 +139,8 @@ class ServiceClientSend:
                 )
 
         except Exception as e:
-            _logger.exception("error dispatch_send %s", response.text)
+            self.service_client._report_sentry("error", response=response, exception=e)
+            _logger.exception("error dispatch_send")
             self.env["service.client.log"].create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                 request_context=request_context
@@ -181,9 +185,27 @@ class ServiceClient:
         request_context = self.provider.authenticate(request_context, audience=audience or self.endpoint.audience)
         return request_context
 
+    def _report_sentry(self, outcome, response=None, exception=None):
+        try:
+            mode = (self.env['ir.config_parameter'].sudo().get_param(
+                'amr_service_client.sentry_mode', 'none') or 'none').lower()
+            report_outcome(self.env, mode, bool(getattr(self, 'sentry_opt_in', False)),
+                           outcome, method=self.method,
+                           status_code=getattr(response, 'status_code', None))
+        except Exception:
+            _logger.debug('Sentry reporting configuration unavailable', exc_info=False)
+
     def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False):
         request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
-        response = requests.request(**request_context)
+        try:
+            response = requests.request(**request_context)
+        except Exception as exc:
+            self._report_sentry("error", exception=exc)
+            raise
+        if not 200 <= response.status_code < 300:
+            self._report_sentry("error", response=response)
+        else:
+            self._report_sentry("success", response=response)
         return response
 
     def get(self, path=None, params=None, **kwargs):
@@ -315,6 +337,7 @@ class ServiceClientFactory(models.Model):
     endpoint_id = fields.Many2one("service.endpoint")
     credential_id = fields.Many2one("service.credential")
     active_log = fields.Boolean()
+    sentry_opt_in = fields.Boolean(string="Report to Sentry", help="Include this client when Sentry mode is Selected.")
     each_record = fields.Boolean(
         string="Each Record",
         default=False,
@@ -465,7 +488,9 @@ class ServiceClientFactory(models.Model):
             endpoint = self._get_endpoint(service_code)
             credential = credential or endpoint.credential_id
 
-        return ServiceClient(self.env, endpoint, credential, path=path, method=method)
+        client = ServiceClient(self.env, endpoint, credential, path=path, method=method)
+        client.sentry_opt_in = bool(self and self.sentry_opt_in)
+        return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)

@@ -29,16 +29,24 @@ class ServiceClientLog(models.Model):
         return self
 
     def send(self):
+        client = None
+        response = None
         try:
             client = self.client_id.get_service_client(self.endpoint_id, self.credential_id)
             request_context = json.loads(self.request_context)
             request_context["headers"] = self.endpoint_id.request_headers_default(request_context.get("headers"))
             request_context = client.provider.authenticate(request_context, self.endpoint_id.audience)
             response = requests.request(**request_context)
+            if not 200 <= response.status_code < 300:
+                client._report_sentry("error", response=response)
+            else:
+                client._report_sentry("success", response=response)
             response.raise_for_status()
             state = 'done'
             response_text = response.text
         except Exception as e:
+            if client and response is None:
+                client._report_sentry("error", exception=e)
             response_text = self.format_error(e)
             state = 'error'
         self.write({
