@@ -16,8 +16,6 @@ from odoo.exceptions import ValidationError
 from odoo.tools import config
 from odoo.fields import Datetime, Date
 from odoo.tools.safe_eval import safe_eval, test_python_expr
-from ..services.sentry import capture_service_event
-from ..services.request_errors import request_exception_text
 
 _logger = logging.getLogger(__name__)
 
@@ -131,35 +129,18 @@ class ServiceClientSend:
             request_context = self.service_client.prepare_request_context(**request_context)
             response = requests.request(**request_context)
             response.raise_for_status()
-            response_text = response.text
-            state = 'done'
-        except requests.RequestException as e:
-            error = e
-            _logger.error("Failed to send request (exception type: %s)", type(e).__name__)
-            response_text = request_exception_text(e)
-            active_log = True
-            state = 'error'
-        except Exception as e:
-            error = e
-            active_log = True
-            state = 'error'
-            response_text = response.text if response is not None else traceback.format_exc()
-            _logger.exception("error dispatch_send (exception type: %s)", type(e).__name__)
+            if active_log:
+                self.env["service.client.log"].create_error(
+                    'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
+                    request_context=request_context, response_text=response.text
+                )
 
-        if active_log:
-            log = self.env["service.client.log"].sudo().create_log(
-                state, client_id=self.client_id, endpoint_id=self.endpoint_id,
-                credential_id=self.credential_id, request_context=request_context,
-                response_text=response_text,
+        except Exception as e:
+            _logger.exception("error dispatch_send %s", response.text)
+            self.env["service.client.log"].create_error(
+                e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
+                request_context=request_context
             )
-            log_id = log.id
-        capture_service_event(
-            self.env, 'service.client.log', log_id if active_log else None, state,
-            endpoint_id=self.endpoint_id.id if self.endpoint_id else None,
-            client_id=self.client_id,
-            error_type=type(error).__name__ if error else None,
-        )
-        return log if active_log else None
 
 class ServiceClient:
 
@@ -201,23 +182,9 @@ class ServiceClient:
         return request_context
 
     def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False):
-        try:
-            request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
-            response = requests.request(**request_context)
-            state = 'error' if response.status_code >= 300 else 'done'
-            capture_service_event(
-                self.env, 'service.client', None, state,
-                endpoint_id=self.endpoint.id if self.endpoint else None,
-                client_id=self.client_id,
-            )
-            return response
-        except Exception as error:
-            capture_service_event(
-                self.env, 'service.client', None, 'error',
-                endpoint_id=self.endpoint.id if self.endpoint else None,
-                client_id=self.client_id, error_type=type(error).__name__,
-            )
-            raise
+        request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
+        response = requests.request(**request_context)
+        return response
 
     def get(self, path=None, params=None, **kwargs):
         return self.call(method="GET", path=path, params=params, **kwargs)
@@ -348,10 +315,6 @@ class ServiceClientFactory(models.Model):
     endpoint_id = fields.Many2one("service.endpoint")
     credential_id = fields.Many2one("service.credential")
     active_log = fields.Boolean()
-    sentry_enabled = fields.Boolean(
-        string='Report errors to Sentry',
-        help='Opt this client into error-only reporting when global mode is Selected.'
-    )
     each_record = fields.Boolean(
         string="Each Record",
         default=False,
@@ -502,8 +465,7 @@ class ServiceClientFactory(models.Model):
             endpoint = self._get_endpoint(service_code)
             credential = credential or endpoint.credential_id
 
-        return ServiceClient(self.env, endpoint, credential, path=path, method=method,
-                             client_id=self if self else None)
+        return ServiceClient(self.env, endpoint, credential, path=path, method=method)
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)

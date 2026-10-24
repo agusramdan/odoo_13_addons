@@ -15,7 +15,6 @@
                                 <field name="name" />
                                 <field name="model_id" />
                                 <field name="each_record" />
-                                <field name="sentry_enabled" />
                             </group>
                             <group>
                                 <field name="endpoint_id" />

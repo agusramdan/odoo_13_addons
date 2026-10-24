@@ -5,4 +5,3 @@ from . import service_endpoint
 from . import service_client
 from . import service_client_log
 from . import actions_server
-from . import res_config_settings

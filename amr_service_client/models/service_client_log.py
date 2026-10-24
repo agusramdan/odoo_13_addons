@@ -7,8 +7,6 @@ import logging
 import traceback
 
 from odoo import api, fields, models
-from ..services.sentry import capture_service_event
-from ..services.request_errors import request_exception_text
 
 _logger = logging.getLogger(__name__)
 
@@ -31,8 +29,6 @@ class ServiceClientLog(models.Model):
         return self
 
     def send(self):
-        response_text = None
-        error = None
         try:
             client = self.client_id.get_service_client(self.endpoint_id, self.credential_id)
             request_context = json.loads(self.request_context)
@@ -42,26 +38,13 @@ class ServiceClientLog(models.Model):
             response.raise_for_status()
             state = 'done'
             response_text = response.text
-        except requests.RequestException as e:
-            error = e
-            _logger.error("Failed to resend request (exception type: %s)", type(e).__name__)
-            response_text = request_exception_text(e)
-            state = 'error'
         except Exception as e:
-            error = e
             response_text = self.format_error(e)
             state = 'error'
-
         self.write({
             "state": state,
             "response": self.sanitize_sensitive_data(response_text)
         })
-        capture_service_event(
-            self.env, 'service.client.log', self.id, state,
-            endpoint_id=self.endpoint_id.id if self.endpoint_id else None,
-            client_id=self.client_id,
-            error_type=type(error).__name__ if error else None,
-        )
         return self
 
     @api.model
