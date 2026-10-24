@@ -382,6 +382,9 @@ class ResourceHelper(models.AbstractModel):
         secret = self.env['ir.config_parameter'].sudo().get_param(profile.introspection_credential_ref)
         authorization = _introspection_basic_header(profile.introspection_auth_client_id, secret)
         result = fetch_json(endpoint, data={'token': token}, headers={'Authorization': authorization})
+        if not jwt_shaped and isinstance(result, dict) and 'iss' not in result and not getattr(
+                profile, 'allow_introspection_iss_absent', False):
+            raise Unauthorized()
         if jwt_shaped:
             if not isinstance(result, dict) or result.get('active') is not True:
                 raise Unauthorized()
