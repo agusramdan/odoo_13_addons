@@ -162,6 +162,15 @@ class TestResourceHelper(ResourceCase):
             'token_endpoint': self.profile.token_endpoint or None,
             'introspection_endpoint': None})
 
+    def test_manual_jwks_config_does_not_require_discovery_unavailable_declaration(self):
+        self.profile.write({'token_profile': 'jwt', 'metadata_mode': 'manual',
+                            'verification_source': 'jwks', 'introspection_source': 'none',
+                            'local_key_ref': False, 'jwks_uri': 'https://keys.invalid/jwks'})
+        self.assertEqual(self.helper.get_oidc_config(self.profile.issuer), {
+            'issuer': self.profile.issuer, 'jwks_uri': self.profile.jwks_uri,
+            'token_endpoint': self.profile.token_endpoint or None,
+            'introspection_endpoint': None})
+
     def test_ut05_introspection_and_hs(self):
         with patch.object(helper_module, 'fetch_json') as fetch, patch.object(jwt, 'decode') as decode:
             for operation in (
