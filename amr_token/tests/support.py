@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ADDON = ROOT / "amr_token"
+OIDC_ADDON = ROOT / "amr_oidc"
 
 
 class FieldSpec:
@@ -162,8 +163,8 @@ def odoo_stubs():
                 sys.modules[name] = old
 
 
-def _load_candidate(relative_path, module_name):
-    path = ADDON / relative_path
+def _load_candidate(relative_path, module_name, addon=ADDON):
+    path = addon / relative_path
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot create candidate module spec for {relative_path}")
@@ -178,7 +179,7 @@ def load_helper_module():
 
 
 def load_public_key_model():
-    return _load_candidate("models/public_key.py", "_amr_token_candidate_public_key")
+    return _load_candidate("models/public_key.py", "_amr_oidc_candidate_public_key", addon=OIDC_ADDON)
 
 
 def load_settings_model():

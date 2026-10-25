@@ -2,14 +2,14 @@
 import unittest
 
 if __package__:
-    from .support import ADDON, load_public_key_model
+    from .support import ADDON, OIDC_ADDON, load_public_key_model
 else:
-    from support import ADDON, load_public_key_model
+    from support import ADDON, OIDC_ADDON, load_public_key_model
 
 
 class TestPublicKeyFieldContract(unittest.TestCase):
     def test_model_declares_source_field_contract(self):
-        model_path = ADDON / "models" / "public_key.py"
+        model_path = OIDC_ADDON / "models" / "public_key.py"
         self.assertTrue(model_path.is_file(), "candidate public-key model is missing")
         model = load_public_key_model().PublicKey
 

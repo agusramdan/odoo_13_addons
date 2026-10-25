@@ -1052,6 +1052,7 @@ class AmrResourceBinding(models.Model):
 class AmrResourceUserMapping(RegistryAccess):
     _name = 'oidc.issuer.user.mapping'
     _description = 'Issuer User Claim Mapping'
+    _auto = True
     _rec_name = 'jwt_key'
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
@@ -1121,6 +1122,7 @@ class OidcAlgorithm(models.Model):
 class OidcIssuerAlgorithmPolicy(RegistryAccess):
     _name = 'oidc.issuer.algorithm.policy'
     _description = 'Issuer Enabled OIDC Algorithm Policy'
+    _auto = True
     _rec_name = 'algorithm_id'
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)

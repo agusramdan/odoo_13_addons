@@ -32,35 +32,6 @@ def get_algorith_config():
     }
 
 
-class ResourceAccessToken(models.AbstractModel):
-    _inherit = 'amr.resource.helper'
-
-    @api.model
-    def introspect_token(self, token, **kw):
-        if self.is_local_token(token):
-            _logger.info("introspect_token local token")
-            return self.env['amr.token.helper'].validate(token)
-        _logger.info("Remote validate token")
-        return super().introspect_token(token, **kw)
-
-    def validate(self, token):
-        if self.is_local_token(token):
-            _logger.info("local validate token")
-            return self.env['amr.token.helper'].validate(token)
-        _logger.info("Remote validate token")
-        return super().validate(token)
-
-    def encode(self, **kw):
-        return self.env['amr.token.helper'].encode(**kw)
-
-    def decode(self, token, **kw):
-        if self.is_local_token(token):
-            _logger.info("local validate token")
-            return self.env['amr.token.helper'].decode(token, **kw)
-        _logger.info("Remote validate token")
-        return super().decode(token, **kw)
-
-
 class TokenHelper(models.AbstractModel):
     _name = 'amr.token.helper'
     _description = 'Token Helper call from Controller'

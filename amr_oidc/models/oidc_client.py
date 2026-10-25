@@ -150,15 +150,15 @@ class OidcClient(models.Model):
             # sudo: preserve source audience lookup; access review deferred.
             client = self.sudo().search([('client_id', '=', payload.get('aud'))], limit=1)
         audience = client.client_id
-        return self.env['amr.token.helper'].validate(token, audience=audience)
+        return self.env['amr.oidc.helper'].validate(token, audience=audience)
 
     def validate_refresh_token(self, token):
         return self.env['oidc.refresh.token'].validate_token(token, self.client_id)
 
     def export_service_account(self, algorithm):
         self.ensure_one()
-        key_pair = self.env['amr.token.helper'].generate_key(algorithm)
-        result = self.env['amr.token.helper']._service_account_endpoint_defaults()
+        key_pair = self.env['amr.oidc.helper'].generate_key(algorithm)
+        result = self.env['amr.oidc.helper']._service_account_endpoint_defaults()
         # "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         # "token_uri": "https://oauth2.googleapis.com/token",
         # "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",

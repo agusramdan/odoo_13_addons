@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree
 
+from odoo import http as odoo_http
 from odoo.exceptions import AccessError, UserError, ValidationError
 from psycopg2 import IntegrityError
 from werkzeug.exceptions import Unauthorized
@@ -200,10 +201,9 @@ class TestResourceContracts(ResourceCase):
 
     def test_ut08_context(self):
         from odoo.addons.amr_resource.models.helper import _VerifiedClaims
-        from ..models import res_users as users_module
         self.profile.binding_ids = [(0, 0, {'sub': 'subject-a', 'user_id': self.admin.id})]
         payload = _VerifiedClaims(dict(iss=self.profile.issuer, sub='subject-a'),
-                                  self.env.company.id, self.admin.id)
+                                  self.env.company.id, self.admin.id, self.profile.policy_revision)
         user = self.admin.with_user(self.admin)
         with patch.object(type(self.helper), 'get_bearer_token', return_value=self.token) as bearer, \
                 patch.object(type(self.helper), 'validate', return_value=payload) as validate:
@@ -228,8 +228,7 @@ class TestResourceContracts(ResourceCase):
                 patch.object(type(self.helper), 'validate', side_effect=Unauthorized()):
             with self.assertRaises(Unauthorized):
                 user.with_access_token_context()
-        with patch.object(users_module, 'request', SimpleNamespace(env=self.helper.env)), \
-                patch.object(type(self.env['ir.http']), 'get_jwt_payload', return_value=payload), \
+        with patch.object(type(self.env['ir.http']), 'get_jwt_payload', return_value=payload), \
                 patch.object(type(self.helper), 'validate') as validate:
             self.assertIs(user.with_access_token_context(validate=False).env.context[
                 '__access_token_context'], payload)
@@ -276,8 +275,8 @@ class TestResourceContracts(ResourceCase):
 
         env = Env()
         env.user = user
-        request = SimpleNamespace(env=env)
-        with patch.object(main, 'request', request):
+        request = SimpleNamespace(env=env, endpoint=SimpleNamespace(routing={}))
+        with patch.object(main, 'request', request), patch.object(odoo_http, 'request', request):
             for kind in ('access_token', 'auto_login'):
                 response = controller.access_url(url=url, type=kind)
                 self.assertEqual(response.status_code, 200)
@@ -311,7 +310,9 @@ class TestResourceContracts(ResourceCase):
             with self.assertRaises(AttributeError):
                 controller.access_url(res_model='synthetic.model', res_id=1, type_url='public')
             with patch.object(main, 'redirect', return_value='redirect-result') as redirect:
-                self.assertEqual(controller.redirect_url(url), 'redirect-result')
+                response = controller.redirect_url(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_data(as_text=True), 'redirect-result')
                 redirect.assert_called_once_with(url)
             self.assertEqual(controller.connection_test().status_code, 200)
             env['synthetic.model'] = object()
@@ -325,11 +326,12 @@ class TestResourceContracts(ResourceCase):
                 call.assert_not_called()
         with self.assertRaises(Unauthorized):
             controller.handle_exception(Unauthorized())
-        self.assertEqual(controller.handle_exception(ValueError('synthetic')).status_code, 500)
-        custom = exceptions.handle_exception(exceptions.APIException('synthetic', 'fixture', 409))
-        self.assertEqual(custom.status_code, 409)
-        self.assertEqual(json.loads(custom.get_data(as_text=True))['error'], 'synthetic')
-        self.assertEqual(exceptions.handle_exception(ValueError('synthetic')).status_code, 500)
+        with patch.object(odoo_http, 'request', request):
+            self.assertEqual(controller.handle_exception(ValueError('synthetic')).status_code, 500)
+            custom = exceptions.handle_exception(exceptions.APIException('synthetic', 'fixture', 409))
+            self.assertEqual(custom.status_code, 409)
+            self.assertEqual(json.loads(custom.get_data(as_text=True))['error'], 'synthetic')
+            self.assertEqual(exceptions.handle_exception(ValueError('synthetic')).status_code, 500)
 
     def test_ut10_wizard_and_seed(self):
         template = self.synthetic_user('template', [self.env.ref('base.group_user'),

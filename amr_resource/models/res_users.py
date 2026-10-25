@@ -55,13 +55,13 @@ class ResUsers(models.Model):
         if not self.is_user_allow_create_token():
             raise UserError('User not allowed to create access token')
 
-        raise NotImplemented
+        raise UserError('Access token generation is not supported by amr_resource')
 
     def create_access_token(self, **kw):
         if not self.is_user_allow_create_token():
             raise UserError('User not allowed to create access token')
 
-        raise NotImplemented
+        raise UserError('Access token generation is not supported by amr_resource')
 
     @api.model
     def add_url_access_token(self, url=None, url_type='access_token', **kw):

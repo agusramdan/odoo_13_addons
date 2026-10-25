@@ -15,9 +15,6 @@
     'data': [
         'security/ir.model.access.csv',
 
-        'views/public_key_views.xml',
-        'views/menuitem.xml',
         'views/res_config_settings_views.xml',
     ],
-    'demo': ['demo/public_key_demo.xml'],
 }

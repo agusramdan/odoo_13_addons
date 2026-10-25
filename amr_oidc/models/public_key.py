@@ -139,6 +139,6 @@ class PublicKey(models.Model):
             raise
 
     def action_generate_key(self):
-        data = self.env['amr.token.helper'].generate_key(self.algorithm)
+        data = self.env['amr.oidc.helper'].generate_key(self.algorithm)
         data.pop('source', None)
         self.write(data)

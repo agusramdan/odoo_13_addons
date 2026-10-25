@@ -8,14 +8,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 if __package__:
-    from .support import ADDON, load_public_key_model
+    from .support import ADDON, OIDC_ADDON, load_public_key_model
 else:
-    from support import ADDON, load_public_key_model
+    from support import ADDON, OIDC_ADDON, load_public_key_model
 
 
 class TestDemoContract(unittest.TestCase):
     def test_demo_is_valid_inactive_public_only_and_excluded_by_source_filter(self):
-        path = ADDON / "demo/public_key_demo.xml"
+        path = OIDC_ADDON / "demo/public_key_demo.xml"
         self.assertTrue(path.is_file(), "missing synthetic public-only demo fixture")
         root = ET.parse(path).getroot()
         self.assertEqual(root.tag, "odoo")

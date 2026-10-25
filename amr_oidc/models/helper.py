@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 _logger = logging.getLogger(__name__)
 
 class TokenHelper(models.AbstractModel):
-    _inherit = 'amr.token.helper'
+    _inherit = 'amr.oidc.helper'
+
+    @api.model
+    def decode(self, token, **kw):
+        return self.env['amr.resource.helper'].decode(token, **kw)
 
     # helper will call from Controller
     @api.model

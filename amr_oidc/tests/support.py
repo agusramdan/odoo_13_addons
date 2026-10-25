@@ -46,6 +46,7 @@ def _route(paths, **options):
 def load(relative, parent_helper=None):
     """Load only one leaf model module with inert fields and no external libraries."""
     odoo = ModuleType('odoo')
+    setattr(odoo, '_', lambda value: value)
     setattr(odoo, 'api', SimpleNamespace(model=lambda method: method))
     setattr(odoo, 'fields', SimpleNamespace(**{name: Field for name in (
         'Boolean', 'Char', 'Text', 'Many2one', 'One2many', 'Datetime',

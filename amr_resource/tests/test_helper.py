@@ -35,7 +35,8 @@ class ResourceCase(SavepointCase):
         self.profile = self.registry.create({
             'issuer': 'https://issuer.invalid', 'client_id': 'client-a',
             'token_profile': 'jwt', 'jwks_uri': 'https://keys.invalid/jwks',
-            'token_endpoint': 'https://issuer.invalid/token', 'allow_missing_azp': True,
+            'metadata_mode': 'manual', 'verification_source': 'jwks',
+            'introspection_source': 'none', 'token_endpoint': 'https://issuer.invalid/token', 'allow_missing_azp': True,
             'resolver_mode': 'get_user_match',
             'audience_ids': [(0, 0, {'value': 'resource-a'})],
         })
@@ -52,6 +53,12 @@ class ResourceCase(SavepointCase):
 
 
 class TestResourceHelper(ResourceCase):
+    def test_issuer_policy_child_models_have_queryable_tables(self):
+        mappings = self.env['oidc.issuer.user.mapping']
+        policies = self.env['oidc.issuer.algorithm.policy']
+        self.assertEqual(mappings.search([], limit=1).ids, [])
+        self.assertEqual(policies.search([], limit=1).ids, [])
+
     def test_ut01_resolution_and_compute(self):
         params = self.env['ir.config_parameter'].sudo()
         params.set_param('web.base.url', 'http://127.0.0.1:19000')
@@ -105,11 +112,10 @@ class TestResourceHelper(ResourceCase):
             self.assertEqual(self.helper.get_bearer_token(), 'header-fixture')
             for value in ('', 'bearer fixture', 'Bearer  fixture', 'Bearer', 'Basic fixture'):
                 http.headers['Authorization'] = value
-                if value:
-                    with self.assertRaises(Unauthorized):
-                        self.helper.get_bearer_token()
-                else:
-                    self.assertIsNone(self.helper.get_bearer_token())
+                with self.assertRaises(Unauthorized):
+                    self.helper.get_bearer_token()
+            del http.headers['Authorization']
+            self.assertIsNone(self.helper.get_bearer_token())
 
     def test_ut04_discovery_and_errors(self):
         with patch.object(helper_module, 'fetch_json') as fetch:
@@ -138,46 +144,14 @@ class TestResourceHelper(ResourceCase):
                 with self.assertRaises(Unauthorized):
                     self.helper.get_jwks_data(self.profile.issuer)
 
-    def test_ut04_issuance_and_wrappers(self):
-        with patch.object(helper_module, 'fetch_json', return_value={
-                'access_token': 'synthetic-result'}) as fetch:
-            for aliases in (
-                    {'iss': self.profile.issuer, 'issuer': 'unknown', 'issuer_url': 'unknown'},
-                    {'issuer': self.profile.issuer, 'issuer_url': 'unknown'},
-                    {'issuer_url': self.profile.issuer}, {}):
-                for credentials in ({}, {'client_id': self.profile.client_id}):
-                    fetch.reset_mock()
-                    self.assertEqual(self.helper.generate_token(
-                        grant_type='synthetic', **dict(aliases, **credentials)),
-                        {'access_token': 'synthetic-result'})
-                    fetch.assert_called_once_with(
-                        self.profile.token_endpoint, data={'grant_type': 'synthetic'}, headers={})
-            self.assertEqual(self.helper.encode(iss=self.profile.issuer), 'synthetic-result')
-            for credentials in ({'client_secret': 'synthetic-rejected'},
-                                {'client_id': self.profile.client_id,
-                                 'client_secret': 'synthetic-rejected'},
-                                {'client_id': 'wrong-client'}, {'iss': 'unknown'}):
-                fetch.reset_mock()
-                with self.assertRaises(Unauthorized):
-                    self.helper.generate_token(**credentials)
-                fetch.assert_not_called()
-            for error in (HTTPError(), ValueError()):
-                fetch.side_effect = error
-                with self.assertRaises(Unauthorized):
-                    self.helper.generate_token(iss=self.profile.issuer)
-            fetch.side_effect = None
-            for invalid in (None, [], {}, {'access_token': ''}):
-                fetch.return_value = invalid
-                with self.assertRaises(Unauthorized):
-                    self.helper.generate_token(iss=self.profile.issuer)
-        with patch.object(type(self.helper), 'validate', return_value={'synthetic': True}) as validate:
+    def test_resource_helper_does_not_acquire_provider_tokens(self):
+        helper_type = type(self.helper)
+        self.assertTrue(callable(self.helper.decode))
+        self.assertFalse(hasattr(helper_type, 'encode'))
+        self.assertFalse(hasattr(helper_type, 'generate_token'))
+        with patch.object(helper_type, 'validate', return_value={'synthetic': True}) as validate:
             self.assertEqual(self.helper.decode(self.token, unused=True), {'synthetic': True})
             validate.assert_called_once_with(self.token)
-        with patch.object(type(self.helper), '_profile', return_value=SimpleNamespace(
-                token_endpoint=False)), patch.object(helper_module, 'fetch_json') as fetch:
-            with self.assertRaises(Unauthorized):
-                self.helper.generate_token()
-            fetch.assert_not_called()
 
     def test_manual_jwks_config_does_not_require_discovery_unavailable_declaration(self):
         self.profile.write({'token_profile': 'jwt', 'metadata_mode': 'manual',

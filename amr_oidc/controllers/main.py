@@ -43,5 +43,5 @@ class ControllerOIDC(ControllerToken):
 
     @route(['/oidc/profile', '/oidc/userinfo'], type='http', auth='none', methods=['GET'], csrf=False)
     def api_oidc_profile(self, **kwargs):
-        payload = request.env['amr.token.helper'].oidc_profile(**kwargs)
+        payload = request.env['amr.oidc.helper'].oidc_profile(**kwargs)
         return self.make_response(**payload)

@@ -563,6 +563,12 @@ class RegistryUnitTests(unittest.TestCase):
                 invalid_input.action_restore_policy_snapshot(snapshot_id, revision, evidence)
             self.assertFalse(hasattr(invalid_input, 'written_values'))
 
+    def test_algorithm_seed_matches_code_owned_catalog(self):
+        seed = ROOT / 'data' / 'oidc_algorithms.xml'
+        records = ElementTree.parse(str(seed)).findall('.//record[@model="oidc.algorithm"]')
+        seeded_names = {record.findtext('field[@name="name"]') for record in records}
+        self.assertEqual(seeded_names, set(registry._ALGORITHM_CATALOG))
+
     def test_persistent_algorithm_catalog_and_issuer_policy_models_are_declared(self):
         catalog = registry.OidcAlgorithm
         policy = registry.OidcIssuerAlgorithmPolicy
