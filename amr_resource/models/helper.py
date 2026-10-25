@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from odoo import api, models, SUPERUSER_ID
 from odoo.http import request
 from werkzeug.exceptions import Unauthorized
-from ..transport import fetch_json
+from ..transport import fetch_json, preflight_endpoint
 
 AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
 _PROVENANCE = object()
@@ -26,6 +26,11 @@ def _introspection_basic_header(client_id, secret):
         raise Unauthorized()
     credentials = '%s:%s' % (quote_plus(client_id, safe=''), quote_plus(secret, safe=''))
     return 'Basic ' + base64.b64encode(credentials.encode('ascii')).decode('ascii')
+
+
+def _introspection_client_id(value):
+    return (type(value) is str and 1 <= len(value) <= 1024 and bool(value.strip())
+            and not any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value))
 
 
 def _issuer_parts(issuer):
@@ -102,13 +107,22 @@ def _parse_rfc8414_metadata(metadata, issuer):
     _issuer_parts(issuer)
     if 'jwks_uri' in metadata:
         raise Unauthorized()
-    response_types = _metadata_string_list(metadata, 'response_types_supported')
+    _metadata_string_list(metadata, 'response_types_supported')
+    grants = metadata.get('grant_types_supported', ['authorization_code', 'implicit'])
+    if (not isinstance(grants, list) or not grants
+            or any(not isinstance(item, str) or not item for item in grants)):
+        raise Unauthorized()
+    authorization_endpoint_optional_grants = (
+        'client_credentials', 'password', 'refresh_token',
+        'urn:ietf:params:oauth:grant-type:device_code')
     if 'authorization_endpoint' in metadata:
         _metadata_endpoint(metadata['authorization_endpoint'])
-    elif any('code' in item.split() or 'token' in item.split() for item in response_types):
+    elif any(grant not in authorization_endpoint_optional_grants for grant in grants):
         raise Unauthorized()
     if 'token_endpoint' in metadata:
         _metadata_endpoint(metadata['token_endpoint'])
+    elif any(grant != 'implicit' for grant in grants):
+        raise Unauthorized()
     if 'introspection_endpoint' not in metadata:
         raise Unauthorized()
     _metadata_endpoint(metadata['introspection_endpoint'])
@@ -117,6 +131,11 @@ def _parse_rfc8414_metadata(metadata, issuer):
         if 'client_secret_basic' not in methods:
             raise Unauthorized()
     return metadata
+
+
+def _require_policy_revision(profile, revision):
+    if not getattr(profile, 'active', False) or getattr(profile, 'policy_revision', 0) != revision:
+        raise Unauthorized()
 
 
 def _sanitized(method):
@@ -348,7 +367,7 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         return claims
 
-    def _mvp_introspect(self, token, profile, jwt_shaped=False):
+    def _mvp_introspect(self, token, profile, jwt_shaped=False, policy_revision=None):
         if (not getattr(profile, 'mvp_enabled', False)
                 or getattr(profile, 'verification_source', None) != 'none'
                 or getattr(profile, 'metadata_mode', None) != 'manual'
@@ -358,7 +377,10 @@ class ResourceHelper(models.AbstractModel):
                 or getattr(profile, 'introspection_source', None) not in ('manual', 'rfc8414')
                 or (jwt_shaped and not getattr(profile, 'allow_jwt_introspection', False))):
             raise Unauthorized()
+        policy_revision = (getattr(profile, 'policy_revision', 0)
+                           if policy_revision is None else policy_revision)
         config, auth_methods = self._get_oidc_config(profile.issuer)
+        _require_policy_revision(profile, policy_revision)
         endpoint = config['introspection_endpoint']
         if (getattr(profile, 'introspection_source', None) == 'rfc8414'
                 and (auth_methods is None
@@ -368,20 +390,31 @@ class ResourceHelper(models.AbstractModel):
             raise Unauthorized()
         if (not endpoint or endpoint != getattr(profile, 'introspection_credential_endpoint', None)
                 or getattr(profile, 'introspection_auth_method', None) != 'client_secret_basic'
-                or not _string(getattr(profile, 'introspection_auth_client_id', None))
+                or not _introspection_client_id(getattr(profile, 'introspection_auth_client_id', None))
                 or not _string(getattr(profile, 'introspection_credential_ref', None))
                 or (getattr(profile, 'introspection_source', None) == 'manual'
                     and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))
                 or (getattr(profile, 'introspection_source', None) == 'rfc8414'
                     and auth_methods is None
+                    and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))
+                or ((getattr(profile, 'credential_ref', None) == getattr(
+                        profile, 'introspection_credential_ref', None)
+                     or getattr(profile, 'client_id', None) == getattr(
+                        profile, 'introspection_auth_client_id', None))
                     and not _string(getattr(profile, 'introspection_basic_contract_ref', None)))):
             raise Unauthorized()
         if getattr(profile, 'introspection_source', None) == 'manual' and not profile.introspection_endpoint:
             raise Unauthorized()
-        # Capability and endpoint are checked before resolving the protected secret.
+        try:
+            preflight = preflight_endpoint(endpoint)
+        except Exception:
+            raise Unauthorized() from None
+        # Resolve and pin the exact safe endpoint before reading its credential.
         secret = self.env['ir.config_parameter'].sudo().get_param(profile.introspection_credential_ref)
         authorization = _introspection_basic_header(profile.introspection_auth_client_id, secret)
-        result = fetch_json(endpoint, data={'token': token}, headers={'Authorization': authorization})
+        result = fetch_json(endpoint, data={'token': token},
+                            headers={'Authorization': authorization}, preflight=preflight)
+        _require_policy_revision(profile, policy_revision)
         if not jwt_shaped and isinstance(result, dict) and 'iss' not in result and not getattr(
                 profile, 'allow_introspection_iss_absent', False):
             raise Unauthorized()
@@ -407,10 +440,11 @@ class ResourceHelper(models.AbstractModel):
         if url is not None or client_secret is not None or kw or not _string(token) or '.' in token:
             raise Unauthorized()
         profile = self._profile(iss, 'opaque')
+        policy_revision = getattr(profile, 'policy_revision', 0)
         if client_id is not None and client_id != profile.client_id:
             raise Unauthorized()
         if getattr(profile, 'mvp_enabled', False):
-            return self._mvp_introspect(token, profile)
+            return self._mvp_introspect(token, profile, policy_revision=policy_revision)
         if not profile.introspection_endpoint:
             raise Unauthorized()
         result = fetch_json(profile.introspection_endpoint, data={'token': token}, headers=self._headers(profile))
@@ -438,6 +472,7 @@ class ResourceHelper(models.AbstractModel):
         if not _string(hint.get('iss')):
             raise Unauthorized()
         profile = self._profile(hint['iss'], 'jwt')
+        policy_revision = getattr(profile, 'policy_revision', 0)
         enabled_algorithms = (profile._verification_algorithms({})
                               if getattr(profile, 'mvp_enabled', False) else frozenset(['RS256']))
         if header.get('alg') not in enabled_algorithms:
@@ -446,13 +481,15 @@ class ResourceHelper(models.AbstractModel):
         if getattr(profile, 'mvp_enabled', False) and getattr(profile, 'verification_source', None) == 'none':
             if not getattr(profile, 'allow_jwt_introspection', False):
                 raise Unauthorized()
-            return self._mvp_introspect(token, profile, jwt_shaped=True)
+            return self._mvp_introspect(token, profile, jwt_shaped=True,
+                                        policy_revision=policy_revision)
         if profile.local_key_ref:
             key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
         else:
             if not _string(header.get('kid')):
                 raise Unauthorized()
             keys = self.get_jwks_data(profile.issuer)['keys']
+            _require_policy_revision(profile, policy_revision)
             matches = [key for key in keys if isinstance(key, dict) and key.get('kid') == header['kid']]
             if len(matches) != 1:
                 raise Unauthorized()
@@ -476,8 +513,8 @@ class ResourceHelper(models.AbstractModel):
         claims = self._claims(claims, profile)
         claims.setdefault('kid', header.get('kid'))
         claims.setdefault('alg', 'RS256')
-        return _VerifiedClaims(claims, self.env.company.id, self.env.uid,
-                               getattr(profile, 'policy_revision', 0))
+        _require_policy_revision(profile, policy_revision)
+        return _VerifiedClaims(claims, self.env.company.id, self.env.uid, policy_revision)
 
     @api.model
     def get_validate_user(self, token):
@@ -524,8 +561,6 @@ class ResourceHelper(models.AbstractModel):
         if not getattr(profile, 'mvp_enabled', False):
             raise Unauthorized()
         rows = profile.user_mapping_ids
-        if len(rows) > 20:
-            raise Unauthorized()
         seen_sequences = set()
         active_rows = []
         for row in rows:
