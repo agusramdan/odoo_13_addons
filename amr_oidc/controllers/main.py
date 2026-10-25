@@ -7,6 +7,11 @@ from odoo.http import request, route
 
 class ControllerOIDC(ControllerToken):
 
+    @route('/.well-known/jwks.json', type='http', auth='public', methods=['GET'], csrf=False)
+    def well_known_jwks(self):
+        payload = request.env['amr.oidc.helper'].oidc_jwks()
+        return self.make_response(**payload)
+
     @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_openid_configuration(self):
         return self.make_response(status=404)
