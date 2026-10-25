@@ -98,6 +98,8 @@ class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
         self.code_revision = 0
         self.policy_revision = 1
         self.active = True
+        self.mvp_enabled = False
+        self.algorithm_policy_ids = []
         self.python_code = False
         self.company_id = self.env.company
         for key, value in values.items():
@@ -203,6 +205,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertFalse(hasattr(snapshot_model, 'created_values'))
 
     def test_snapshot_model_denies_direct_mutation_and_acl_is_read_only(self):
+        self.assertEqual(registry.OidcPolicySnapshot._inherit, 'amr.resource.registry.access')
         row = registry.OidcPolicySnapshot()
         for operation, args in ((row.create, ([{}],)), (row.write, ({'payload': 'forged'},)),
                                 (row.unlink, ())):
@@ -281,11 +284,14 @@ class RegistryUnitTests(unittest.TestCase):
                              policy_revision=12, issuer='https://issuer.example')
         issuer.env = env
         issuer._policy_snapshot_tuple = Mock(return_value=payload)
+        issuer.audience_ids = [SimpleNamespace(id=10, value='old-api')]
         with patch.object(registry._logger, 'info') as audit:
             self.assertTrue(issuer.action_restore_policy_snapshot(88, 12, 'approval-43'))
         self.assertEqual(issuer.written_values['policy_revision'], 13)
         self.assertFalse(issuer.written_values['active'])
         self.assertEqual(issuer.written_values['credential_ref'], 'generation.key')
+        self.assertEqual(issuer.written_values['audience_ids'][0], (1, 10, {'value': 'api'}))
+        self.assertFalse(any(command[0] == 5 for command in issuer.written_values['audience_ids']))
         self.assertEqual(issuer.written_values['user_mapping_ids'][1][2]['jwt_key'], 'sub')
         self.assertNotIn('user_id', issuer.written_values)
         self.assertNotIn('company_id', issuer.written_values)
@@ -458,6 +464,8 @@ class RegistryUnitTests(unittest.TestCase):
         self.check_profile(token_profile='opaque', jwks_uri=False,
                            introspection_endpoint='https://issuer.example/introspect')
         self.check_profile(allow_missing_azp=True, azp=False)
+        self.check_profile(mvp_enabled=True, metadata_mode='oidc_discovery',
+                           verification_source='jwks', jwks_uri=False, introspection_source='none')
 
     def test_profile_rejects_bad_required_configuration(self):
         for values in ({'issuer': 'http://issuer.example'}, {'issuer': 'https://user@issuer.example'},
@@ -629,8 +637,17 @@ class RegistryUnitTests(unittest.TestCase):
             wrong_mode.action_deactivate_mvp('operator_disabled')
 
     def test_explicit_mvp_activation_is_admin_only_validated_and_audited(self):
+        unsupported = IssuerProbe((ADMIN, TRUST), mvp_enabled=False, token_profile='jwt',
+                                  verification_source='jwks')
+        unsupported._check_profile = Mock()
+        with self.assertRaises(ValidationError):
+            unsupported.action_activate_mvp('approved_profile')
+        self.assertFalse(unsupported.mvp_enabled)
+
         admin = IssuerProbe((ADMIN, TRUST), mvp_enabled=False,
-                            verification_source='jwks', policy_revision=7)
+                            verification_source='jwks', policy_revision=7,
+                            algorithm_policy_ids=[SimpleNamespace(
+                                algorithm_id=SimpleNamespace(name='RS256'), enabled=True)])
         admin._check_profile = Mock()
         with patch.object(registry._logger, 'info') as audit:
             admin.action_activate_mvp('approved_profile')
@@ -676,6 +693,14 @@ class RegistryUnitTests(unittest.TestCase):
             candidate.create([{'issuer': 'https://issuer.example'}])
 
     def test_mvp_active_flag_rejects_non_boolean_generic_writes(self):
+        active = IssuerProbe((ADMIN, TRUST), active=True, mvp_enabled=True,
+                             verification_source='jwks', policy_revision=6)
+        for values in ({'active': False}, {'mvp_enabled': False}):
+            with self.subTest(values=values), self.assertRaises(AccessError):
+                active.write(values)
+        self.assertTrue(active.active)
+        self.assertTrue(active.mvp_enabled)
+
         inactive = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
                                verification_source='jwks', policy_revision=6)
         for value in (1, 0, 'true', None):
@@ -928,6 +953,14 @@ class RegistryUnitTests(unittest.TestCase):
         rfc_profile = self.profile(**dict(profile.__dict__, introspection_source='rfc8414',
             introspection_endpoint=False, introspection_basic_contract_ref=False))
         registry.AmrResourceIssuer._check_profile([rfc_profile])
+        for equality in (
+                {'credential_ref': 'same.secret', 'introspection_credential_ref': 'same.secret'},
+                {'client_id': 'auth-client', 'introspection_auth_client_id': 'auth-client'}):
+            invalid = self.profile(**dict(profile.__dict__, **equality,
+                introspection_source='rfc8414', introspection_endpoint=False,
+                introspection_basic_contract_ref=False))
+            with self.subTest(equality=equality), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile([invalid])
         jwt_profile = self.profile(**dict(profile.__dict__, token_profile='jwt',
                                           allow_jwt_introspection=True))
         registry.AmrResourceIssuer._check_profile([jwt_profile])
@@ -938,6 +971,43 @@ class RegistryUnitTests(unittest.TestCase):
             invalid = self.profile(**dict(profile.__dict__, **{field: value}))
             with self.subTest(field=field), self.assertRaises(ValidationError):
                 registry.AmrResourceIssuer._check_profile([invalid])
+
+    def test_introspection_client_id_requires_exact_builtin_string(self):
+        class StringSubclass(str):
+            pass
+
+        for value in ('a', 'a' * 1024, 'auth client+:/%'):
+            profile = self.profile(token_profile='opaque', jwks_uri=False,
+                                   mvp_enabled=True, metadata_mode='manual',
+                                   discovery_unavailable_declared=True,
+                                   discovery_unavailable_evidence_ref='evidence-discovery',
+                                   verification_source='none', introspection_source='manual',
+                                   no_jwks_declaration=True, no_jwks_evidence_ref='evidence-no-jwks',
+                                   introspection_endpoint='https://issuer.example/introspect',
+                                   introspection_credential_endpoint='https://issuer.example/introspect',
+                                   introspection_credential_ref='introspection.secret',
+                                   introspection_auth_client_id=value,
+                                   introspection_auth_method='client_secret_basic',
+                                   introspection_basic_contract_ref='provider-contract')
+            with self.subTest(value_length=len(value)):
+                registry.AmrResourceIssuer._check_profile([profile])
+
+        for value in (StringSubclass('auth-client'), '', ' ' * 3, 'a' * 1025,
+                      'a\x00b', 'a\x7fb', 'a\x80b'):
+            profile = self.profile(token_profile='opaque', jwks_uri=False,
+                                   mvp_enabled=True, metadata_mode='manual',
+                                   discovery_unavailable_declared=True,
+                                   discovery_unavailable_evidence_ref='evidence-discovery',
+                                   verification_source='none', introspection_source='manual',
+                                   no_jwks_declaration=True, no_jwks_evidence_ref='evidence-no-jwks',
+                                   introspection_endpoint='https://issuer.example/introspect',
+                                   introspection_credential_endpoint='https://issuer.example/introspect',
+                                   introspection_credential_ref='introspection.secret',
+                                   introspection_auth_client_id=value,
+                                   introspection_auth_method='client_secret_basic',
+                                   introspection_basic_contract_ref='provider-contract')
+            with self.subTest(value=repr(value)), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile([profile])
 
     def test_declarations_constraints_no_default_mode_no_execution(self):
         self.assertEqual(registry.AmrResourceIssuer._sql_constraints[0][1], 'unique(issuer)')
