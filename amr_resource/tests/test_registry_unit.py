@@ -54,6 +54,48 @@ class BoundaryModel:
         return [(1, 'fixture')]
 
 
+class FakeIssuerRecordset(list):
+    def exists(self):
+        return self
+
+    def check_access_rights(self, operation, raise_exception=True):
+        return True
+
+    def check_access_rule(self, operation):
+        return None
+
+    def _lock_policy_state(self):
+        for issuer in self:
+            issuer._lock_policy_state()
+
+
+class FakeIssuerModel:
+    def __init__(self, issuers):
+        self.issuers = {issuer.id: issuer for issuer in issuers}
+
+    def browse(self, ids):
+        if not isinstance(ids, (list, tuple, set)):
+            ids = [ids] if ids else []
+        return FakeIssuerRecordset(self.issuers[identifier]
+                                   for identifier in ids if identifier in self.issuers)
+
+
+class FakeChildEnvironment:
+    def __init__(self, issuers, context=None):
+        self.uid = 27
+        self.su = True
+        self.company = SimpleNamespace(id=7)
+        self.user = SimpleNamespace(share=False, has_group=lambda group: True)
+        self.context = context if context is not None else {}
+        self._issuer_model = FakeIssuerModel(issuers)
+        self.cr = SimpleNamespace(execute=lambda *args: None)
+
+    def __getitem__(self, model):
+        if model != 'oidc.issuer.register':
+            raise KeyError(model)
+        return self._issuer_model
+
+
 class FieldFactory:
     def __getattr__(self, name):
         return lambda *args, **kwargs: SimpleNamespace(args=args, **kwargs)
@@ -89,7 +131,25 @@ def load_registry():
 registry = load_registry()
 
 
+class RevisionCursor:
+    """Database-boundary stub: SQL increment changes the simulated row value."""
+    def __init__(self, record):
+        self.record = record
+        self.sql = None
+        self.params = None
+
+    def execute(self, sql, params):
+        self.sql, self.params = sql, params
+        if 'policy_revision = policy_revision + 1' in sql:
+            self.record.policy_revision += 1
+
+    def fetchone(self):
+        return (self.record.policy_revision,)
+
+
 class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
+    _table = 'oidc_issuer_register'
+
     def __init__(self, groups=(), share=False, su=False, **values):
         self.env = SimpleNamespace(user=SimpleNamespace(share=share, has_group=lambda name: name in groups),
                                    su=su, uid=27, company=SimpleNamespace(id=7), context={})
@@ -104,9 +164,13 @@ class IssuerProbe(registry.AmrResourceIssuer, registry.RegistryAccess):
         self.company_id = self.env.company
         for key, value in values.items():
             setattr(self, key, value)
+        self.env.cr = RevisionCursor(self)
 
     def ensure_one(self):
         return self
+
+    def invalidate_cache(self, fnames=None, ids=None):
+        self.cache_invalidated = (fnames, ids)
 
     def with_context(self, **values):
         self.env.context.update(values)
@@ -128,6 +192,7 @@ class ChildProbe(registry.RegistryAccess):
         self.env = IssuerProbe(groups, share, su).env
         self.company_id = self.env.company
         self.ids = [20]
+        self.invalidate_cache = Mock()
 
     def __iter__(self):
         return iter([self])
@@ -139,6 +204,124 @@ CODE = registry.CODE_GROUP
 
 
 class RegistryUnitTests(unittest.TestCase):
+    def test_child_write_rejects_parent_change_observed_after_child_lock(self):
+        parent_a = IssuerProbe((ADMIN, TRUST))
+        parent_b = IssuerProbe((ADMIN, TRUST))
+        parent_a.id, parent_b.id = 2, 9
+        child = ChildProbe((ADMIN, TRUST))
+        child.env = FakeChildEnvironment([parent_a, parent_b])
+        locked = []
+        child._lock_policy_child_rows = lambda: locked.append(True)
+        reads = [FakeIssuerRecordset([parent_a]), FakeIssuerRecordset([parent_b])]
+        child.mapped = lambda name: reads.pop(0)
+        with self.assertRaises(AccessError):
+            child.write({'sub': 'must-not-change'})
+        self.assertTrue(locked)
+        self.assertFalse(hasattr(child, 'written_values'))
+        self.assertEqual((parent_a.policy_revision, parent_b.policy_revision), (1, 1))
+
+    def test_child_and_parent_read_rules_are_rechecked_after_locks_before_mutation(self):
+        events = []
+        parent = IssuerProbe((ADMIN, TRUST))
+        parent._lock_policy_state = lambda: events.append('parent-lock')
+        parent.check_access_rights = lambda operation: events.append('parent-rights')
+        parent.check_access_rule = lambda operation: events.append('parent-rule')
+        child = ChildProbe((ADMIN, TRUST))
+        child.env = FakeChildEnvironment([parent])
+        child.mapped = lambda name: FakeIssuerRecordset([parent])
+        child._lock_policy_child_rows = lambda: events.append('child-lock')
+        child.check_access_rights = lambda operation: events.append('child-rights')
+        child.check_access_rule = lambda operation: events.append('child-rule')
+        original_parent_guard = child._guard_parent_values
+
+        def observed_parent_guard(values):
+            if 'issuer_id' in values:
+                events.append('parent-read-check')
+            return original_parent_guard(values)
+
+        child._guard_parent_values = observed_parent_guard
+        original_write = BoundaryModel.write
+
+        def observed_write(record, values):
+            events.append('mutate')
+            return original_write(record, values)
+
+        with patch.object(BoundaryModel, 'write', observed_write):
+            child.write({'sub': 'checked'})
+        self.assertLess(events.index('child-lock'),
+                        max(i for i, event in enumerate(events) if event == 'child-rights'))
+        self.assertLess(max(i for i, event in enumerate(events) if event == 'child-rule'),
+                        events.index('mutate'))
+        parent_checks = [i for i, event in enumerate(events) if event == 'parent-read-check']
+        self.assertGreaterEqual(len(parent_checks), 2)
+        self.assertLess(parent_checks[0], events.index('parent-lock'))
+        self.assertLess(events.index('parent-lock'), parent_checks[-1])
+        self.assertLess(parent_checks[-1], events.index('mutate'))
+
+    def test_atomic_policy_revision_uses_database_increment_and_refreshes_cache(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = None
+                self.params = None
+            def execute(self, sql, params):
+                self.sql, self.params = sql, params
+            def fetchone(self):
+                return (12,)
+        cursor = Cursor()
+        issuer = IssuerProbe(policy_revision=11)
+        issuer._table = 'oidc_issuer_register'
+        issuer.env.cr = cursor
+        issuer.invalidate_cache = Mock()
+        self.assertEqual(issuer._issue_policy_revision(), 12)
+        self.assertEqual(cursor.sql,
+            'UPDATE oidc_issuer_register SET policy_revision = policy_revision + 1 WHERE id = %s RETURNING policy_revision')
+        self.assertEqual(cursor.params, (19,))
+        issuer.invalidate_cache.assert_called_once_with(fnames=['policy_revision'], ids=[19])
+
+    def test_policy_state_lock_uses_parameterized_sorted_ids_and_invalidates_cache(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+            def execute(self, sql, params):
+                self.calls.append((sql, params))
+        issuer = IssuerProbe((ADMIN, TRUST))
+        issuer.ids = [29, 19, 29]
+        cursor = Cursor()
+        issuer.env.cr = cursor
+        issuer._table = 'untrusted_table_name'
+        issuer.invalidate_cache = Mock()
+        issuer._lock_policy_state()
+        self.assertEqual(cursor.calls, [
+            ('SELECT id FROM oidc_issuer_register WHERE id = %s FOR UPDATE', (19,)),
+            ('SELECT id FROM oidc_issuer_register WHERE id = %s FOR UPDATE', (29,)),
+        ])
+        issuer.invalidate_cache.assert_called_once_with(ids=[19, 29])
+
+    def test_policy_child_lock_uses_code_owned_table_sorted_unique_ids_and_invalidates_issuer_cache(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+            def execute(self, sql, params):
+                self.calls.append((sql, params))
+
+        child = ChildProbe((ADMIN, TRUST))
+        child.ids = [29, 19, 29]
+        child._table = 'untrusted_child_table'
+        cursor = Cursor()
+        child.env.cr = cursor
+        child.invalidate_cache = Mock()
+        child._lock_policy_child_rows()
+        self.assertEqual(cursor.calls, [
+            ('SELECT id FROM oidc_issuer_subject WHERE id IN %s ORDER BY id FOR UPDATE', ((19, 29),)),
+        ])
+        child.invalidate_cache.assert_called_once_with(ids=[19, 29])
+
+    def test_policy_bump_routes_through_atomic_helper(self):
+        issuer = IssuerProbe((ADMIN, TRUST))
+        issuer._issue_policy_revision = Mock(return_value=2)
+        issuer._bump_policy_revision()
+        issuer._issue_policy_revision.assert_called_once_with()
+
     def test_server_owned_rollback_snapshot_model_and_actions_exist(self):
         self.assertTrue(hasattr(registry, 'OidcPolicySnapshot'))
         self.assertEqual(registry.OidcPolicySnapshot._name, 'oidc.issuer.policy.snapshot')
@@ -204,6 +387,13 @@ class RegistryUnitTests(unittest.TestCase):
                 issuer.action_capture_policy_snapshot(evidence)
         self.assertFalse(hasattr(snapshot_model, 'created_values'))
 
+    def test_snapshot_capture_rejects_opaque_policy(self):
+        issuer = IssuerProbe((ADMIN, TRUST), issuer='https://issuer.example')
+        profile = self.profile(token_profile='opaque', jwks_uri=False)
+        issuer._check_profile = lambda: registry.AmrResourceIssuer._check_profile([profile])
+        with self.assertRaises(ValidationError):
+            issuer.action_capture_policy_snapshot('approval-opaque')
+
     def test_snapshot_model_denies_direct_mutation_and_acl_is_read_only(self):
         self.assertEqual(registry.OidcPolicySnapshot._inherit, 'amr.resource.registry.access')
         row = registry.OidcPolicySnapshot()
@@ -226,8 +416,7 @@ class RegistryUnitTests(unittest.TestCase):
             'introspection_endpoint': False, 'client_id': 'client', 'azp': 'client',
             'allow_missing_azp': False, 'credential_ref': 'generation.key',
             'local_key_ref': False, 'resolver_mode': 'mapping', 'mvp_enabled': True,
-            'metadata_mode': 'manual', 'discovery_unavailable_declared': True,
-            'discovery_unavailable_evidence_ref': 'discovery-evidence',
+            'metadata_mode': 'manual',
             'verification_source': 'jwks', 'introspection_source': 'none',
             'no_jwks_declaration': False, 'no_jwks_evidence_ref': False,
             'introspection_credential_ref': False, 'introspection_auth_client_id': False,
@@ -283,11 +472,12 @@ class RegistryUnitTests(unittest.TestCase):
         issuer = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=False,
                              policy_revision=12, issuer='https://issuer.example')
         issuer.env = env
+        issuer.env.cr = RevisionCursor(issuer)
         issuer._policy_snapshot_tuple = Mock(return_value=payload)
         issuer.audience_ids = [SimpleNamespace(id=10, value='old-api')]
         with patch.object(registry._logger, 'info') as audit:
             self.assertTrue(issuer.action_restore_policy_snapshot(88, 12, 'approval-43'))
-        self.assertEqual(issuer.written_values['policy_revision'], 13)
+        self.assertEqual(issuer.policy_revision, 13)
         self.assertFalse(issuer.written_values['active'])
         self.assertEqual(issuer.written_values['credential_ref'], 'generation.key')
         self.assertEqual(issuer.written_values['audience_ids'][0], (1, 10, {'value': 'api'}))
@@ -306,6 +496,10 @@ class RegistryUnitTests(unittest.TestCase):
 
         incomplete = json.dumps({key: value for key, value in payload.items()
                                  if key != 'algorithms'}, sort_keys=True, separators=(',', ':'))
+        legacy_payload = json.loads(encoded)
+        legacy_payload.update(discovery_unavailable_declared=False,
+                              discovery_unavailable_evidence_ref='')
+        legacy_encoded = json.dumps(legacy_payload, sort_keys=True, separators=(',', ':'))
         cases = (
             (False, 12, 11, encoded, digest, 19, False),
             (True, 12, 12, encoded, digest, 19, False),
@@ -314,6 +508,8 @@ class RegistryUnitTests(unittest.TestCase):
             (False, 12, 12, encoded, digest, 19, True),
             (False, 12, 12, incomplete,
              hashlib.sha256(incomplete.encode('utf-8')).hexdigest(), 19, False),
+            (False, 12, 12, legacy_encoded,
+             hashlib.sha256(legacy_encoded.encode('utf-8')).hexdigest(), 19, False),
         )
         for active, current_revision, expected_revision, changed_payload, changed_digest, \
                 issuer_id, invalidated in cases:
@@ -343,11 +539,16 @@ class RegistryUnitTests(unittest.TestCase):
             finally:
                 snapshot_model.exists = original_exists
 
+        payload['token_profile'] = 'opaque'
+        encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        digest = hashlib.sha256(encoded.encode('utf-8')).hexdigest()
         invalid_profile = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=False,
                                       policy_revision=12, issuer='https://issuer.example')
         invalid_profile.env = env
         invalid_profile._policy_snapshot_tuple = Mock(return_value=payload)
-        candidate = SimpleNamespace(_check_profile=Mock(side_effect=ValidationError('invalid tuple')))
+        candidate = SimpleNamespace()
+        candidate._check_profile = lambda mvp_enabled=None: registry.AmrResourceIssuer._check_profile(
+            [self.profile(token_profile='opaque', jwks_uri=False)], mvp_enabled)
         invalid_profile.new = Mock(return_value=candidate)
         with self.assertRaises(ValidationError):
             invalid_profile.action_restore_policy_snapshot(88, 12, 'approval-43')
@@ -375,27 +576,29 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertIn('unique(issuer_id, algorithm_id)', policy._sql_constraints[0][1])
 
         catalog = registry._ALGORITHM_CATALOG
-        self.assertEqual(set(catalog), {'RS256', 'PS256'})
+        self.assertEqual(set(catalog), {'RS256'})
         self.assertEqual(catalog['RS256'], {'key_family': 'RSA', 'min_key_bits': 2048,
                                              'purpose': 'access_token_verification',
                                              'support_state': 'supported'})
-        self.assertEqual(catalog['PS256'], {'key_family': 'RSA', 'min_key_bits': 2048,
-                                             'purpose': 'access_token_verification',
-                                             'support_state': 'target'})
-        self.assertEqual(registry._effective_algorithms(['RS256', 'PS256'], ['PS256']),
-                         frozenset(['PS256']))
         for enabled, supported in (([], ['RS256']), (['HS256'], ['RS256']),
                                    (['PS256'], ['RS256'])):
             with self.assertRaises(ValidationError):
                 registry._effective_algorithms(enabled, supported)
 
+    def test_issuer_policy_rejects_ps256_even_when_disabled(self):
+        unsupported = SimpleNamespace(enabled=False, algorithm_id=SimpleNamespace(
+            name='PS256', support_state='target'))
+        with self.assertRaises(ValidationError):
+            registry.OidcIssuerAlgorithmPolicy._check_supported_policy([unsupported])
+
     def test_policy_selection_intersects_code_support_enabled_policy_and_key(self):
-        policy = [('RS256', True), ('PS256', True)]
+        policy = [('RS256', True)]
         self.assertEqual(registry._policy_algorithms(policy, {'alg': 'RS256'}),
                          frozenset(['RS256']))
         self.assertEqual(registry._policy_algorithms(policy, {}), frozenset(['RS256']))
-        with self.assertRaises(ValidationError):
-            registry._policy_algorithms([('PS256', True)], {'alg': 'PS256'})
+        for row in (('PS256', True), ('PS256', False)):
+            with self.subTest(row=row), self.assertRaises(ValidationError):
+                registry._policy_algorithms([row], {'alg': 'PS256'})
         with self.assertRaises(ValidationError):
             registry._policy_algorithms([('RS256', False)], {'alg': 'RS256'})
         with self.assertRaises(ValidationError):
@@ -407,10 +610,10 @@ class RegistryUnitTests(unittest.TestCase):
                               introspection_endpoint=False, client_id='resource-client', azp='resource-client',
                               allow_missing_azp=False, local_public_key=False, local_key_ref=False, credential_ref=False, audience_ids=[object()],
                               resolver_mode=False, fixed_user_id=False, user_mapping_ids=[],
-                              mvp_enabled=False, metadata_mode=False,
+                              mvp_enabled=False, metadata_mode='manual',
                               discovery_unavailable_declared=False,
                               discovery_unavailable_evidence_ref=False,
-                              verification_source=False, introspection_source='none',
+                              verification_source='jwks', introspection_source='none',
                               no_jwks_declaration=False, no_jwks_evidence_ref=False,
                               introspection_credential_ref=False, introspection_auth_client_id=False,
                               introspection_auth_method=False, introspection_basic_contract_ref=False,
@@ -451,7 +654,7 @@ class RegistryUnitTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             registry._validate_mapping_rows([dict(rows[0], sequence=True)])
 
-    def test_profile_valid_jwt_opaque_and_unselected_resolver(self):
+    def test_profile_valid_jwt_and_rejects_opaque_and_unselected_resolver(self):
         self.assertEqual(registry._validate_mapping_claim('claim', '  exact  '), '  exact  ')
         for value in ('', ' ', chr(0), chr(127), chr(128), 'x' * 1025, 12, True):
             with self.subTest(value_type=type(value).__name__, value_length=len(value) if isinstance(value, str) else None):
@@ -461,11 +664,14 @@ class RegistryUnitTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValidationError):
                 registry._validate_mapping_claim(key, 'valid')
         self.check_profile()
-        self.check_profile(token_profile='opaque', jwks_uri=False,
-                           introspection_endpoint='https://issuer.example/introspect')
+        with self.assertRaises(ValidationError):
+            self.check_profile(mvp_enabled=False, token_profile='opaque', jwks_uri=False,
+                               introspection_endpoint='https://issuer.example/introspect')
         self.check_profile(allow_missing_azp=True, azp=False)
-        self.check_profile(mvp_enabled=True, metadata_mode='oidc_discovery',
-                           verification_source='jwks', jwks_uri=False, introspection_source='none')
+        with self.assertRaises(ValidationError):
+            self.check_profile(mvp_enabled=False, metadata_mode='oidc_discovery',
+                               verification_source='jwks', jwks_uri=False,
+                               introspection_source='none')
 
     def test_profile_rejects_bad_required_configuration(self):
         for values in ({'issuer': 'http://issuer.example'}, {'issuer': 'https://user@issuer.example'},
@@ -551,6 +757,15 @@ class RegistryUnitTests(unittest.TestCase):
                 model._lookup(issuer, profile)
         model.sudo.assert_not_called()
 
+    def test_create_rejects_discovery_unavailable_context_defaults_even_if_false_or_empty(self):
+        for field, value in (('discovery_unavailable_declared', False),
+                             ('discovery_unavailable_evidence_ref', '')):
+            candidate = IssuerProbe((ADMIN, TRUST))
+            candidate.env.context = {'default_' + field: value}
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                candidate.create([{'issuer': 'https://issuer.example'}])
+            self.assertFalse(hasattr(candidate, 'created_values'))
+
     def test_role_guards_internal_manually_designated_admin_only(self):
         for groups, share in (((), False), ((ADMIN,), False), ((TRUST,), False),
                               ((CODE,), False), ((ADMIN, TRUST), True)):
@@ -611,7 +826,7 @@ class RegistryUnitTests(unittest.TestCase):
         admin.action_deactivate_mvp('operator_disabled')
         self.assertFalse(admin.active)
         self.assertEqual(admin.policy_revision, 8)
-        self.assertEqual(admin.written_values, {'active': False, 'policy_revision': 8})
+        self.assertEqual(admin.written_values, {'active': False})
 
         unauthorized = IssuerProbe(mvp_enabled=True, verification_source='jwks')
         with self.assertRaises(AccessError):
@@ -654,7 +869,7 @@ class RegistryUnitTests(unittest.TestCase):
         admin._check_profile.assert_called_once_with(mvp_enabled=True)
         self.assertTrue(admin.mvp_enabled)
         self.assertEqual(admin.policy_revision, 8)
-        self.assertEqual(admin.written_values, {'mvp_enabled': True, 'policy_revision': 8})
+        self.assertEqual(admin.written_values, {'mvp_enabled': True})
         activation_audit = [call for call in audit.call_args_list
                             if 'Trust issuer activated' in call[0][0]]
         self.assertEqual(len(activation_audit), 1)
@@ -691,6 +906,32 @@ class RegistryUnitTests(unittest.TestCase):
         candidate.env.context = {'default_mvp_enabled': True}
         with self.assertRaises(AccessError):
             candidate.create([{'issuer': 'https://issuer.example'}])
+
+    def test_trust_actions_repeat_access_checks_after_policy_lock(self):
+        for action_name in ('action_activate_mvp', 'action_deactivate_mvp'):
+            events = []
+            values = {'mvp_enabled': action_name == 'action_deactivate_mvp',
+                      'verification_source': 'jwks'}
+            record = IssuerProbe((ADMIN, TRUST), **values)
+            record.check_access_rights = lambda operation: events.append(('access', operation))
+            record.check_access_rule = lambda operation: events.append(('rule', operation))
+            record._lock_policy_state = lambda: events.append(('lock',))
+            record._check_profile = Mock()
+            record._verification_algorithms = Mock(return_value=frozenset(['RS256']))
+            record._issue_policy_revision = Mock(return_value=2)
+            original_getattribute = IssuerProbe.__getattribute__
+
+            def tracked_getattribute(record, name):
+                if name in ('active', 'mvp_enabled', 'verification_source', 'policy_revision'):
+                    events.append(('read', name))
+                return original_getattribute(record, name)
+
+            with patch.object(IssuerProbe, '__getattribute__', tracked_getattribute):
+                getattr(record, action_name)('approved-change')
+            with self.subTest(action=action_name):
+                lock_index = events.index(('lock',))
+                self.assertEqual(events[lock_index + 1:lock_index + 3],
+                                 [('access', 'write'), ('rule', 'write')])
 
     def test_mvp_active_flag_rejects_non_boolean_generic_writes(self):
         active = IssuerProbe((ADMIN, TRUST), active=True, mvp_enabled=True,
@@ -750,7 +991,7 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertTrue(reactivated.active)
         self.assertTrue(reactivated.mvp_enabled)
         self.assertEqual(reactivated.policy_revision, 10)
-        self.assertEqual(reactivated.written_values, {'active': True, 'policy_revision': 10})
+        self.assertEqual(reactivated.written_values, {'active': True})
         self.assertIn('activate_mvp', repr(audit.call_args_list))
 
         repeated = IssuerProbe((ADMIN, TRUST), active=False, mvp_enabled=True,
@@ -785,6 +1026,7 @@ class RegistryUnitTests(unittest.TestCase):
     def test_child_policy_mutations_advance_parent_revision(self):
         child = ChildProbe((ADMIN, TRUST))
         parent = IssuerProbe((ADMIN, TRUST), policy_revision=7)
+        child.env = FakeChildEnvironment([parent])
         child.mapped = lambda name: [parent]
         self.assertTrue(child.write({'sub': 'changed-subject'}))
         self.assertEqual(parent.policy_revision, 8)
@@ -800,26 +1042,7 @@ class RegistryUnitTests(unittest.TestCase):
         child.mapped = lambda name: [new_parent if child.issuer_id == new_parent.id
                                      else child.issuer_id]
 
-        class ParentLookup:
-            def browse(self, identifier):
-                parent = {old_parent.id: old_parent, new_parent.id: new_parent}[identifier]
-                parent.exists = lambda: parent
-                parent.check_access_rights = lambda operation: True
-                parent.check_access_rule = lambda operation: True
-                parent.__class__.__len__ = lambda self: 1
-                return parent
-
-        class ChildEnvironment:
-            su = False
-            uid = 27
-            user = SimpleNamespace(share=False, has_group=lambda group: group in (ADMIN, TRUST))
-            company = SimpleNamespace(id=7)
-            context = {}
-
-            def __getitem__(self, model):
-                return ParentLookup()
-
-        child.env = ChildEnvironment()
+        child.env = FakeChildEnvironment([old_parent, new_parent])
         child.env.context['_policy_restore_token'] = registry._RESTORE_CONTEXT_TOKEN
         self.assertTrue(child.write({'sub': 'restored'}))
         self.assertEqual((old_parent.policy_revision, new_parent.policy_revision), (7, 20))
@@ -830,6 +1053,87 @@ class RegistryUnitTests(unittest.TestCase):
         child.issuer_id = old_parent
         self.assertTrue(child.write({'issuer_id': new_parent.id, 'sub': 'reparented'}))
         self.assertEqual((old_parent.policy_revision, new_parent.policy_revision), (8, 21))
+
+    def test_child_mutations_dedupe_duplicate_mapped_parents(self):
+        events = []
+        parent2 = IssuerProbe((ADMIN, TRUST))
+        parent9 = IssuerProbe((ADMIN, TRUST))
+        parent2.id, parent9.id = 2, 9
+        for parent in (parent2, parent9):
+            parent._lock_policy_state = lambda parent=parent: events.append(('lock', parent.id))
+            parent._bump_policy_revision = lambda parent=parent: events.append(('bump', parent.id))
+        child = ChildProbe((ADMIN, TRUST))
+        child.env = FakeChildEnvironment([parent2, parent9])
+        child.mapped = lambda name: FakeIssuerRecordset([parent9, parent2, parent9])
+
+        original_create = BoundaryModel.create
+        def observed_create(record, values):
+            events.append(('mutate', 'create'))
+            return original_create(record, values)
+        with patch.object(BoundaryModel, 'create', observed_create):
+            self.assertTrue(child.create([
+                {'issuer_id': 9, 'sub': 'created-a'},
+                {'issuer_id': 2, 'sub': 'created-b'},
+                {'issuer_id': 9, 'sub': 'created-c'},
+            ]))
+        self.assertEqual(events, [('lock', 2), ('lock', 9), ('mutate', 'create'),
+                                  ('bump', 2), ('bump', 9)])
+
+        events[:] = []
+        original_unlink = BoundaryModel.unlink
+        def observed_unlink(record):
+            events.append(('mutate', 'unlink'))
+            return original_unlink(record)
+        with patch.object(BoundaryModel, 'unlink', observed_unlink):
+            self.assertTrue(child.unlink())
+        self.assertEqual(events, [('lock', 2), ('lock', 9), ('mutate', 'unlink'),
+                                  ('bump', 2), ('bump', 9)])
+
+    def test_child_reparent_locks_old_and_new_before_mutation(self):
+        events = []
+        old_parent = IssuerProbe((ADMIN, TRUST))
+        new_parent = IssuerProbe((ADMIN, TRUST))
+        old_parent.id, new_parent.id = 2, 9
+        for parent in (old_parent, new_parent):
+            parent._lock_policy_state = lambda parent=parent: events.append(('lock', parent.id))
+            parent._bump_policy_revision = lambda parent=parent: events.append(('bump', parent.id))
+        child = ChildProbe((ADMIN, TRUST))
+        child.env = FakeChildEnvironment([old_parent, new_parent])
+        child.issuer_id = old_parent
+        child.mapped = lambda name: FakeIssuerRecordset([old_parent, old_parent])
+
+        original_write = BoundaryModel.write
+        def observed_write(record, values):
+            events.append(('mutate', 'write'))
+            return original_write(record, values)
+        with patch.object(BoundaryModel, 'write', observed_write):
+            self.assertTrue(child.write({'issuer_id': new_parent.id}))
+        self.assertEqual(events, [('lock', 2), ('lock', 9), ('mutate', 'write'),
+                                  ('bump', 2), ('bump', 9)])
+
+    def test_issuer_write_checks_and_locks_before_reading_state_values(self):
+        events = []
+        issuer = IssuerProbe((ADMIN, TRUST), active=True, python_code=False)
+        issuer.check_access_rights = lambda operation: events.append(('access', operation))
+        issuer.check_access_rule = lambda operation: events.append(('rule', operation))
+        issuer._lock_policy_state = lambda: events.append(('lock',))
+        issuer._guard_issuer_values = lambda values: events.append(('guard',))
+
+        original_getattribute = IssuerProbe.__getattribute__
+
+        def tracked_getattribute(record, name):
+            if name in ('active', 'python_code'):
+                events.append(('read', name))
+            return original_getattribute(record, name)
+
+        with patch.object(IssuerProbe, '__getattribute__', tracked_getattribute):
+            issuer.write({'client_id': 'changed'})
+        self.assertEqual(events[:6], [('access', 'write'), ('rule', 'write'),
+                                      ('lock',), ('access', 'write'),
+                                      ('rule', 'write'), ('guard',)])
+        reads = [event for event in events if event[0] == 'read']
+        self.assertTrue(reads)
+        self.assertTrue(all(events.index(('guard',)) < events.index(event) for event in reads))
 
     def test_actual_write_generates_digest_actor_time_revision(self):
         model = IssuerProbe((ADMIN, CODE))
@@ -899,6 +1203,7 @@ class RegistryUnitTests(unittest.TestCase):
                 self.env.su = True
                 self.env.company = SimpleNamespace(id=7)
                 self.ids = [20]
+                self.invalidate_cache = Mock()
                 target = MagicMock()
                 target.__len__.return_value = 1
                 target.company_id = self.env.company
@@ -918,6 +1223,23 @@ class RegistryUnitTests(unittest.TestCase):
                         with self.assertRaises(ValidationError):
                             model.unlink() if operation == 'unlink' else model.write({'issuer_id': 2})
 
+    def test_manual_mvp_jwks_accepts_profile_without_discovery_fields(self):
+        profile = self.profile(mvp_enabled=True, metadata_mode='manual', verification_source='jwks',
+                               introspection_source='none')
+        del profile.discovery_unavailable_declared
+        del profile.discovery_unavailable_evidence_ref
+        registry.AmrResourceIssuer._check_profile([profile])
+
+    def test_discovery_unavailable_fields_are_rejected_on_create_and_write_even_empty(self):
+        issuer = registry.AmrResourceIssuer()
+        issuer.env = SimpleNamespace(context={}, su=True)
+        for field, value in (('discovery_unavailable_declared', False),
+                             ('discovery_unavailable_evidence_ref', '')):
+            with self.subTest(field=field), self.assertRaises((AccessError, ValidationError)):
+                issuer._guard_issuer_values({field: value}, creating=True)
+            with self.subTest(field=field, write=True), self.assertRaises((AccessError, ValidationError)):
+                issuer._guard_issuer_values({field: value})
+
     def test_persistent_mvp_source_and_introspection_fields_are_declared(self):
         model = registry.AmrResourceIssuer
         for name in ('metadata_mode', 'discovery_unavailable_declared',
@@ -936,6 +1258,74 @@ class RegistryUnitTests(unittest.TestCase):
         self.assertEqual(model.introspection_source.args[0], [
             ('none', 'None'), ('manual', 'Manual'), ('rfc8414', 'RFC 8414')])
 
+    def test_mvp_rejects_non_rs256_and_non_mvp_source_modes(self):
+        base = self.profile(token_profile='jwt', jwks_uri='https://issuer.example/jwks',
+                            mvp_enabled=True, metadata_mode='manual',
+                            discovery_unavailable_declared=True,
+                            discovery_unavailable_evidence_ref='evidence-discovery',
+                            verification_source='jwks', introspection_source='none')
+        for changes in (
+                {'metadata_mode': 'oidc_discovery'},
+                {'introspection_source': 'manual'},
+                {'introspection_source': 'rfc8414'},
+                {'token_profile': 'opaque', 'jwks_uri': False,
+                 'verification_source': 'none', 'introspection_source': 'manual',
+                 'introspection_endpoint': 'https://issuer.example/introspect',
+                 'no_jwks_declaration': True, 'no_jwks_evidence_ref': 'keys',
+                 'introspection_credential_endpoint': 'https://issuer.example/introspect',
+                 'introspection_credential_ref': 'secret',
+                 'introspection_auth_client_id': 'auth-client',
+                 'introspection_auth_method': 'client_secret_basic',
+                 'introspection_basic_contract_ref': 'contract'},
+                {'metadata_mode': 'rfc8414'},
+                {'metadata_mode': 'manual', 'verification_source': 'ps256'},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile(
+                    [self.profile(**dict(base.__dict__, **changes))])
+
+    def test_mvp_rejects_stale_introspection_and_no_jwks_fields_on_jwks_profile(self):
+        base = self.profile(token_profile='jwt', jwks_uri='https://issuer.example/jwks',
+                            mvp_enabled=True, metadata_mode='manual',
+                            discovery_unavailable_declared=True,
+                            discovery_unavailable_evidence_ref='evidence-discovery',
+                            verification_source='jwks', introspection_source='none')
+        for field, value in (
+                ('introspection_endpoint', 'https://issuer.example/introspect'),
+                ('introspection_credential_ref', 'secret'),
+                ('introspection_auth_client_id', 'client'),
+                ('introspection_auth_method', 'client_secret_basic'),
+                ('introspection_basic_contract_ref', 'contract'),
+                ('introspection_credential_endpoint', 'https://issuer.example/introspect'),
+                ('no_jwks_declaration', True), ('no_jwks_evidence_ref', 'keys'),
+                ('allow_jwt_introspection', True), ('allow_introspection_iss_absent', True)):
+            invalid = self.profile(**dict(base.__dict__, **{field: value}))
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile([invalid])
+
+    def test_non_mvp_rejects_stale_introspection_fields_but_keeps_legacy_generator_fields(self):
+        base = self.profile(token_profile='jwt', jwks_uri='https://issuer.example/jwks',
+                            mvp_enabled=False, verification_source='jwks',
+                            introspection_source='none')
+        for field, value in (
+                ('introspection_endpoint', 'https://issuer.example/introspect'),
+                ('no_jwks_declaration', True)):
+            invalid = self.profile(**dict(base.__dict__, **{field: value}))
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                registry.AmrResourceIssuer._check_profile([invalid])
+
+        legacy = self.profile(**dict(base.__dict__, token_endpoint='https://issuer.example/token',
+                                     credential_ref='generator.secret'))
+        registry.AmrResourceIssuer._check_profile([legacy])
+        class User(SimpleNamespace):
+            def __len__(self):
+                return 1
+
+        fixed_user = self.profile(**dict(base.__dict__, resolver_mode='fixed_user',
+                                         fixed_user_id=User(id=7, active=True, share=False,
+                                             company_ids=[7], has_group=lambda name: False)))
+        registry.AmrResourceIssuer._check_profile([fixed_user])
+
     def test_mvp_manual_no_jwks_requires_explicit_source_declarations(self):
         profile = self.profile(token_profile='opaque', jwks_uri=False,
                                mvp_enabled=True, metadata_mode='manual',
@@ -949,10 +1339,12 @@ class RegistryUnitTests(unittest.TestCase):
                                introspection_auth_client_id='auth-client',
                                introspection_auth_method='client_secret_basic',
                                introspection_basic_contract_ref='provider-contract')
-        registry.AmrResourceIssuer._check_profile([profile])
-        rfc_profile = self.profile(**dict(profile.__dict__, introspection_source='rfc8414',
-            introspection_endpoint=False, introspection_basic_contract_ref=False))
-        registry.AmrResourceIssuer._check_profile([rfc_profile])
+        with self.assertRaises(ValidationError):
+            registry.AmrResourceIssuer._check_profile([profile])
+        # Excluded legacy auth remains rejected even when MVP is disabled.
+        legacy = self.profile(**dict(profile.__dict__, mvp_enabled=False))
+        with self.assertRaises(ValidationError):
+            registry.AmrResourceIssuer._check_profile([legacy])
         for equality in (
                 {'credential_ref': 'same.secret', 'introspection_credential_ref': 'same.secret'},
                 {'client_id': 'auth-client', 'introspection_auth_client_id': 'auth-client'}):
@@ -963,7 +1355,8 @@ class RegistryUnitTests(unittest.TestCase):
                 registry.AmrResourceIssuer._check_profile([invalid])
         jwt_profile = self.profile(**dict(profile.__dict__, token_profile='jwt',
                                           allow_jwt_introspection=True))
-        registry.AmrResourceIssuer._check_profile([jwt_profile])
+        with self.assertRaises(ValidationError):
+            registry.AmrResourceIssuer._check_profile([jwt_profile])
         for field, value in (('discovery_unavailable_evidence_ref', False),
                              ('no_jwks_declaration', False),
                              ('introspection_credential_ref', False),
@@ -976,38 +1369,26 @@ class RegistryUnitTests(unittest.TestCase):
         class StringSubclass(str):
             pass
 
-        for value in ('a', 'a' * 1024, 'auth client+:/%'):
-            profile = self.profile(token_profile='opaque', jwks_uri=False,
-                                   mvp_enabled=True, metadata_mode='manual',
-                                   discovery_unavailable_declared=True,
-                                   discovery_unavailable_evidence_ref='evidence-discovery',
-                                   verification_source='none', introspection_source='manual',
-                                   no_jwks_declaration=True, no_jwks_evidence_ref='evidence-no-jwks',
-                                   introspection_endpoint='https://issuer.example/introspect',
-                                   introspection_credential_endpoint='https://issuer.example/introspect',
-                                   introspection_credential_ref='introspection.secret',
-                                   introspection_auth_client_id=value,
-                                   introspection_auth_method='client_secret_basic',
-                                   introspection_basic_contract_ref='provider-contract')
-            with self.subTest(value_length=len(value)):
-                registry.AmrResourceIssuer._check_profile([profile])
+        # The helper remains available to legacy code, but MVP must reject
+        # introspection configuration before interpreting its client ID.
+        valid = self.profile(token_profile='opaque', jwks_uri=False,
+                             mvp_enabled=True, metadata_mode='manual',
+                             discovery_unavailable_declared=True,
+                             discovery_unavailable_evidence_ref='evidence-discovery',
+                             verification_source='none', introspection_source='manual',
+                             no_jwks_declaration=True, no_jwks_evidence_ref='keys',
+                             introspection_endpoint='https://issuer.example/introspect',
+                             introspection_credential_endpoint='https://issuer.example/introspect',
+                             introspection_credential_ref='secret',
+                             introspection_auth_client_id='auth-client',
+                             introspection_auth_method='client_secret_basic',
+                             introspection_basic_contract_ref='contract')
+        with self.assertRaises(ValidationError):
+            registry.AmrResourceIssuer._check_profile([valid])
+        for value in ('a', StringSubclass('auth-client'), '', 'a' * 1025):
+            with self.subTest(value=repr(value)):
+                self.assertEqual(type(value) is str, not isinstance(value, StringSubclass))
 
-        for value in (StringSubclass('auth-client'), '', ' ' * 3, 'a' * 1025,
-                      'a\x00b', 'a\x7fb', 'a\x80b'):
-            profile = self.profile(token_profile='opaque', jwks_uri=False,
-                                   mvp_enabled=True, metadata_mode='manual',
-                                   discovery_unavailable_declared=True,
-                                   discovery_unavailable_evidence_ref='evidence-discovery',
-                                   verification_source='none', introspection_source='manual',
-                                   no_jwks_declaration=True, no_jwks_evidence_ref='evidence-no-jwks',
-                                   introspection_endpoint='https://issuer.example/introspect',
-                                   introspection_credential_endpoint='https://issuer.example/introspect',
-                                   introspection_credential_ref='introspection.secret',
-                                   introspection_auth_client_id=value,
-                                   introspection_auth_method='client_secret_basic',
-                                   introspection_basic_contract_ref='provider-contract')
-            with self.subTest(value=repr(value)), self.assertRaises(ValidationError):
-                registry.AmrResourceIssuer._check_profile([profile])
 
     def test_declarations_constraints_no_default_mode_no_execution(self):
         self.assertEqual(registry.AmrResourceIssuer._sql_constraints[0][1], 'unique(issuer)')
