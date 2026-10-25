@@ -102,6 +102,29 @@ class TransportTests(unittest.TestCase):
         self.assertNotIn('issuer.example', formatted)
         return error
 
+    def test_preflight_rejects_loopback_before_dns_or_socket(self):
+        with self.assertRaises(transport.TransportError):
+            transport.preflight_endpoint('https://127.0.0.1/introspect')
+        self.dns.assert_not_called()
+        self.factory.assert_not_called()
+
+    def test_preflight_pins_safe_dns_result_for_fetch(self):
+        prepared = transport.preflight_endpoint(URL)
+        self.dns.assert_called_once_with('issuer.example', 443, socket.AF_UNSPEC,
+                                         socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        self.dns.reset_mock()
+        transport.fetch_json(URL, data={'token': 'synthetic'}, preflight=prepared)
+        self.dns.assert_not_called()
+        self.assertEqual(self.wire.addresses, [(PUBLIC, 443)])
+        self.assertTrue(bytes(self.wire.sent).startswith(b'POST /json?key=secret HTTP/1.1\r\n'))
+
+    def test_preflight_cannot_be_replayed_for_another_endpoint(self):
+        prepared = transport.preflight_endpoint(URL)
+        self.dns.reset_mock()
+        self.rejected('https://other.example/json', preflight=prepared)
+        self.dns.assert_not_called()
+        self.factory.assert_not_called()
+
     def test_get_uses_real_http_pinned_socket_and_hostname_tls(self):
         self.assertEqual(transport.fetch_json(URL), {'ok': True})
         self.dns.assert_called_once_with('issuer.example', 443, socket.AF_UNSPEC,
