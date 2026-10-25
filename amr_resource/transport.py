@@ -18,6 +18,7 @@ TOTAL_TIMEOUT = 8.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 # A timed-out libc resolver cannot be cancelled; bound outstanding workers.
 _DNS_SLOTS = threading.BoundedSemaphore(8)
+_PREFLIGHT_TOKEN = object()
 
 
 class TransportError(Exception):
@@ -185,6 +186,17 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
             raise
 
 
+def preflight_endpoint(url):
+    """Validate and resolve an endpoint before its caller releases credentials."""
+    try:
+        started = time.monotonic()
+        host, target = _endpoint(url)
+        address = _resolve(host, started + CONNECT_TIMEOUT)
+        return url, host, target, address, _PREFLIGHT_TOKEN
+    except Exception:
+        raise TransportError('HTTPS JSON request failed') from None
+
+
 def _headers(headers, body):
     result = {}
     # Do not let caller headers alter routing, framing, or no-cache policy.
@@ -209,7 +221,7 @@ def _headers(headers, body):
     return result
 
 
-def fetch_json(url, data=None, headers=None):
+def fetch_json(url, data=None, headers=None, preflight=None):
     """GET JSON, or POST form data, with no cache, redirect, proxy or retry.
 
     Authorization headers apply only to this exact endpoint; the caller must
@@ -221,10 +233,18 @@ def fetch_json(url, data=None, headers=None):
         started = time.monotonic()
         deadline = started + TOTAL_TIMEOUT
         connect_deadline = started + CONNECT_TIMEOUT
-        host, target = _endpoint(url)
+        address = None
+        if preflight is None:
+            host, target = _endpoint(url)
+        else:
+            if (not isinstance(preflight, tuple) or len(preflight) != 5
+                    or preflight[0] != url or preflight[4] is not _PREFLIGHT_TOKEN):
+                raise ValueError()
+            _, host, target, address, _ = preflight
         body = None if data is None else urlencode(data, doseq=True).encode('ascii')
         request_headers = _headers(headers, body)
-        address = _resolve(host, connect_deadline)
+        if address is None:
+            address = _resolve(host, connect_deadline)
         connection = _PinnedHTTPSConnection(host, address, connect_deadline, deadline)
         connection.request('GET' if data is None else 'POST', target,
                            body=body, headers=request_headers)
