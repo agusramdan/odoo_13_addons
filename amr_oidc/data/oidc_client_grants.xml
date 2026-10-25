@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="oidc_client_grant_client_credentials" model="oidc.client.grant">
+            <field name="code">client_credentials</field>
+            <field name="name">Client Credentials</field>
+        </record>
+        <record id="oidc_client_grant_authorization_code" model="oidc.client.grant">
+            <field name="code">authorization_code</field>
+            <field name="name">Authorization Code</field>
+        </record>
+        <record id="oidc_client_grant_refresh_token" model="oidc.client.grant">
+            <field name="code">refresh_token</field>
+            <field name="name">Refresh Token</field>
+        </record>
+    </data>
+</odoo>

@@ -34,6 +34,11 @@ class OidcClient(models.Model):
         required=True,
     )
     client_email = fields.Char()
+    # Policy storage only; grant flows are not implemented/enabled here.
+    allowed_grants = fields.Many2many(
+        "oidc.client.grant", string="Allowed Grants",
+        groups="amr_oidc.group_provider_admin", copy=False,
+    )
     client_type = fields.Selection([
         ("machine", "Machine"),
         ("mobile", "Mobile"),

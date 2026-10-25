@@ -16,6 +16,7 @@
     'data': [
         'security/res_groups.xml',
         'security/ir.model.access.csv',
+        'data/oidc_client_grants.xml',
         'views/public_key_views.xml',
         'views/oidc_client_views.xml',
         'views/oidc_authorization_code_views.xml',

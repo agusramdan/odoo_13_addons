@@ -52,7 +52,7 @@ def load(relative, parent_helper=None):
         constrains=lambda *field_names: (lambda method: method),
     ))
     setattr(odoo, 'fields', SimpleNamespace(**{name: Field for name in (
-        'Boolean', 'Char', 'Text', 'Many2one', 'One2many', 'Datetime',
+        'Boolean', 'Char', 'Text', 'Many2one', 'Many2many', 'One2many', 'Datetime',
         'Selection', 'Binary')}))
     abstract_model = parent_helper or ParentHelper
     setattr(odoo, 'models', SimpleNamespace(Model=object, AbstractModel=abstract_model,

@@ -4,6 +4,7 @@ access_oidc_jwt_replay_provider_admin,access.oidc.jwt.replay.provider.admin,mode
 
 access_oidc_client_admin,access.oidc.client admin,model_oidc_client,base.group_erp_manager,1,1,1,1
 access_oidc_client_user,access.oidc.client user,model_oidc_client,base.group_user,1,0,0,0
+access_oidc_client_grant_user,access.oidc.client.grant user,model_oidc_client_grant,base.group_user,1,0,0,0
 access_oidc_client_key_admin,access.oidc.client.key admin,model_oidc_client_key,base.group_erp_manager,1,1,1,1
 access_oidc_client_key_user,access.oidc.client.key user,model_oidc_client_key,base.group_user,1,0,0,0
 

@@ -151,7 +151,7 @@ class PackageContract(unittest.TestCase):
         expected = {
             "__init__.py": {"controllers", "models", "wizard"},
             "models/__init__.py": {"token_helper", "public_key", "helper", "oidc_authorization_code", "oidc_client",
-                                   "oidc_client_key", "oidc_jwt_replay", "oidc_refresh_token"},
+                                   "oidc_client_key", "oidc_client_grant", "oidc_jwt_replay", "oidc_refresh_token"},
             "controllers/__init__.py": {"main"},
             "wizard/__init__.py": {"service_account"},
         }
