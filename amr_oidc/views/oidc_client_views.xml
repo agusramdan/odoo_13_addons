@@ -37,7 +37,6 @@
                         <page string="Authentication" name="page_m2m_authentication">
                             <group>
                                 <field name="authentication_method" />
-                                <field name="client_secret" password="1" attrs="{'invisible':[('authentication_method','!=','client_secret')]}"/>
                                 <field name="user_id" />
                             </group>
                             <field name="key_ids" attrs="{'invisible':[('authentication_method','!=','private_key_jwt')]}">
