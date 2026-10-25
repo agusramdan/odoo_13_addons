@@ -431,8 +431,9 @@ class ResourceHelper(models.AbstractModel):
         if 'token_type' in claims and (not isinstance(claims['token_type'], str)
                 or claims['token_type'].lower() != 'bearer'):
             raise Unauthorized()
+        _require_policy_revision(profile, policy_revision)
         return _VerifiedClaims(claims, self.env.company.id, self.env.uid,
-                               getattr(profile, 'policy_revision', 0))
+                               policy_revision)
 
     @api.model
     @_sanitized
