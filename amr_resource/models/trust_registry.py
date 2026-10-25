@@ -67,6 +67,11 @@ def _exact_string(value):
         ord(char) < 33 or ord(char) == 127 for char in value)
 
 
+def _introspection_client_id(value):
+    return (type(value) is str and 1 <= len(value) <= 1024 and bool(value.strip())
+            and not any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value))
+
+
 def _https_url(value):
     """Configuration syntax only; DNS/address checks belong at connection time."""
     if not _exact_string(value):
@@ -414,11 +419,14 @@ class AmrResourceIssuer(models.Model):
         if 'mvp_enabled' in values:
             if type(values['mvp_enabled']) is not bool or values['mvp_enabled']:
                 raise AccessError('Use the explicit MVP activation action.')
-        if 'active' in values and any(record.mvp_enabled for record in self):
+            if any(getattr(record, 'mvp_enabled', False) for record in self):
+                raise AccessError('Use the explicit MVP deactivation action.')
+        if 'active' in values and any(getattr(record, 'mvp_enabled', False) for record in self):
             if type(values['active']) is not bool:
                 raise AccessError('Use a Boolean active value for MVP issuers.')
-            if values['active'] and any(record.mvp_enabled and not record.active for record in self):
-                raise AccessError('Use the explicit MVP activation action.')
+            if not values['active'] or any(
+                    getattr(record, 'mvp_enabled', False) and not record.active for record in self):
+                raise AccessError('Use the explicit MVP activation/deactivation action.')
         if AUDIT_FIELDS.intersection(values):
             raise AccessError('Registry access denied.')
         if 'resolver_key' in values and (not creating or values['resolver_key'] != 'get_user_match'):
@@ -491,6 +499,8 @@ class AmrResourceIssuer(models.Model):
         for record in self:
             if (record.active and record.mvp_enabled) or (not record.active and not record.mvp_enabled):
                 raise ValidationError('Issuer is not in an activatable state.')
+            if record.token_profile == 'jwt':
+                record._verification_algorithms({})
             record._check_profile(mvp_enabled=True)
         for record in self:
             revision = record.policy_revision + 1
@@ -638,9 +648,16 @@ class AmrResourceIssuer(models.Model):
             if len(algorithm) != 1:
                 raise ValidationError('Snapshot algorithm is no longer available.')
             algorithm_commands.append((0, 0, {'algorithm_id': algorithm.id, 'enabled': row['enabled']}))
+        current_audiences = list(self.audience_ids)
+        audience_commands = [(0, 0, {'value': value})
+                             for value in payload['audiences'][len(current_audiences):]]
+        audience_commands += [(1, current.id, {'value': value})
+                              for current, value in zip(current_audiences, payload['audiences'])]
+        audience_commands += [(2, current.id, 0)
+                              for current in current_audiences[len(payload['audiences']):]]
         values = {key: value for key, value in payload.items()
                   if key not in ('issuer', 'audiences', 'mappings', 'algorithms')}
-        values.update({'audience_ids': [(5, 0, 0)] + [(0, 0, {'value': value}) for value in payload['audiences']],
+        values.update({'audience_ids': audience_commands,
                        'user_mapping_ids': [(5, 0, 0)] + [(0, 0, row) for row in payload['mappings']],
                        'algorithm_policy_ids': [(5, 0, 0)] + algorithm_commands,
                        'active': False, 'policy_revision': expected_revision + 1})
@@ -703,7 +720,9 @@ class AmrResourceIssuer(models.Model):
                 if endpoint and not _https_url(endpoint):
                     raise ValidationError('Endpoints must be public HTTPS URLs on port 443.')
             if (record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key)
-                    and not (enabled and record.verification_source == 'none')):
+                    and not (enabled and (record.verification_source == 'none'
+                         or (record.metadata_mode == 'oidc_discovery'
+                             and record.verification_source == 'jwks')))):
                 raise ValidationError('JWT requires exactly one static JWKS URL or local public key.')
             if record.local_public_key:
                 if record.token_profile != 'jwt':
@@ -761,7 +780,8 @@ class AmrResourceIssuer(models.Model):
                         or record.introspection_source != 'none'):
                     raise ValidationError('OIDC Discovery requires JWT/JWKS and no introspection source.')
                 if record.verification_source == 'jwks' and (
-                        record.token_profile != 'jwt' or not record.jwks_uri
+                        record.token_profile != 'jwt' or
+                        (not record.jwks_uri and record.metadata_mode != 'oidc_discovery')
                         or record.local_key_ref or record.local_public_key
                         or record.introspection_source != 'none'):
                     raise ValidationError('JWKS source configuration conflicts.')
@@ -781,9 +801,12 @@ class AmrResourceIssuer(models.Model):
                             or endpoint != record.introspection_credential_endpoint
                             or not _https_url(endpoint)
                             or not record.introspection_credential_ref
-                            or not _exact_string(record.introspection_auth_client_id)
+                            or not _introspection_client_id(record.introspection_auth_client_id)
                             or record.introspection_auth_method != 'client_secret_basic'
                             or (record.introspection_source == 'manual'
+                                and not record.introspection_basic_contract_ref)
+                            or ((record.credential_ref == record.introspection_credential_ref
+                                 or record.client_id == record.introspection_auth_client_id)
                                 and not record.introspection_basic_contract_ref)):
                         raise ValidationError('Introspection requires a separate authorized Basic configuration.')
                 elif record.introspection_source != 'none':
@@ -818,6 +841,7 @@ class AmrResourceIssuer(models.Model):
 class OidcPolicySnapshot(models.Model):
     _name = 'oidc.issuer.policy.snapshot'
     _description = 'Immutable Issuer Policy Recovery Snapshot'
+    _inherit = 'amr.resource.registry.access'
     _rec_name = 'id'
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='restrict', index=True)
