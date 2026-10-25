@@ -38,6 +38,7 @@
                             <group>
                                 <field name="authentication_method" />
                                 <field name="user_id" />
+                                <field name="allowed_grants" widget="many2many_tags" groups="amr_oidc.group_provider_admin" />
                             </group>
                             <field name="key_ids" attrs="{'invisible':[('authentication_method','!=','private_key_jwt')]}">
                                 <tree string="Public keys" >
