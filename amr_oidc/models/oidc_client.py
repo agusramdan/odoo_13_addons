@@ -20,13 +20,17 @@ REDIRECT_MODE = {
 class OidcClient(models.Model):
     _name = 'oidc.client'
     _description = 'OIDC Client'
+    _sql_constraints = [
+        ('client_id_unique', 'unique(client_id)', 'Client ID must be unique.'),
+    ]
 
     active = fields.Boolean(default=True)
     name = fields.Char(help="Authorized Party (client yang meminta token, umum di OpenID Connect)")
     user_id = fields.Many2one('res.users', help="machine user or bot", default=1)
     client_id = fields.Char(
         "Client ID",
-        help="Use web.base.url + redirect_path as redirect_uri if redirect_uri is not set."
+        help="Use web.base.url + redirect_path as redirect_uri if redirect_uri is not set.",
+        required=True,
     )
     client_email = fields.Char()
     client_type = fields.Selection([
@@ -50,6 +54,14 @@ class OidcClient(models.Model):
     )
     authorization_ids = fields.One2many('oidc.authorization.code', 'client_id')
     key_ids = fields.One2many('oidc.client.key', 'client_id')
+
+    @api.constrains('client_id')
+    def _check_client_id_not_blank(self):
+        from odoo.exceptions import ValidationError
+
+        for client in self:
+            if not client.client_id or not client.client_id.strip():
+                raise ValidationError("Client ID is required.")
 
     def check_credentials(self, client_secret):
         self.ensure_one()
