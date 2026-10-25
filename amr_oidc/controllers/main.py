@@ -46,6 +46,14 @@ class ControllerOIDC(ControllerToken):
     def oidc_authorize(self, **params):
         return self._unsupported_authorization_response()
 
+    @route('/oidc/introspect', type='http', auth='none', methods=['GET', 'POST'], csrf=False)
+    def api_oidc_introspect(self, **kwargs):
+        if request.httprequest.method == 'GET':
+            return self.invalid_response(400, 'invalid_request')
+        if 'token' in request.httprequest.args or 'access_token' in request.httprequest.args:
+            return self.invalid_response(400, 'invalid_request')
+        return super(ControllerOIDC, self).api_oidc_introspect(**kwargs)
+
     @route(['/oidc/profile', '/oidc/userinfo'], type='http', auth='none', methods=['GET'], csrf=False)
     def api_oidc_profile(self, **kwargs):
         payload = request.env['amr.oidc.helper'].oidc_profile(**kwargs)
