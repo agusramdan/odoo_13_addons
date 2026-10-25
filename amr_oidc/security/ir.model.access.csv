@@ -8,3 +8,4 @@ access_oidc_client_key_user,access.oidc.client.key user,model_oidc_client_key,ba
 
 access_oidc_authorization_code_admin,access.oidc.authorization.code admin,model_oidc_authorization_code,base.group_erp_manager,1,1,1,1
 access_oidc_authorization_code_user,access.oidc.authorization.code user,model_oidc_authorization_code,base.group_user,1,0,0,0
+access_amr_public_key_admin,access.amr.public.key admin,model_amr_public_key,base.group_erp_manager,1,1,1,1

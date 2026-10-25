@@ -42,7 +42,7 @@ class TestResourceRegistry(ResourceCase):
         with self.assertRaises(ValidationError), self.cr.savepoint():
             self.profile.audience_ids.unlink()
 
-    def test_explicit_migration_is_additive_idempotent_and_conflict_rejecting(self):
+    def test_legacy_migration_is_out_of_scope_and_fails_closed(self):
         params = self.env['ir.config_parameter'].sudo()
         for key, value in {
             'amr_resource.issuer': 'amr_resource.legacy.synthetic_issuer',
@@ -54,22 +54,14 @@ class TestResourceRegistry(ResourceCase):
         values = dict(issuer=self.profile.issuer, client_id='client-a', token_profile='jwt',
                       jwks_uri=self.profile.jwks_uri, token_endpoint=self.profile.token_endpoint,
                       allow_missing_azp=True, resolver_mode='get_user_match')
+        issuer = self.profile.issuer
         self.profile.unlink()
         bindings = [{'sub': 'subject-a', 'user_id': self.admin.id}]
-        result = self.registry._migrate_legacy_v2(values, ['resource-a'], bindings)
-        self.assertTrue(result['dry_run'])
-        self.assertFalse(self.registry.search([('issuer', '=', values['issuer'])]))
-        self.assertFalse(params.get_param('amr_resource.migration.v2.global'))
-        self.registry._migrate_legacy_v2(values, ['resource-a'], bindings, dry_run=False)
-        self.assertTrue(self.registry._migrate_legacy_v2(values, ['resource-a'], bindings,
-                                                       dry_run=False)['already_applied'])
-        rows = self.registry.search([('issuer', '=', values['issuer'])])
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows.binding_ids.sub, 'subject-a')
-        self.assertEqual(params.get_param('amr_resource.issuer'), 'amr_resource.legacy.synthetic_issuer')
-        rows.client_id = 'conflicting-client'
         with self.assertRaises(ValidationError):
-            self.registry._migrate_legacy_v2(values, ['resource-a'], bindings, dry_run=False)
+            self.registry._migrate_legacy_v2(values, ['resource-a'], bindings, dry_run=True)
+        self.assertFalse(self.registry.search([('issuer', '=', issuer)]))
+        self.assertFalse(params.get_param('amr_resource.migration.v2.global'))
+        self.assertEqual(params.get_param('amr_resource.issuer'), 'amr_resource.legacy.synthetic_issuer')
 
     def test_stored_source_audit_without_execution(self):
         self.profile.python_code = 'raise RuntimeError("must never execute")'

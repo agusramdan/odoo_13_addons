@@ -6,9 +6,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 if __package__:
-    from .support import ADDON, load_public_key_model
+    from .support import ADDON, OIDC_ADDON, load_public_key_model
 else:
-    from support import ADDON, load_public_key_model
+    from support import ADDON, OIDC_ADDON, load_public_key_model
 
 
 def _public_pem():
@@ -21,7 +21,7 @@ def _public_pem():
 
 class TestPublicKeyValidation(unittest.TestCase):
     def test_valid_public_pem_passes_model_constraint(self):
-        self.assertTrue((ADDON / "models" / "public_key.py").is_file(), "candidate public-key model is missing")
+        self.assertTrue((OIDC_ADDON / "models" / "public_key.py").is_file(), "candidate public-key model is missing")
         module = load_public_key_model()
         record = SimpleNamespace(public_key=_public_pem())
         self.assertTrue(callable(getattr(module.PublicKey, "_check_public_key", None)), "candidate PEM constraint is missing")

@@ -68,7 +68,7 @@ class TestFailClosedOidcSurface(unittest.TestCase):
         }
         client = SimpleNamespace(
             ensure_one=mock.Mock(),
-            env={"amr.token.helper": helper},
+            env={"amr.oidc.helper": helper},
             client_id="synthetic-client",
             client_email="synthetic@example.invalid",
         )

@@ -79,12 +79,20 @@ class PackageContract(unittest.TestCase):
 
     def test_helper_parent_dispatch_rejects_unhandled_grants(self):
         helper = self.model("models/helper.py", "TokenHelper")
-        self.assertEqual(helper._inherit, "amr.token.helper")
+        self.assertEqual(helper._inherit, "amr.oidc.helper")
         # The isolated parent contract is fail-closed; no real token/auth flow runs.
         expected = {"status": 400, "error": "unsupported_grant_type"}
         self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7), expected)
         self.assertEqual(helper().oidc_token(), expected)
         self.assertNotIn("oidc_token", helper.__dict__)
+
+    def test_oidc_helper_is_standalone_token_engine_base(self):
+        base = self.model("models/token_helper.py", "TokenHelper")
+        extension = self.model("models/helper.py", "TokenHelper")
+        self.assertEqual(base._name, "amr.oidc.helper")
+        self.assertEqual(extension._inherit, "amr.oidc.helper")
+        self.assertFalse(hasattr(extension, "_name"))
+        self.assertNotIn("amr.token.helper", self.source("models/token_helper.py"))
 
     def test_wizard_identity_only_not_export_or_generation(self):
         wizard = self.model("wizard/service_account.py", "OidcServiceAccountWizard")
@@ -107,7 +115,7 @@ class PackageContract(unittest.TestCase):
         self.source("security/ir.model.access.csv")
         self.assertEqual(hashlib.sha256(
             (ADDON / "security/ir.model.access.csv").read_bytes()).hexdigest(),
-            "6bacca85a84990610ad6db92bdf1a6e0b0c33064bf2199a8cb9f9218bb767476")
+            "bd183f1a45aef0c1fa6b1220d799b95a384ce0378d9432066fb55cb9144efdb5")
 
     def test_manifest_resources_and_local_template_assets_exist(self):
         import xml.etree.ElementTree as ET
@@ -119,8 +127,9 @@ class PackageContract(unittest.TestCase):
                 if not relative.endswith(".xml"):
                     continue
                 root = ET.fromstring(content)
-                self.assertEqual(root.tag, "odoo")
-                self.assertEqual([node.tag for node in root], ["data"])
+                self.assertTrue(root.tag == "odoo")
+                self.assertTrue([node.tag for node in root] == ["data"] or
+                                all(node.tag == "record" for node in root))
                 for node in root.iter():
                     if "id" in node.attrib:
                         self.assertFalse(node.attrib["id"] in ids)
@@ -134,7 +143,7 @@ class PackageContract(unittest.TestCase):
     def test_loaded_graph_is_connected_without_booting_addon_root(self):
         expected = {
             "__init__.py": {"controllers", "models", "wizard"},
-            "models/__init__.py": {"helper", "oidc_authorization_code", "oidc_client",
+            "models/__init__.py": {"token_helper", "public_key", "helper", "oidc_authorization_code", "oidc_client",
                                    "oidc_client_key", "oidc_jwt_replay", "oidc_refresh_token"},
             "controllers/__init__.py": {"main"},
             "wizard/__init__.py": {"service_account"},

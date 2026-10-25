@@ -15,10 +15,12 @@
     },
     'data': [
         'security/ir.model.access.csv',
+        'views/public_key_views.xml',
         'views/oidc_client_views.xml',
         'views/oidc_authorization_code_views.xml',
-        'views/login_template.xml',
         'views/menuitem.xml',
+        'views/login_template.xml',
         'wizard/service_account.xml',
     ],
+    'demo': ['demo/public_key_demo.xml'],
 }

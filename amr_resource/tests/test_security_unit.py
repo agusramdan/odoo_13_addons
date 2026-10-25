@@ -732,39 +732,10 @@ class SecurityUnitTests(unittest.TestCase):
         self.assertEqual(self.helper.get_audiences(), ['first', 'second'])
         self.assertEqual(self.helper.get_issuer(), self.profile.issuer)
 
-    def test_uat04_generate_static_endpoint_no_caller_secret(self):
-        self.fetch.return_value = {'access_token': 'synthetic-opaque'}
-        self.profile.credential_ref = 'amr_resource.credential.synthetic'
-        self.env.parameters.get_param.return_value = 'synthetic-secret'
-        self.assertEqual(self.helper.encode(iss=self.profile.issuer, grant_type='client_credentials'), 'synthetic-opaque')
-        self.fetch.assert_called_once_with(self.profile.token_endpoint,
-            data={'grant_type': 'client_credentials'}, headers={'Authorization': 'Basic c3ludGhldGljLWNsaWVudDpzeW50aGV0aWMtc2VjcmV0'})
-        self.fetch.reset_mock()
-        self.reject(self.helper.generate_token, iss='https://unknown.example')
-        self.reject(self.helper.generate_token, iss=self.profile.issuer, client_secret='synthetic')
-        self.fetch.assert_not_called()
-
-    def test_generate_token_strict_selector_and_parameters(self):
-        self.fetch.return_value = {'access_token': 'synthetic-opaque'}
-        self.profile.credential_ref = 'amr_resource.credential.synthetic'
-        self.env.parameters.get_param.return_value = 'synthetic-secret'
-        issuer = self.profile.issuer
-        for kwargs in ({}, {'iss': issuer, 'issuer': 'https://other.example'},
-                       {'iss': issuer, 'client_secret': ''}, {'iss': issuer, 'client_secret': None},
-                       {'iss': issuer, 'client_id': ''}, {'iss': issuer, 'client_id': None},
-                       {'iss': issuer, 'grant_type': 'password'}, {'iss': issuer, 'scope': []},
-                       {'iss': issuer, 'unexpected': 'value'}):
-            self.reject(self.helper.generate_token, **kwargs)
-        self.fetch.assert_not_called()
-        result = self.helper.generate_token(iss=issuer, issuer=issuer, issuer_url=issuer,
-                                            grant_type='client_credentials', scope='')
-        self.assertEqual(result['access_token'], 'synthetic-opaque')
-        self.fetch.assert_called_once_with(self.profile.token_endpoint,
-            data={'grant_type': 'client_credentials', 'scope': ''},
-            headers={'Authorization': 'Basic c3ludGhldGljLWNsaWVudDpzeW50aGV0aWMtc2VjcmV0'})
-        self.fetch.reset_mock()
-        self.profile.credential_ref = False
-        self.reject(self.helper.generate_token, iss=issuer, grant_type='client_credentials')
+    def test_resource_helper_is_verification_only(self):
+        self.assertTrue(callable(self.helper.decode))
+        self.assertFalse(hasattr(self.helper, 'encode'))
+        self.assertFalse(hasattr(self.helper, 'generate_token'))
         self.fetch.assert_not_called()
 
     def test_uat09_session_bearer_params_and_no_weaker_fallback(self):
@@ -1019,21 +990,6 @@ class SecurityUnitTests(unittest.TestCase):
         self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
         self.fetch.assert_not_called()
         self.env.parameters.get_param.assert_not_called()
-
-    def test_generation_and_introspection_keep_distinct_credential_references(self):
-        self.profile.mvp_enabled = False
-        self.profile.metadata_mode = 'manual'
-        self.profile.credential_ref = 'fixture.generation.secret'
-        self.profile.introspection_credential_ref = 'fixture.introspection.secret'
-        self.env.parameters.get_param.return_value = 'generation-secret'
-        self.fetch.return_value = dict(access_token='generated-access')
-        self.assertEqual(self.helper.encode(iss=self.profile.issuer,
-            grant_type='client_credentials'), 'generated-access')
-        self.fetch.assert_called_once_with(self.profile.token_endpoint,
-            data={'grant_type': 'client_credentials'},
-            headers={'Authorization': helper_module._introspection_basic_header(
-                self.profile.client_id, 'generation-secret')})
-        self.env.parameters.get_param.assert_called_once_with('fixture.generation.secret')
 
     def test_mvp_opaque_requires_explicit_absent_issuer_policy(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
