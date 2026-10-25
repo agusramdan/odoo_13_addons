@@ -25,6 +25,7 @@ class OidcClient(models.Model):
     ]
 
     active = fields.Boolean(default=True)
+    is_confidential = fields.Boolean(default=True)
     name = fields.Char(help="Authorized Party (client yang meminta token, umum di OpenID Connect)")
     user_id = fields.Many2one('res.users', help="machine user or bot", default=1)
     client_id = fields.Char(
