@@ -816,6 +816,32 @@ class SecurityUnitTests(unittest.TestCase):
         self.fetch.side_effect = changed_during_jwks
         self.reject(self.helper.validate, self.token())
 
+    def test_introspection_rejects_revision_change_during_claim_validation(self):
+        settings = dict(mvp_enabled=True, metadata_mode='manual',
+            discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
+            verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
+            no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
+            introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
+            introspection_credential_ref='fixture.introspection.secret',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
+            introspection_basic_contract_ref='accepted.contract.ref',
+            introspection_credential_endpoint='https://issuer.example/introspect')
+        for name, value in settings.items():
+            setattr(self.profile, name, value)
+        self.profile.token_profile = 'opaque'
+        self.profile.policy_revision = 5
+        self.env.parameters.get_param.return_value = 'synthetic-secret'
+        self.fetch.return_value = dict(self.claims, active=True)
+        original_claims = self.helper._claims
+
+        def change_revision_after_claims(claims, profile, **kwargs):
+            verified = original_claims(claims, profile, **kwargs)
+            profile.policy_revision += 1
+            return verified
+
+        with patch.object(self.helper, '_claims', side_effect=change_revision_after_claims):
+            self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
+
     def test_prohibited_jwt_introspection_paths_do_not_read_secret_or_post(self):
         settings = dict(mvp_enabled=True, metadata_mode='manual',
             discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
