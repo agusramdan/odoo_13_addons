@@ -154,7 +154,8 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile = SimpleNamespace(issuer='https://issuer.example', active=True,
             company_id=self.env.company, token_profile='jwt', jwks_uri='https://keys.example/jwks',
             local_public_key=False, local_key_ref=False, token_endpoint='https://issuer.example/token',
-            introspection_endpoint='https://issuer.example/introspect', credential_ref=False,
+            mvp_enabled=True, metadata_mode='manual', verification_source='jwks',
+            introspection_source='none', introspection_endpoint=False, credential_ref=False,
             client_id='synthetic-client', azp='synthetic-client', allow_missing_azp=False,
             audience_ids=Rows([SimpleNamespace(value='first'), SimpleNamespace(value='second')]),
             binding_ids=Rows([SimpleNamespace(sub='subject', user_id=self.user)]),
@@ -195,6 +196,96 @@ class SecurityUnitTests(unittest.TestCase):
             call(*args, **kwargs)
         self.assertEqual(result.exception.code, 401)
         self.assertIsNone(result.exception.__context__)
+
+    def test_jwks_rejects_malformed_unselected_rsa_member(self):
+        malformed_unselected = dict(self.jwk, kid='other-key', n='not-base64url')
+        self.fetch.return_value = {'keys': [self.jwk, malformed_unselected]}
+        self.reject(self.helper.validate, self.token())
+
+    def test_jwks_rejects_invalid_global_key_ids_and_members(self):
+        malformed_sets = (
+            [],
+            [self.jwk, None],
+            [self.jwk, {'kty': 'RSA'}],
+            [self.jwk, {'kid': ''}],
+            [self.jwk, {'kid': 'a' * 257}],
+            [self.jwk, {'kid': 'bad\u00a0kid'}],
+            [self.jwk, {'kid': 'bad\u0001kid'}],
+            [self.jwk, {'kid': 'synthetic-key'}],
+        )
+        for keys in malformed_sets:
+            with self.subTest(keys=keys):
+                self.fetch.return_value = {'keys': keys}
+                self.reject(self.helper.validate, self.token())
+
+    def test_opaque_token_dispatch_is_rejected_before_introspection(self):
+        self.profile.token_profile = 'opaque'
+        self.profile.mvp_enabled = False
+        self.reject(self.helper.validate, 'synthetic-opaque-token')
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_non_mvp_disabled_ps256_policy_rejected_before_fetch(self):
+        self.profile.mvp_enabled = False
+        self.profile.algorithm_policy_ids = [SimpleNamespace(
+            algorithm_id=SimpleNamespace(name='PS256'), enabled=False)]
+        self.reject(self.helper.validate, self.token())
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_non_mvp_source_mismatch_does_not_fallback_to_jwks(self):
+        self.profile.mvp_enabled = False
+        self.profile.verification_source = 'local_public'
+        self.profile.local_key_ref = False
+        self.profile.local_public_key = False
+        self.reject(self.helper.validate, self.token())
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_non_mvp_jwks_source_does_not_use_local_key_reference(self):
+        self.profile.mvp_enabled = False
+        self.profile.verification_source = 'jwks'
+        self.profile.local_key_ref = 'fixture.local-public-key'
+        self.helper._local_public_key = Mock(return_value=self.pem)
+        self.reject(self.helper.validate, self.token())
+        self.helper._local_public_key.assert_not_called()
+        self.fetch.assert_not_called()
+
+    def test_get_jwks_data_rejects_local_profile_before_fetch(self):
+        self.profile.verification_source = 'local_public'
+        self.profile.local_key_ref = False
+        self.profile.local_public_key = False
+        self.profile.jwks_uri = False
+        self.reject(self.helper.get_jwks_data, self.profile.issuer)
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_validate_rejects_discovery_local_key_before_key_read(self):
+        self.profile.metadata_mode = 'oidc_discovery'
+        self.profile.verification_source = 'local_public'
+        self.profile.jwks_uri = False
+        self.profile.local_key_ref = 'fixture.local-public-key'
+        self.helper._local_public_key = Mock(return_value=self.pem)
+        self.reject(self.helper.validate, self.token())
+        self.helper._local_public_key.assert_not_called()
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_non_mvp_discovery_profile_fails_before_fetch(self):
+        self.profile.mvp_enabled = False
+        self.profile.metadata_mode = 'oidc_discovery'
+        self.profile.verification_source = 'jwks'
+        self.profile.introspection_source = 'none'
+        self.reject(self.helper.get_oidc_config, self.profile.issuer)
+        self.fetch.assert_not_called()
+
+    def test_non_mvp_ps256_rejected_before_dispatch(self):
+        self.profile.mvp_enabled = False
+        token = jwt.encode(self.claims, self.key, algorithm='PS256',
+                           headers={'typ': 'at+jwt', 'kid': 'synthetic-key'})
+        self.reject(self.helper.validate, token)
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
 
     def test_uat06_actual_rs256_signature_and_helpers(self):
         token = self.token()
@@ -374,63 +465,64 @@ class SecurityUnitTests(unittest.TestCase):
         with self.assertRaises(Unauthorized):
             helper_module._parse_rfc8414_metadata(incomplete, self.profile.issuer)
 
-    def test_get_oidc_config_resolves_discovery_or_declared_no_jwks(self):
+    def test_manual_jwks_config_does_not_require_discovery_unavailable_declaration(self):
+        self.profile.mvp_enabled = True
+        self.profile.metadata_mode = 'manual'
+        self.profile.token_profile = 'jwt'
+        self.profile.verification_source = 'jwks'
+        self.profile.introspection_source = 'none'
+        self.profile.discovery_unavailable_declared = False
+        self.profile.discovery_unavailable_evidence_ref = False
+        result = self.helper.get_oidc_config(self.profile.issuer)
+        self.assertEqual(result['jwks_uri'], self.profile.jwks_uri)
+        self.fetch.assert_not_called()
+
+    def test_runtime_rejects_truthy_discovery_fields_before_key_or_network_access(self):
+        self.profile.discovery_unavailable_declared = True
+        self.helper._local_public_key = Mock(return_value=self.pem)
+        self.profile.verification_source = 'local_public'
+        self.profile.jwks_uri = False
+        self.profile.local_key_ref = 'fixture.local-public-key'
+        self.reject(self.helper.validate, self.token())
+        self.helper._local_public_key.assert_not_called()
+        self.fetch.assert_not_called()
+        self.profile.discovery_unavailable_declared = False
+        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery'
+        self.reject(self.helper.validate, self.token())
+        self.helper._local_public_key.assert_not_called()
+        self.fetch.assert_not_called()
+
+    def test_manual_jwks_config_rejects_stale_introspection_and_never_returns_endpoint(self):
+        self.profile.introspection_endpoint = False
+        config, metadata = self.helper._get_oidc_config(self.profile.issuer)
+        self.assertIsNone(config['introspection_endpoint'])
+        self.assertIsNone(metadata)
+        self.profile.introspection_endpoint = 'https://issuer.example/introspect'
+        with self.assertRaises(Unauthorized):
+            self.helper._get_oidc_config(self.profile.issuer)
+
+    def test_get_oidc_config_rejects_discovery_and_introspection_modes_before_fetch(self):
         self.profile.mvp_enabled = True
         self.profile.metadata_mode = 'oidc_discovery'
         self.profile.token_profile = 'jwt'
-        metadata = {'issuer': self.profile.issuer,
-                    'authorization_endpoint': 'https://id.invalid/authorize',
-                    'jwks_uri': 'https://id.invalid/jwks',
-                    'response_types_supported': ['code'],
-                    'subject_types_supported': ['public'],
-                    'id_token_signing_alg_values_supported': ['RS256'],
-                    'token_endpoint': 'https://id.invalid/token'}
-        self.fetch.return_value = metadata
-        result = self.helper.get_oidc_config(self.profile.issuer)
-        self.assertEqual(result['jwks_uri'], metadata['jwks_uri'])
-        self.fetch.assert_called_once_with(helper_module._oidc_discovery_url(self.profile.issuer))
         self.fetch.reset_mock()
-        self.fetch.side_effect = [metadata, {'keys': [self.jwk]}]
-        self.assertEqual(self.helper.get_jwks_data(self.profile.issuer), {'keys': [self.jwk]})
-        self.assertEqual(self.fetch.call_args_list[0][0],
-                         (helper_module._oidc_discovery_url(self.profile.issuer),))
-        self.assertEqual(self.fetch.call_args_list[1][0], ('https://id.invalid/jwks',))
-        self.fetch.side_effect = None
-        self.fetch.reset_mock()
-        self.profile.metadata_mode = 'manual'
-        self.profile.discovery_unavailable_declared = False
         with self.assertRaises(Unauthorized):
             self.helper.get_oidc_config(self.profile.issuer)
         self.fetch.assert_not_called()
-
+        self.profile.metadata_mode = 'manual'
         self.profile.discovery_unavailable_declared = True
         self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery.1'
         self.profile.verification_source = 'none'
         self.profile.jwks_uri = False
-        self.profile.no_jwks_declaration = True
-        self.profile.no_jwks_evidence_ref = 'evidence.jwks.absent'
         self.profile.introspection_source = 'rfc8414'
-        self.profile.introspection_endpoint = False
-        rfc = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
-               'authorization_endpoint': 'https://id.invalid/authorize',
-               'token_endpoint': 'https://id.invalid/token',
-               'introspection_endpoint': 'https://id.invalid/introspect'}
-        self.fetch.return_value = rfc
-        result = self.helper.get_oidc_config(self.profile.issuer)
-        self.assertIsNone(result['jwks_uri'])
-        self.assertEqual(result['introspection_endpoint'], rfc['introspection_endpoint'])
-        self.fetch.assert_called_once_with(helper_module._rfc8414_metadata_url(self.profile.issuer))
-        self.env.parameters.get_param.assert_not_called()
-        invalid_rfc = dict(rfc, response_types_supported=['custom'],
-                           grant_types_supported=['authorization_code'])
-        del invalid_rfc['authorization_endpoint']
-        self.fetch.reset_mock()
-        self.fetch.return_value = invalid_rfc
         with self.assertRaises(Unauthorized):
             self.helper.get_oidc_config(self.profile.issuer)
+        self.fetch.assert_not_called()
         self.env.parameters.get_param.assert_not_called()
 
+
     def test_uat06_local_key_no_loopback_or_local_bypass(self):
+        self.profile.verification_source = 'local_public'
         self.profile.local_key_ref = "amr_resource.keys.synthetic"
         self.profile.local_public_key, self.profile.jwks_uri = self.pem, False
         self.env.parameters.get_param.return_value = self.profile.local_public_key
@@ -451,13 +543,8 @@ class SecurityUnitTests(unittest.TestCase):
 
     def test_uat05_opaque_post_profile_bound_issuer(self):
         self.opaque()
-        payload = self.helper.validate('synthetic-opaque')
-        self.assertEqual(payload['iss'], self.profile.issuer)
-        self.assertEqual(self.helper.get_uid(payload), self.user.id)
-        self.fetch.assert_called_once_with(self.profile.introspection_endpoint,
-                                          data={'token': 'synthetic-opaque'}, headers={})
-        self.helper.validate('synthetic-opaque')
-        self.assertEqual(self.fetch.call_count, 2)
+        self.reject(self.helper.validate, 'synthetic-opaque')
+        self.fetch.assert_not_called()
 
     def test_uat05_opaque_strict_active_claims(self):
         good = self.opaque()
@@ -472,20 +559,9 @@ class SecurityUnitTests(unittest.TestCase):
             self.reject(self.helper.validate, 'synthetic-opaque')
 
     def test_opaque_optional_claim_contract(self):
-        good = self.opaque()
-        good.update(exp=int(time.time()) + 30, iat=int(time.time()), nbf=int(time.time()),
-                    extra_uid=1, company_id=999, roles=['admin'])
-        good.pop('azp')
-        self.profile.allow_missing_azp = True
-        self.fetch.return_value = good
-        payload = self.helper.validate('synthetic-opaque')
-        self.assertEqual(payload['iss'], self.profile.issuer)
-        self.assertNotIn('typ', payload)
-        self.assertNotIn('jti', payload)
-        for name, value in (('exp', int(time.time())), ('iat', int(time.time()) + 1),
-                            ('nbf', int(time.time()) + 1), ('iat', True), ('exp', '123')):
-            self.fetch.return_value = dict(good, **{name: value})
-            self.reject(self.helper.validate, 'synthetic-opaque')
+        self.opaque()
+        self.reject(self.helper.validate, 'synthetic-opaque')
+        self.fetch.assert_not_called()
 
     def test_uat05_opaque_caller_url_and_credentials_rejected(self):
         self.opaque()
@@ -528,8 +604,6 @@ class SecurityUnitTests(unittest.TestCase):
     def test_mvp_verification_uses_intersected_issuer_algorithm_policy(self):
         self.profile.mvp_enabled = True
         self.profile.metadata_mode = 'manual'
-        self.profile.discovery_unavailable_declared = True
-        self.profile.discovery_unavailable_evidence_ref = 'synthetic-discovery-evidence'
         self.profile.verification_source = 'jwks'
         self.profile.introspection_source = 'none'
         self.profile._verification_algorithms = Mock(return_value=frozenset(['RS256']))
@@ -548,9 +622,8 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.resolver_mode = 'mapping'
         self.profile.mvp_enabled = True
         self.profile.metadata_mode = 'manual'
-        self.profile.discovery_unavailable_declared = True
-        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery'
         self.profile.verification_source = 'jwks'
+        self.profile.introspection_source = 'none'
         self.profile.user_mapping_ids = Rows([
             SimpleNamespace(active=True, sequence=10, field_user='login', jwt_key='primary'),
             SimpleNamespace(active=True, sequence=20, field_user='login', jwt_key='secondary'),
@@ -588,9 +661,8 @@ class SecurityUnitTests(unittest.TestCase):
         self.profile.resolver_mode = 'mapping'
         self.profile.mvp_enabled = True
         self.profile.metadata_mode = 'manual'
-        self.profile.discovery_unavailable_declared = True
-        self.profile.discovery_unavailable_evidence_ref = 'synthetic.discovery.evidence'
         self.profile.verification_source = 'jwks'
+        self.profile.introspection_source = 'none'
         self.profile.user_mapping_ids = Rows([
             SimpleNamespace(active=True, sequence=20, field_user='login', jwt_key='preferred_username'),
             SimpleNamespace(active=True, sequence=10, field_user='login', jwt_key='preferred_username'),
@@ -763,7 +835,9 @@ class SecurityUnitTests(unittest.TestCase):
         response = dict(self.claims, active=True)
         response.pop('jti')
         self.fetch.return_value = response
-        self.assertTrue(self.helper._verified(self.helper.validate(self.token())))
+        self.reject(self.helper.validate, self.token())
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
 
     def test_explicit_jwt_no_jwks_uses_authoritative_introspection_after_prefilter(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
@@ -782,26 +856,48 @@ class SecurityUnitTests(unittest.TestCase):
         response = dict(self.claims, active=True)
         self.fetch.return_value = response
         token = self.token()
-        result = self.helper.validate(token)
-        self.assertTrue(self.helper._verified(result))
-        self.assertEqual(result['jti'], 'synthetic-jti')
-        self.fetch.assert_called_once_with(self.profile.introspection_endpoint,
-            data={'token': token}, headers={'Authorization': helper_module._introspection_basic_header(
-                'auth-client', 'synthetic-secret')}, preflight=self.preflight.return_value)
-        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
-        self.fetch.reset_mock()
-        self.env.parameters.get_param.reset_mock()
-        self.profile.introspection_source = 'rfc8414'
-        self.profile.introspection_endpoint = False
-        metadata = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
-                    'authorization_endpoint': 'https://issuer.example/authorize',
-                    'token_endpoint': 'https://issuer.example/token',
-                    'introspection_endpoint': 'https://issuer.example/introspect',
-                    'introspection_endpoint_auth_methods_supported': ['client_secret_basic']}
-        self.fetch.side_effect = [metadata, response]
-        self.assertTrue(self.helper._verified(self.helper.validate(token)))
-        self.assertEqual(self.fetch.call_count, 2)
-        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
+        self.reject(self.helper.validate, token)
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
+
+    def test_policy_revision_check_refreshes_cached_orm_state(self):
+        profile = SimpleNamespace(active=True, policy_revision=1, ids=[3])
+        profile.invalidate_cache = Mock(side_effect=lambda fnames, ids: setattr(profile, 'policy_revision', 2))
+        with self.assertRaises(Unauthorized):
+            helper_module._require_policy_revision(profile, 1)
+        profile.invalidate_cache.assert_called_once_with(fnames=['active', 'policy_revision'], ids=[3])
+
+    def test_stale_policy_before_local_key_read_rejects_without_reading_key(self):
+        self.profile.policy_revision = 1
+        self.profile.verification_source = 'local_public'
+        self.profile.jwks_uri = False
+        self.profile.local_key_ref = 'fixture.local-public-key'
+        self.profile.invalidate_cache = Mock(
+            side_effect=lambda fnames, ids: setattr(self.profile, 'policy_revision', 2))
+        self.helper._local_public_key = Mock(return_value=self.pem)
+        self.reject(self.helper.validate, self.token())
+        self.helper._local_public_key.assert_not_called()
+
+    def test_policy_revision_change_during_user_eligibility_rejects_dispatch(self):
+        self.profile.policy_revision = 1
+        validation = self.helper.validate(self.token())
+
+        def stale_after_eligibility(user):
+            self.profile.policy_revision = 2
+            return user
+
+        with patch.object(self.helper, '_eligible_user', side_effect=stale_after_eligibility):
+            self.reject(self.helper.get_user_match, validation)
+
+    def test_policy_revision_rechecked_after_resolution_before_token_dispatch(self):
+        self.profile.policy_revision = 1
+
+        def stale_user(validation):
+            self.profile.policy_revision = 2
+            return self.user
+
+        with patch.object(self.helper, 'get_user_match', side_effect=stale_user):
+            self.reject(self.helper.get_user_token_login, self.token())
 
     def test_verified_claims_reject_policy_revision_changes(self):
         self.profile.policy_revision = 1
@@ -905,8 +1001,8 @@ class SecurityUnitTests(unittest.TestCase):
                 posts = [item for item in self.fetch.call_args_list if item[1].get('data') == {'token': token}]
                 self.assertEqual(posts, [])
 
-    def test_rfc8414_introspection_capability_is_retained_and_enforced_before_secret(self):
-        values = dict(mvp_enabled=True, metadata_mode='manual',
+    def test_rfc8414_introspection_capability_is_rejected_before_fetch_or_secret(self):
+        for name, value in dict(mvp_enabled=True, metadata_mode='rfc8414',
             discovery_unavailable_declared=True, discovery_unavailable_evidence_ref='evidence.discovery',
             verification_source='none', jwks_uri=False, local_key_ref=False, local_public_key=False,
             no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
@@ -914,105 +1010,30 @@ class SecurityUnitTests(unittest.TestCase):
             introspection_credential_ref='fixture.introspection.secret',
             introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
             introspection_basic_contract_ref='accepted.contract.ref',
-            introspection_credential_endpoint='https://issuer.example/introspect')
-        for name, value in values.items():
+            introspection_credential_endpoint='https://issuer.example/introspect').items():
             setattr(self.profile, name, value)
         self.profile.token_profile = 'opaque'
-        self.env.parameters.get_param.return_value = 'synthetic-secret'
-        self.fetch.return_value = dict(iss=self.profile.issuer, active=True, sub='subject',
-            client_id='synthetic-client', aud='second', azp='synthetic-client')
-        base = {'issuer': self.profile.issuer, 'response_types_supported': ['code'],
-                'authorization_endpoint': 'https://issuer.example/authorize',
-                'token_endpoint': 'https://issuer.example/token',
-                'introspection_endpoint': self.profile.introspection_credential_endpoint}
-        cases = (
-            ('valid', {'introspection_endpoint_auth_methods_supported': ['client_secret_basic']}, True),
-            ('absent-with-contract', {}, True),
-            ('malformed', {'introspection_endpoint_auth_methods_supported': 'client_secret_basic'}, False),
-            ('empty', {'introspection_endpoint_auth_methods_supported': []}, False),
-            ('excluded', {'introspection_endpoint_auth_methods_supported': ['client_secret_post']}, False),
-        )
-        for label, capability, succeeds in cases:
-            with self.subTest(case=label):
-                self.fetch.reset_mock()
-                self.env.parameters.get_param.reset_mock()
-                self.fetch.side_effect = None
-                self.fetch.return_value = dict(base, **capability)
-                if succeeds:
-                    config = self.helper.get_oidc_config(self.profile.issuer)
-                    self.assertEqual(set(config), {'issuer', 'jwks_uri', 'token_endpoint', 'introspection_endpoint'})
-                    self.fetch.assert_called_once()
-                    self.fetch.reset_mock()
-                    internal_config, methods = self.helper._get_oidc_config(self.profile.issuer)
-                    self.assertEqual(internal_config, config)
-                    self.assertEqual(methods, capability.get('introspection_endpoint_auth_methods_supported'))
-                    self.fetch.assert_called_once()
-                    self.fetch.reset_mock()
-                    self.fetch.side_effect = [dict(base, **capability), dict(iss=self.profile.issuer,
-                        active=True, sub='subject', client_id='synthetic-client', aud='second',
-                        azp='synthetic-client')]
-                    self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
-                    self.assertEqual(self.fetch.call_count, 2)
-                    self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
-                else:
-                    self.fetch.side_effect = [dict(base, **capability), {}]
-                    self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
-                    self.assertEqual(self.fetch.call_count, 1)
-                    self.env.parameters.get_param.assert_not_called()
-        self.profile.introspection_basic_contract_ref = False
-        self.fetch.reset_mock()
-        self.fetch.side_effect = [dict(base, introspection_endpoint_auth_methods_supported=['client_secret_basic']),
-            dict(iss=self.profile.issuer, active=True, sub='subject', client_id='synthetic-client',
-                 aud='second', azp='synthetic-client')]
-        self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
-        self.assertEqual(self.fetch.call_count, 2)
-        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
-
-        self.fetch.reset_mock()
-        self.env.parameters.get_param.reset_mock()
-        self.fetch.side_effect = [dict(base), {}]
+        self.fetch.return_value = {'issuer': self.profile.issuer,
+            'introspection_endpoint': 'https://issuer.example/introspect'}
+        self.reject(self.helper.get_oidc_config, self.profile.issuer)
         self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
-        self.assertEqual(self.fetch.call_count, 1)
+        self.fetch.assert_not_called()
         self.env.parameters.get_param.assert_not_called()
 
     def test_generation_and_introspection_keep_distinct_credential_references(self):
-        self.profile.mvp_enabled = True
+        self.profile.mvp_enabled = False
         self.profile.metadata_mode = 'manual'
-        self.profile.discovery_unavailable_declared = True
-        self.profile.discovery_unavailable_evidence_ref = 'evidence.discovery'
-        self.profile.verification_source = 'none'
-        self.profile.jwks_uri = False
-        self.profile.no_jwks_declaration = True
-        self.profile.no_jwks_evidence_ref = 'evidence.keys'
-        self.profile.introspection_source = 'manual'
-        self.profile.token_profile = 'opaque'
-        self.profile.introspection_endpoint = 'https://issuer.example/introspect'
         self.profile.credential_ref = 'fixture.generation.secret'
         self.profile.introspection_credential_ref = 'fixture.introspection.secret'
-        self.profile.introspection_credential_endpoint = self.profile.introspection_endpoint
-        self.profile.introspection_auth_client_id = 'auth-client'
-        self.profile.introspection_auth_method = 'client_secret_basic'
-        self.profile.introspection_basic_contract_ref = 'accepted.contract.ref'
-        self.env.parameters.get_param.side_effect = lambda key: {
-            'fixture.generation.secret': 'generation-secret',
-            'fixture.introspection.secret': 'introspection-secret'}.get(key)
-        self.fetch.side_effect = [dict(access_token='generated-access'),
-            dict(active=True, iss=self.profile.issuer, sub='subject', client_id=self.profile.client_id,
-                 aud='second', exp=int(time.time()) + 300, iat=int(time.time()) - 1,
-                 jti='introspection-jti', azp=self.profile.azp)]
+        self.env.parameters.get_param.return_value = 'generation-secret'
+        self.fetch.return_value = dict(access_token='generated-access')
         self.assertEqual(self.helper.encode(iss=self.profile.issuer,
             grant_type='client_credentials'), 'generated-access')
-        validation = self.helper.introspect_token('opaque-access', iss=self.profile.issuer)
-        self.assertTrue(self.helper._verified(validation))
-        self.assertEqual(self.fetch.call_args_list[0][0], (self.profile.token_endpoint,))
-        self.assertEqual(self.fetch.call_args_list[0][1]['data'], {'grant_type': 'client_credentials'})
-        self.assertEqual(self.fetch.call_args_list[0][1]['headers']['Authorization'],
-            helper_module._introspection_basic_header(self.profile.client_id, 'generation-secret'))
-        self.assertEqual(self.fetch.call_args_list[1][0], (self.profile.introspection_endpoint,))
-        self.assertEqual(self.fetch.call_args_list[1][1]['headers']['Authorization'],
-            helper_module._introspection_basic_header('auth-client', 'introspection-secret'))
-        self.assertEqual(self.env.parameters.get_param.call_args_list,
-            [call('fixture.generation.secret'), call('fixture.introspection.secret')])
+        self.fetch.assert_called_once_with(self.profile.token_endpoint,
+            data={'grant_type': 'client_credentials'},
+            headers={'Authorization': helper_module._introspection_basic_header(
+                self.profile.client_id, 'generation-secret')})
+        self.env.parameters.get_param.assert_called_once_with('fixture.generation.secret')
 
     def test_mvp_opaque_requires_explicit_absent_issuer_policy(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
@@ -1027,12 +1048,10 @@ class SecurityUnitTests(unittest.TestCase):
             setattr(self.profile, name, value)
         self.profile.token_profile = 'opaque'
         self.env.parameters.get_param.return_value = 'synthetic-secret'
-        self.fetch.return_value = dict(active=True, sub='subject', client_id='synthetic-client',
-            aud='second', azp='synthetic-client')
+        self.fetch.return_value = {'active': True, 'sub': 'subject'}
         self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
-        self.profile.allow_introspection_iss_absent = True
-        self.assertTrue(self.helper._verified(
-            self.helper.introspect_token('opaque-token', iss=self.profile.issuer)))
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
 
     def test_unsafe_introspection_endpoint_rejected_before_secret_lookup(self):
         for name, value in dict(mvp_enabled=True, metadata_mode='manual',
@@ -1062,23 +1081,16 @@ class SecurityUnitTests(unittest.TestCase):
             no_jwks_declaration=True, no_jwks_evidence_ref='evidence.keys',
             introspection_source='manual', introspection_endpoint='https://issuer.example/introspect',
             introspection_credential_ref='fixture.introspection.secret',
-            introspection_auth_client_id='auth client+/%', introspection_auth_method='client_secret_basic',
+            introspection_auth_client_id='auth-client', introspection_auth_method='client_secret_basic',
             introspection_basic_contract_ref='evidence.basic',
             introspection_credential_endpoint='https://issuer.example/introspect').items():
             setattr(self.profile, name, value)
         self.profile.token_profile = 'opaque'
         self.env.parameters.get_param.return_value = 'secret:/+ %'
-        self.fetch.return_value = dict(iss=self.profile.issuer, active=True, sub='subject',
-            client_id='synthetic-client', aud='second', exp=int(time.time()) + 300,
-            azp='synthetic-client')
-        result = self.helper.introspect_token('opaque-token', iss=self.profile.issuer)
-        self.assertTrue(self.helper._verified(result))
-        self.env.parameters.get_param.assert_called_once_with('fixture.introspection.secret')
-        self.fetch.assert_called_once_with(self.profile.introspection_endpoint,
-            data={'token': 'opaque-token'}, headers={'Authorization': helper_module._introspection_basic_header(
-                'auth client+/%', 'secret:/+ %')}, preflight=self.preflight.return_value)
-        self.assertEqual(result['client_id'], 'synthetic-client')
-        self.assertNotIn('auth+client', result.values())
+        self.fetch.return_value = dict(iss=self.profile.issuer, active=True, sub='subject')
+        self.reject(self.helper.introspect_token, 'opaque-token', iss=self.profile.issuer)
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_not_called()
 
 
 if __name__ == '__main__':

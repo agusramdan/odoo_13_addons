@@ -17,13 +17,16 @@ CODE_GROUP = 'amr_resource.group_oidc_code_admin'
 AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date', 'policy_revision'}
 POLICY_CHILD_MODELS = {'oidc.issuer.register.audience', 'oidc.issuer.subject',
                        'oidc.issuer.user.mapping', 'oidc.issuer.algorithm.policy'}
+_POLICY_CHILD_TABLES = {
+    'oidc.issuer.register.audience': 'oidc_issuer_register_audience',
+    'oidc.issuer.subject': 'oidc_issuer_subject',
+    'oidc.issuer.user.mapping': 'oidc_issuer_user_mapping',
+    'oidc.issuer.algorithm.policy': 'oidc_issuer_algorithm_policy',
+}
 _ALGORITHM_CATALOG = __import__('types').MappingProxyType({
     'RS256': __import__('types').MappingProxyType({
         'key_family': 'RSA', 'min_key_bits': 2048,
         'purpose': 'access_token_verification', 'support_state': 'supported'}),
-    'PS256': __import__('types').MappingProxyType({
-        'key_family': 'RSA', 'min_key_bits': 2048,
-        'purpose': 'access_token_verification', 'support_state': 'target'}),
 })
 
 
@@ -224,21 +227,61 @@ class RegistryAccess(models.AbstractModel):
             if len(parent) != 1:
                 raise AccessError('Registry access denied.')
 
-    def _bump_parent_revisions(self, records):
+    def _lock_policy_child_rows(self):
+        if self._name not in POLICY_CHILD_MODELS:
+            return
+        ids = sorted(set(self.ids))
+        if not ids:
+            return
+        table = _POLICY_CHILD_TABLES[self._name]
+        # Odoo 13 ORM has no read-only row-lock API; lock child IDs in stable
+        # order before relation refresh and rechecks to preserve AC-M06 correctness.
+        self.env.cr.execute(
+            'SELECT id FROM %s WHERE id IN %%s ORDER BY id FOR UPDATE' % table,
+            (tuple(ids),))
+        self.invalidate_cache(ids=ids)
+
+    def _lock_policy_parent_ids(self, parent_ids):
+        if self._name not in POLICY_CHILD_MODELS:
+            return []
+        parent_ids = sorted(set(parent_id for parent_id in parent_ids if parent_id))
+        parents = self.env['oidc.issuer.register'].browse(parent_ids)
+        if parents:
+            parents._lock_policy_state()
+        return parents
+
+    def _bump_policy_parents(self, parents):
         if self.env.context.get('_policy_restore_token') is _RESTORE_CONTEXT_TOKEN:
             return
-        if self._name in POLICY_CHILD_MODELS:
-            for issuer in records.mapped('issuer_id'):
-                if hasattr(issuer, '_bump_policy_revision'):
-                    issuer._bump_policy_revision()
+        by_id = {issuer.id: issuer for issuer in parents}
+        for issuer_id in sorted(by_id):
+            issuer = by_id[issuer_id]
+            if hasattr(issuer, '_bump_policy_revision'):
+                issuer._bump_policy_revision()
 
     @api.model_create_multi
     def create(self, vals_list):
         self.check_access_rights('create')
         for values in vals_list:
             self._guard_parent_values(values)
+        parents = []
+        if self._name in POLICY_CHILD_MODELS:
+            defaults = {}
+            if any('issuer_id' not in values for values in vals_list):
+                defaults = self.default_get(['issuer_id'])
+            parent_ids = [values.get('issuer_id', defaults.get('issuer_id'))
+                          for values in vals_list]
+            parent_ids = [parent_id for parent_id in parent_ids if parent_id]
+            if not parent_ids:
+                raise AccessError('Registry access denied.')
+            for parent_id in set(parent_ids):
+                self._guard_parent_values({'issuer_id': parent_id})
+            parents = self._lock_policy_parent_ids(parent_ids)
+            self.check_access_rights('create')
+            for parent in parents:
+                self._guard_parent_values({'issuer_id': parent.id})
         records = super(RegistryAccess, self).create(vals_list)
-        self._bump_parent_revisions(records)
+        self._bump_policy_parents(parents)
         _logger.info('Trust registry create model=%s ids=%s actor=%s',
                      self._name, records.ids, self.env.uid)
         return records
@@ -247,16 +290,26 @@ class RegistryAccess(models.AbstractModel):
         self.check_access_rights('write')
         self.check_access_rule('write')
         self._guard_parent_values(values)
-        parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
+        child_model = self._name in POLICY_CHILD_MODELS
+        parents = self.mapped('issuer_id') if child_model else []
+        parent_ids = [parent.id for parent in parents]
+        if child_model and values.get('issuer_id'):
+            parent_ids.append(values['issuer_id'])
+        for parent_id in set(parent_ids):
+            self._guard_parent_values({'issuer_id': parent_id})
+        parents = self._lock_policy_parent_ids(parent_ids)
+        if child_model:
+            self._lock_policy_child_rows()
+            current = self.mapped('issuer_id')
+            locked_ids = set(parent_ids)
+            if any(parent.id not in locked_ids for parent in current):
+                raise AccessError('Registry access denied.')
+            self.check_access_rights('write')
+            self.check_access_rule('write')
+            for parent in parents:
+                self._guard_parent_values({'issuer_id': parent.id})
         result = super(RegistryAccess, self).write(values)
-        if self._name in POLICY_CHILD_MODELS and self.env.context.get(
-                '_policy_restore_token') is not _RESTORE_CONTEXT_TOKEN:
-            seen = set()
-            for issuer in list(parents) + list(self.mapped('issuer_id')):
-                if issuer.id not in seen:
-                    if hasattr(issuer, '_bump_policy_revision'):
-                        issuer._bump_policy_revision()
-                    seen.add(issuer.id)
+        self._bump_policy_parents(parents)
         _logger.info('Trust registry write model=%s ids=%s actor=%s',
                      self._name, self.ids, self.env.uid)
         return result
@@ -265,12 +318,24 @@ class RegistryAccess(models.AbstractModel):
         self.check_access_rights('unlink')
         self.check_access_rule('unlink')
         ids = self.ids
-        parents = self.mapped('issuer_id') if self._name in POLICY_CHILD_MODELS else []
+        child_model = self._name in POLICY_CHILD_MODELS
+        parents = self.mapped('issuer_id') if child_model else []
+        parent_ids = [parent.id for parent in parents]
+        for parent_id in set(parent_ids):
+            self._guard_parent_values({'issuer_id': parent_id})
+        parents = self._lock_policy_parent_ids(parent_ids)
+        if child_model:
+            self._lock_policy_child_rows()
+            current = self.mapped('issuer_id')
+            locked_ids = set(parent_ids)
+            if any(parent.id not in locked_ids for parent in current):
+                raise AccessError('Registry access denied.')
+            self.check_access_rights('unlink')
+            self.check_access_rule('unlink')
+            for parent in parents:
+                self._guard_parent_values({'issuer_id': parent.id})
         result = super(RegistryAccess, self).unlink()
-        if self.env.context.get('_policy_restore_token') is not _RESTORE_CONTEXT_TOKEN:
-            for issuer in parents:
-                if hasattr(issuer, '_bump_policy_revision'):
-                    issuer._bump_policy_revision()
+        self._bump_policy_parents(parents)
         _logger.info('Trust registry unlink model=%s ids=%s actor=%s',
                      self._name, ids, self.env.uid)
         return result
@@ -414,6 +479,8 @@ class AmrResourceIssuer(models.Model):
                                        if record.local_key_ref else False)
 
     def _guard_issuer_values(self, values, creating=False):
+        if {'discovery_unavailable_declared', 'discovery_unavailable_evidence_ref'}.intersection(values):
+            raise ValidationError('Discovery-unavailable fields are not supported.')
         if 'local_public_key' in values or (creating and 'default_local_public_key' in self.env.context):
             raise AccessError('Use a protected local key reference.')
         if 'mvp_enabled' in values:
@@ -449,7 +516,9 @@ class AmrResourceIssuer(models.Model):
         for values in vals_list:
             values = dict(values)
             # Context defaults are RPC input too; audit/source checks must see them.
-            for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled'}:
+            for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled',
+                                         'discovery_unavailable_declared',
+                                         'discovery_unavailable_evidence_ref'}:
                 if name not in values and 'default_' + name in self.env.context:
                     values[name] = self.env.context['default_' + name]
             self._guard_issuer_values(values, creating=True)
@@ -458,32 +527,57 @@ class AmrResourceIssuer(models.Model):
             prepared.append(values)
         return super(AmrResourceIssuer, self).create(prepared)
 
+    def _issue_policy_revision(self):
+        """Atomically advance and refresh this issuer's database revision."""
+        self.ensure_one()
+        # ORM read-then-write can lose concurrent increments; use one atomic DB increment.
+        self.env.cr.execute(
+            'UPDATE oidc_issuer_register SET policy_revision = policy_revision + 1 WHERE id = %s RETURNING policy_revision',
+            (self.id,))
+        row = self.env.cr.fetchone()
+        if not row:
+            raise ValidationError('Issuer policy revision could not be advanced.')
+        revision = row[0]
+        self.invalidate_cache(fnames=['policy_revision'], ids=[self.id])
+        _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
+                     self.id, revision, self.env.uid)
+        return revision
+
     def write(self, values):
-        self._guard_issuer_values(values)
         self.check_access_rights('write')
         self.check_access_rule('write')
+        self._lock_policy_state()
+        self.check_access_rights('write')
+        self.check_access_rule('write')
+        self._guard_issuer_values(values)
         for record in self:
             updated = dict(values)
             previous_active = record.active
-            if values and set(values) - AUDIT_FIELDS:
-                updated['policy_revision'] = record.policy_revision + 1
+            policy_changed = bool(values and set(values) - AUDIT_FIELDS)
             if 'python_code' in values and values['python_code'] != record.python_code:
                 updated.update(record._source_audit(values['python_code'], record.code_revision + 1))
             super(AmrResourceIssuer, record).write(updated)
-            if 'policy_revision' in updated:
-                _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
-                             record.ids[0], updated['policy_revision'], self.env.uid)
+            revision = record._issue_policy_revision() if policy_changed else None
+            if policy_changed:
                 if 'active' in values and values['active'] != previous_active:
                     _logger.info('Trust activation issuer_id=%s active=%s revision=%s actor=%s',
-                                 record.ids[0], values['active'], updated['policy_revision'], self.env.uid)
+                                 record.ids[0], values['active'], revision, self.env.uid)
         return True
 
     def _bump_policy_revision(self):
         for record in self:
-            revision = record.policy_revision + 1
-            super(AmrResourceIssuer, record).write({'policy_revision': revision})
-            _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
-                         record.ids[0], revision, self.env.uid)
+            record._issue_policy_revision()
+
+    def _lock_policy_state(self):
+        """Serialize state checks with writes; lock issuer rows in ID order."""
+        ids = sorted(set(self.ids))
+        for record_id in ids:
+            # Lock before state/access checks; sorted IDs preserve a consistent lock order.
+            self.env.cr.execute(
+                'SELECT id FROM oidc_issuer_register WHERE id = %s FOR UPDATE',
+                (record_id,))
+        if ids:
+            self.invalidate_cache(ids=ids)
 
     def action_activate_mvp(self, reason_code):
         """Enable a fully validated MVP profile via an audited trust-admin action."""
@@ -491,6 +585,9 @@ class AmrResourceIssuer(models.Model):
 
         if not self._registry_role(TRUST_GROUP):
             raise AccessError('Registry access denied.')
+        self.check_access_rights('write')
+        self.check_access_rule('write')
+        self._lock_policy_state()
         self.check_access_rights('write')
         self.check_access_rule('write')
         if (not isinstance(reason_code, str)
@@ -503,10 +600,10 @@ class AmrResourceIssuer(models.Model):
                 record._verification_algorithms({})
             record._check_profile(mvp_enabled=True)
         for record in self:
-            revision = record.policy_revision + 1
             timestamp = fields.Datetime.now()
+            revision = record._issue_policy_revision()
             source_kind = record.verification_source
-            changes = {'policy_revision': revision}
+            changes = {}
             if record.active:
                 changes['mvp_enabled'] = True
             else:
@@ -526,6 +623,9 @@ class AmrResourceIssuer(models.Model):
             raise AccessError('Registry access denied.')
         self.check_access_rights('write')
         self.check_access_rule('write')
+        self._lock_policy_state()
+        self.check_access_rights('write')
+        self.check_access_rule('write')
         if (not isinstance(reason_code, str)
                 or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
             raise ValidationError('A bounded reason code is required.')
@@ -536,10 +636,9 @@ class AmrResourceIssuer(models.Model):
             if source_kind not in ('jwks', 'local_public', 'none'):
                 raise ValidationError('MVP issuer source state is invalid.')
         for record in self:
-            revision = record.policy_revision + 1
             timestamp = fields.Datetime.now()
-            super(AmrResourceIssuer, record).write({
-                'active': False, 'policy_revision': revision})
+            revision = record._issue_policy_revision()
+            super(AmrResourceIssuer, record).write({'active': False})
             _logger.info('Trust issuer deactivated issuer_id=%s action=%s source_kind=%s '
                          'revision=%s actor=%s reason_code=%s timestamp=%s',
                          record.id, 'deactivate_mvp', record.verification_source,
@@ -559,8 +658,6 @@ class AmrResourceIssuer(models.Model):
             'credential_ref': self.credential_ref or False, 'local_key_ref': self.local_key_ref or False,
             'resolver_mode': self.resolver_mode or False, 'mvp_enabled': self.mvp_enabled,
             'metadata_mode': self.metadata_mode or False,
-            'discovery_unavailable_declared': self.discovery_unavailable_declared,
-            'discovery_unavailable_evidence_ref': self.discovery_unavailable_evidence_ref or False,
             'verification_source': self.verification_source or False,
             'introspection_source': self.introspection_source or False,
             'no_jwks_declaration': self.no_jwks_declaration,
@@ -613,6 +710,9 @@ class AmrResourceIssuer(models.Model):
             raise ValidationError('Rollback identifiers or evidence are invalid.')
         self.check_access_rights('write')
         self.check_access_rule('write')
+        self._lock_policy_state()
+        self.check_access_rights('write')
+        self.check_access_rule('write')
         if self.active or self.policy_revision != expected_revision:
             raise ValidationError('Issuer must be inactive at the expected policy revision.')
         snapshot = self.env['oidc.issuer.policy.snapshot'].sudo().browse(snapshot_id).exists()
@@ -660,12 +760,13 @@ class AmrResourceIssuer(models.Model):
         values.update({'audience_ids': audience_commands,
                        'user_mapping_ids': [(5, 0, 0)] + [(0, 0, row) for row in payload['mappings']],
                        'algorithm_policy_ids': [(5, 0, 0)] + algorithm_commands,
-                       'active': False, 'policy_revision': expected_revision + 1})
+                       'active': False})
         for record in self:
             restoring = record.with_context(_policy_restore_token=_RESTORE_CONTEXT_TOKEN)
             super(AmrResourceIssuer, restoring).write(values)
+            revision = record._issue_policy_revision()
         _logger.info('Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
-                     self.id, snapshot.id, expected_revision + 1, self.env.uid,
+                     self.id, snapshot.id, revision, self.env.uid,
                      payload.get('verification_source') or 'legacy', 'snapshot_restore', evidence_ref,
                      fields.Datetime.now())
         return True
@@ -692,8 +793,7 @@ class AmrResourceIssuer(models.Model):
     @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
                     'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
                     'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
-                    'audience_ids', 'mvp_enabled', 'metadata_mode', 'discovery_unavailable_declared',
-                    'discovery_unavailable_evidence_ref', 'verification_source', 'introspection_source',
+                    'audience_ids', 'mvp_enabled', 'metadata_mode', 'verification_source', 'introspection_source',
                     'no_jwks_declaration', 'no_jwks_evidence_ref', 'introspection_credential_ref',
                     'introspection_auth_client_id', 'introspection_auth_method',
                     'introspection_basic_contract_ref', 'introspection_credential_endpoint',
@@ -719,10 +819,18 @@ class AmrResourceIssuer(models.Model):
             for endpoint in (record.jwks_uri, record.token_endpoint, record.introspection_endpoint):
                 if endpoint and not _https_url(endpoint):
                     raise ValidationError('Endpoints must be public HTTPS URLs on port 443.')
-            if (record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key)
-                    and not (enabled and (record.verification_source == 'none'
-                         or (record.metadata_mode == 'oidc_discovery'
-                             and record.verification_source == 'jwks')))):
+            if (record.token_profile != 'jwt' or record.metadata_mode != 'manual'
+                    or record.verification_source not in ('jwks', 'local_public')
+                    or record.introspection_source != 'none'):
+                raise ValidationError('Only manual JWT/JWKS or local-public profiles without introspection are supported.')
+            if any(getattr(record, name, False) for name in (
+                    'introspection_endpoint', 'introspection_credential_ref',
+                    'introspection_auth_client_id', 'introspection_auth_method',
+                    'introspection_basic_contract_ref', 'introspection_credential_endpoint',
+                    'no_jwks_declaration', 'no_jwks_evidence_ref',
+                    'allow_jwt_introspection', 'allow_introspection_iss_absent')):
+                raise ValidationError('Manual JWT profiles cannot retain introspection or NO_JWKS settings.')
+            if record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key):
                 raise ValidationError('JWT requires exactly one static JWKS URL or local public key.')
             if record.local_public_key:
                 if record.token_profile != 'jwt':
@@ -759,22 +867,21 @@ class AmrResourceIssuer(models.Model):
             if record.resolver_mode == 'mapping' and not any(row['active'] for row in mapping_rows):
                 raise ValidationError('Mapping resolver requires an active mapping.')
             if enabled:
+                if (record.token_profile != 'jwt' or record.metadata_mode != 'manual'
+                        or record.introspection_source != 'none'):
+                    raise ValidationError('MVP supports only manual JWT verification without introspection.')
                 if (record.metadata_mode not in ('manual', 'oidc_discovery')
                         or record.verification_source not in ('jwks', 'local_public', 'none')
                         or record.introspection_source not in ('none', 'manual', 'rfc8414')):
                     raise ValidationError('MVP source configuration is incomplete.')
-                for reference in (record.discovery_unavailable_evidence_ref,
-                                  record.no_jwks_evidence_ref,
+                for reference in (record.no_jwks_evidence_ref,
                                   record.introspection_credential_ref,
                                   record.introspection_basic_contract_ref):
                     if reference and (not isinstance(reference, str)
                                       or len(reference) > 512
                                       or not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
                         raise ValidationError('MVP evidence or credential reference is invalid.')
-                if record.metadata_mode == 'manual' and (
-                        not record.discovery_unavailable_declared
-                        or not record.discovery_unavailable_evidence_ref):
-                    raise ValidationError('Manual metadata requires declared Discovery unavailability.')
+
                 if record.metadata_mode == 'oidc_discovery' and (
                         record.token_profile != 'jwt' or record.verification_source != 'jwks'
                         or record.introspection_source != 'none'):
@@ -1021,5 +1128,7 @@ class OidcIssuerAlgorithmPolicy(RegistryAccess):
     @api.constrains('issuer_id', 'algorithm_id', 'enabled')
     def _check_supported_policy(self):
         for policy in self:
+            if policy.algorithm_id.name not in _ALGORITHM_CATALOG:
+                raise ValidationError('Algorithm is not supported by this build.')
             if policy.enabled and policy.algorithm_id.support_state != 'supported':
                 raise ValidationError('Algorithm is not enabled for runtime support.')
