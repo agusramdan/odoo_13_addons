@@ -7,3 +7,5 @@ from . import test_introspect_query_rejection
 from . import test_replay_acl
 from . import test_oidc_client_identity
 from . import test_client_secret_verifier
+
+from . import test_client_registration
