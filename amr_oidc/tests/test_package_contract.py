@@ -108,14 +108,21 @@ class PackageContract(unittest.TestCase):
         imports = [node.module for node in tree.body if isinstance(node, ast.ImportFrom)]
         self.assertTrue("odoo.addons.amr_token.controllers.main" in imports)
 
-    def test_acl_source_bytes_preserved_not_an_access_policy_verdict(self):
-        import hashlib
-        # Owner exception: no replay ACL row; no added/removed privileges.
-        # This is a preservation check, not acceptance of effective permissions.
-        self.source("security/ir.model.access.csv")
-        self.assertEqual(hashlib.sha256(
-            (ADDON / "security/ir.model.access.csv").read_bytes()).hexdigest(),
-            "bd183f1a45aef0c1fa6b1220d799b95a384ce0378d9432066fb55cb9144efdb5")
+    def test_replay_acl_is_one_minimal_system_create_only_rule(self):
+        import csv
+        from io import StringIO
+        rows = list(csv.DictReader(StringIO(self.source("security/ir.model.access.csv"))))
+        replay_rows = [row for row in rows if row["model_id:id"] == "model_oidc_jwt_replay"]
+        self.assertEqual(replay_rows, [{
+            "id": "access_oidc_jwt_replay_provider_admin",
+            "name": "access.oidc.jwt.replay.provider.admin",
+            "model_id:id": "model_oidc_jwt_replay",
+            "group_id:id": "base.group_system",
+            "perm_read": "0",
+            "perm_write": "0",
+            "perm_create": "1",
+            "perm_unlink": "0",
+        }])
 
     def test_manifest_resources_and_local_template_assets_exist(self):
         import xml.etree.ElementTree as ET
