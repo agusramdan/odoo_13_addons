@@ -40,7 +40,7 @@ class OidcClient(models.Model):
         ("atm", "ATM"),
         ("cdm", "CDM"),
     ], default="machine")
-    client_secret = fields.Char()
+    client_secret_hash = fields.Char(groups="amr_oidc.group_provider_admin", copy=False)
     authentication_method = fields.Selection([
         ("client_secret", "Client Secret"),
         ("private_key_jwt", "Private Key JWT"),
@@ -65,8 +65,17 @@ class OidcClient(models.Model):
 
     def check_credentials(self, client_secret):
         self.ensure_one()
-        # todo next using hash method to check secret like user credentials
-        if client_secret != self.client_secret:
+        context = self.env["res.users"]._crypt_context()
+        # sudo: read only the verifier; field access is restricted to provider admins.
+        verifier = self.sudo().client_secret_hash
+        if not client_secret or not verifier:
+            raise ValueError("Invalid secret")
+        try:
+            if context.identify(verifier) != "pbkdf2_sha512":
+                raise ValueError("Invalid secret")
+            if not context.verify(client_secret, verifier):
+                raise ValueError("Invalid secret")
+        except (ValueError, TypeError):
             raise ValueError("Invalid secret")
         return True
 
@@ -115,10 +124,13 @@ class OidcClient(models.Model):
             decoded = base64.b64decode(token).decode()
             client_id, client_secret = decoded.split(':', 1)
             # sudo: preserve source credential lookup; access review deferred.
-            client = self.sudo().search([('client_id', '=', client_id)], limit=1)
-            if client.client_secret == client_secret:
+            client = self.sudo().search([
+                ('client_id', '=', client_id), ('active', '=', True)
+            ], limit=1)
+            try:
+                client.check_credentials(client_secret)
                 return client
-            else:
+            except ValueError:
                 return None
         except:
             return None

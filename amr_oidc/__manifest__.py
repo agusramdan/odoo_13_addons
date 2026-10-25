@@ -14,6 +14,7 @@
         'python': ['pyjwt', 'cryptography'],
     },
     'data': [
+        'security/res_groups.xml',
         'security/ir.model.access.csv',
         'views/public_key_views.xml',
         'views/oidc_client_views.xml',
