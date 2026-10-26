@@ -105,7 +105,7 @@ def normalize_json(value):
 
 class ServiceClientSend:
 
-    def __init__(self, service_client, payload, active_log=False, endpoint_id=None, credential_id=None, sentry_opt_in=False):
+    def __init__(self, service_client, payload, active_log=False, endpoint_id=None, credential_id=None):
         self.payload = normalize_json(payload)
         self.service_client = service_client
         self.env = service_client.env
@@ -118,12 +118,10 @@ class ServiceClientSend:
             self.active_log = self.endpoint_id.active_log
         else:
             self.active_log = active_log
-            
         if not credential_id and self.endpoint_id:
             self.credential_id = self.endpoint_id.credential_id
         else:
             self.credential_id = credential_id
-        self.sentry_opt_in = sentry_opt_in
 
     def dispatch_send(self):
         response = None
@@ -163,7 +161,6 @@ class ServiceClient:
         self.active_log = endpoint.active_log
         self.service_client = service_client
         self.client_id = client_id
-        self.sentry_opt_in = sentry_opt_in
 
     def __enter__(self):
         # self.client.connect()
@@ -187,7 +184,7 @@ class ServiceClient:
         if  request_context['method'] in ("POST", "PUT", "PATCH"):
             request_context["json"] = normalize_json(payload)
         else:
-            _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])    
+            _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
         request_context = self.provider.authenticate(request_context, audience=audience or self.endpoint.audience)
         return request_context
 
@@ -203,7 +200,7 @@ class ServiceClient:
         except Exception as exc:
             self._report_sentry(exception=exc, method=method)
             if raise_exception:
-                raise 
+                raise
         return response
 
     def get(self, path=None, params=None, **kwargs):
@@ -464,13 +461,11 @@ class ServiceClientFactory(models.Model):
             return eval_context_result
 
         if self.each_record:
-            _logger.debug("run_action_service_client: each_record is True, iterating over records")
             for rec in eval_context['records']:
                 result_context = call_records(rec) or {}
                 if 'action' in result_context:
                     action = result_context['action']
         else:
-            _logger.debug("run_action_service_client: each_record is False, calling records as a whole")
             result_context = call_records(eval_context['records'])
             if 'action' in result_context:
                 action = result_context['action']
@@ -495,13 +490,14 @@ class ServiceClientFactory(models.Model):
             endpoint = self._get_endpoint(service_code)
             credential = credential or endpoint.credential_id
 
-        client = ServiceClient(self.env, endpoint, credential, service_client=self, path=path, method=method,sentry_opt_in=self.sentry_opt_in)
+        client = ServiceClient(self.env, endpoint, credential, path=path, method=method)
+        client.sentry_opt_in = bool(self and self.sentry_opt_in)
         return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)
         credential = credential or endpoint.credential_id
-        client = ServiceClient(self.env, endpoint, credential, service_client=self, sentry_opt_in=self.sentry_opt_in)
+        client = ServiceClient(self.env, endpoint, credential)
         return RemoteObjectProxy(client, model_name, **kwargs)
 
     def call(self, service, method, path, params=None, payload=None, headers=None, credential=None, audience=None):
