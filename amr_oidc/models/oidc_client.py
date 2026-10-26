@@ -179,8 +179,7 @@ class OidcClient(models.Model):
             )
             # sudo: preserve source audience lookup; access review deferred.
             client = self.sudo().search([('client_id', '=', payload.get('aud'))], limit=1)
-        audience = client.client_id
-        return self.env['amr.oidc.helper'].validate(token, audience=audience)
+        return self.env['amr.oidc.helper'].decode(token)
 
     def validate_refresh_token(self, token):
         return self.env['oidc.refresh.token'].validate_token(token, self.client_id)
