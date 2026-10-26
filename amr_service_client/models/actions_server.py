@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
+import logging
+
+
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
+_logger = logging.getLogger(__name__)
 
 class ServerActions(models.Model):
     _inherit = "ir.actions.server"
@@ -31,6 +35,9 @@ class ServerActions(models.Model):
     @api.model
     def run_action_service_client_multi(self, action, eval_context=None):
         # TDE CLEANME: when going to new api with server action, remove action
-        if not action.service_client_id or action._is_recompute(action):
+        _logger.debug("run_action_service_client_multi: %s", action)
+        if not action.service_client_id or self._is_recompute(action):
+            _logger.debug("run_action_service_client_multi: no service_client_id or recompute, skipping")
             return False
+            
         return action.service_client_id.run_action_service_client(eval_context=eval_context)

@@ -105,7 +105,7 @@ def normalize_json(value):
 
 class ServiceClientSend:
 
-    def __init__(self, service_client, payload, active_log=False, endpoint_id=None, credential_id=None):
+    def __init__(self, service_client, payload, active_log=False, endpoint_id=None, credential_id=None, sentry_opt_in=False):
         self.payload = normalize_json(payload)
         self.service_client = service_client
         self.env = service_client.env
@@ -118,10 +118,12 @@ class ServiceClientSend:
             self.active_log = self.endpoint_id.active_log
         else:
             self.active_log = active_log
+            
         if not credential_id and self.endpoint_id:
             self.credential_id = self.endpoint_id.credential_id
         else:
             self.credential_id = credential_id
+        self.sentry_opt_in = sentry_opt_in
 
     def dispatch_send(self):
         response = None
@@ -131,7 +133,7 @@ class ServiceClientSend:
             request_context = self.service_client.prepare_request_context(**request_context)
             response = requests.request(**request_context)
             response.raise_for_status()
-            report_sentry(self.env, "success", response=response)
+            self.service_client._report_sentry("success", response=response, method=request_context.get('method'))
             if active_log:
                 self.env["service.client.log"].create_error(
                     'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
@@ -139,7 +141,7 @@ class ServiceClientSend:
                 )
 
         except Exception as e:
-            report_sentry(self.env, "error", response=response, exception=e)
+            self.service_client._report_sentry("error", response=response, exception=e, method=request_context.get('method'))
             _logger.exception("error dispatch_send")
             self.env["service.client.log"].create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
@@ -148,7 +150,7 @@ class ServiceClientSend:
 
 class ServiceClient:
 
-    def __init__(self, env, endpoint, credential, path=None, method=None, client_id=None):
+    def __init__(self, env, endpoint, credential, service_client=None, path=None, method=None, client_id=None,sentry_opt_in=False):
         self.env = env
         self.endpoint = endpoint
         self.credential_id = credential
@@ -159,7 +161,9 @@ class ServiceClient:
         self.path = path
         self.method = method
         self.active_log = endpoint.active_log
+        self.service_client = service_client
         self.client_id = client_id
+        self.sentry_opt_in = sentry_opt_in
 
     def __enter__(self):
         # self.client.connect()
@@ -174,39 +178,32 @@ class ServiceClient:
             "url": url,
             "headers": self.endpoint.request_headers_default(headers),
             "params": params,
-            "json": normalize_json(payload),
             "timeout": self.endpoint.timeout,
         }
         if method:
             request_context['method'] = method
         elif self.method:
             request_context['method'] = self.method
-
+        if  request_context['method'] in ("POST", "PUT", "PATCH"):
+            request_context["json"] = normalize_json(payload)
+        else:
+            _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])    
         request_context = self.provider.authenticate(request_context, audience=audience or self.endpoint.audience)
         return request_context
 
-    def _report_sentry(self, outcome, response=None, exception=None):
-        report_sentry(self.env, outcome, response=response, exception=exception)
-        # try:
-        #     mode = (self.env['ir.config_parameter'].sudo().get_param(
-        #         'amr_service_client.sentry_mode', 'none') or 'none').lower()
-        #     report_outcome(self.env, mode, bool(getattr(self, 'sentry_opt_in', False)),
-        #                    outcome, method=self.method,
-        #                    status_code=getattr(response, 'status_code', None))
-        # except Exception:
-        #     _logger.debug('Sentry reporting configuration unavailable', exc_info=False)
+    def _report_sentry(self, response=None, exception=None, method=None):
+        report_outcome(self.env, service_client=self.service_client, response=response, exception=exception, method=method )
 
-    def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False):
-        request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
+    def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False, raise_exception=True):
         try:
+            request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
             response = requests.request(**request_context)
+            response.raise_for_status()
+            self._report_sentry(response=response, method=method)
         except Exception as exc:
-            report_sentry(self.env, "error", response=None, exception=exc)
-            raise
-        if not 200 <= response.status_code < 300:
-            report_sentry(self.env, "error", response=response)
-        else:
-            report_sentry(self.env, "success", response=response)
+            self._report_sentry(exception=exc, method=method)
+            if raise_exception:
+                raise 
         return response
 
     def get(self, path=None, params=None, **kwargs):
@@ -223,7 +220,7 @@ class ServiceClient:
 
     def prepare_payload(self, **payload):
         return ServiceClientSend(
-            self, payload, endpoint_id=self.endpoint, active_log=self.endpoint.active_log
+            self, payload, endpoint_id=self.endpoint, active_log=self.endpoint.active_log, sentry_opt_in=self.sentry_opt_in
         )
 
 
@@ -420,6 +417,7 @@ class ServiceClientFactory(models.Model):
     def run_action_service_client(self, eval_context=None):
         self.ensure_one()
         action = None
+        _logger.debug("run_action_service_client: %s", self)
 
         def call_records(records):
             eval_context_result = {}
@@ -443,13 +441,19 @@ class ServiceClientFactory(models.Model):
                 params = eval_context_local.get('params') or {}
                 headers = eval_context_local.get('headers') or {}
                 payload = eval_context_local.get('payload') or {}
+                raise_exception = eval_context_local.get('raise_exception', True)
                 client = self.get_service_client(self.endpoint_id, credential=self.credential_id)
                 try:
-                    response = client.call(method, path, params, payload, headers)
+                    _logger.debug(
+                        "run_action_service_client: calling service client with method=%s, path=%s, params=%s, headers=%s, payload=%s"
+                        , method, path, params, headers, payload
+                    )
+                    response = client.call(method=method, path=path, params=params, payload=payload, headers=headers, raise_exception=raise_exception)
                     eval_context_local['response'] = response
                     eval_context_local.update(self._run_action_handle(eval_context_local) or {})
                     eval_context_local['action'] = self.action_next_id.with_context(eval_context_local).run()
                 except Exception as e:
+                    client._report_sentry("error", response=False, exception=e)
                     eval_context_local['exception'] = e
                     if self.error_handle_id:
                         self.error_handle_id.with_context(eval_context_local).run()
@@ -460,11 +464,13 @@ class ServiceClientFactory(models.Model):
             return eval_context_result
 
         if self.each_record:
+            _logger.debug("run_action_service_client: each_record is True, iterating over records")
             for rec in eval_context['records']:
                 result_context = call_records(rec) or {}
                 if 'action' in result_context:
                     action = result_context['action']
         else:
+            _logger.debug("run_action_service_client: each_record is False, calling records as a whole")
             result_context = call_records(eval_context['records'])
             if 'action' in result_context:
                 action = result_context['action']
@@ -489,14 +495,13 @@ class ServiceClientFactory(models.Model):
             endpoint = self._get_endpoint(service_code)
             credential = credential or endpoint.credential_id
 
-        client = ServiceClient(self.env, endpoint, credential, path=path, method=method)
-        client.sentry_opt_in = bool(self and self.sentry_opt_in)
+        client = ServiceClient(self.env, endpoint, credential, service_client=self, path=path, method=method,sentry_opt_in=self.sentry_opt_in)
         return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)
         credential = credential or endpoint.credential_id
-        client = ServiceClient(self.env, endpoint, credential)
+        client = ServiceClient(self.env, endpoint, credential, service_client=self, sentry_opt_in=self.sentry_opt_in)
         return RemoteObjectProxy(client, model_name, **kwargs)
 
     def call(self, service, method, path, params=None, payload=None, headers=None, credential=None, audience=None):

@@ -41,6 +41,7 @@ class ServiceEndpointTestWizard(models.TransientModel):
                 params=params,
                 headers=headers,
                 payload=payload,
+                raise_exception=False,  # Do not raise exception to allow capturing response for testing
             )
             self.response_status = response.status_code
             response.raise_for_status()

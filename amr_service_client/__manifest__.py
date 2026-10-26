@@ -22,6 +22,6 @@
         'views/menuitem.xml',
 
         'wizards/service_credential.xml',
-        'wizards/service_endpoint_test.xml',
+        'wizards/service_endpoint_check.xml',
     ],
 }
