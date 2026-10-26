@@ -1,0 +1,44 @@
+# ADDONS13-63 — UAT-DRAFT (OWNER-APPROVED STEP 0)
+
+**Owner approval:** Accepted by direct Owner instruction on 2026-10-27 CST for the exact pre-provenance draft SHA-256 `363263a998dc47f9db97525711a2ee1748a9b09b7a93f7c7666fd107b3dbd572`. Approval covers the proposed UAT plan only; every case remains **NOT RUN**, and no test or runtime pass is claimed. **Candidate baseline:** `c08b050cfd85ccc5c705eb92852e57626eb82806`; Odoo 13 / Python 3.7. These cases map 1:1 to the PRD proposed ACs. This is not implementation authorization or risk acceptance.
+
+## Environment/setup (proposed)
+
+- Isolated disposable Odoo 13 + PostgreSQL test database, Python 3.7; install modules through normal test harness only after implementation is approved. UAT must use synthetic clients and synthetic secrets, never production credentials.
+- Configure one active confidential test client per approved auth method; create secret via approved hash path and ensure access is role-restricted. Include inactive/unknown client fixtures and a second client for conflicting-identity tests.
+- Do not enable grants or configure real token issuance credentials. For successful-auth-only observations, use a dedicated harmless supported test grant or a test seam that proves auth boundary then intentionally stops before issuance; Lead/Owner must approve fixture strategy. Never infer auth success from a downstream grant error unless test instrumentation proves the boundary decision.
+- Capture route registry/controller metadata and sanitized request/response/log evidence. Redact Authorization header and all body credentials at collection time.
+
+## Cases
+
+| AC / unique case | Setup and request | Route boundary | Assertions / evidence required | Evidence level | Status | Limits / teardown |
+|---|---|---|---|---|---|---|
+| AC-1 / UAT-63-01 | Active configured client with valid hash; POST using one Basic Authorization credential pair. | Exactly the agreed `/oidc/token` owner; POST only. | Verifier accepts the expected client before grant dispatch; no second route. Preserve downstream semantics only if harmless controlled test fixture. | Runtime integration + route-registry evidence; source-level test if runtime unavailable is insufficient for PASS. | NOT RUN | Depends on method mapping decision, route ownership sequence, and harmless fixture. Delete synthetic client/hash/test records and redact captured headers. |
+| AC-2 / UAT-63-02 | Active client with `client_secret_post` selected per approved policy; one form-urlencoded `client_id` + `client_secret`. | Same single token route, POST. | Post credentials accepted only under selected policy; body parsed as form; no query credential fallback. | Runtime integration with request instrumentation and sanitized trace. | NOT RUN | Requires explicit default/legacy method decision. Tear down fixtures and discard raw request capture. |
+| AC-3 / UAT-63-03 | Table-driven wrong secret, missing fields, malformed Basic, unknown/inactive client, absent/invalid hash. | Same token boundary. | Every case rejected before grant dispatch; exact approved status/error; no secret/hash in response or logs. Ensure comparable failure path as approved. | Runtime integration + sanitized response/log evidence. | NOT RUN | Exact error mapping still open. Delete fixtures; sanitize logs before retention. |
+| AC-4 / UAT-63-04 | Submit Basic plus form credentials; repeat with mismatched client IDs; include duplicate credential keys. | Same token boundary. | All multi-method/conflicting/duplicate cases rejected, never select fallback credential; no dispatch. | Runtime integration + dispatch spy/trace proving early rejection. | NOT RUN | Duplicate form parsing semantics need decision. Clear traces and fixtures. |
+| AC-5 / UAT-63-05 | Send credentials in query only; Basic payload with colon in secret; URL-encoded values including plus/space; malformed encoding/base64; duplicate keys. | Same token boundary. | Query credentials rejected; approved decoding semantics respected; no unintended request source accepted; ambiguity rejected per policy. | Runtime integration with sanitized request parser trace. | NOT RUN | Encoding and strict-decoding policy open; don't claim RFC conformance until decided. Teardown all test artifacts. |
+| AC-6 / UAT-63-06 | Use synthetic unique canary secret; exercise success and each credential failure; inspect allowed application log sink and responses. | Token boundary and verifier storage/access rules. | Canary absent from response/logs; Authorization raw and decoded value absent; plaintext not stored; verifier remains hashed and restricted to provider admin; generic error does not echo input. | Runtime security test + role-based ORM access checks + sanitized log scan. | NOT RUN | Logging sinks/environment may be incomplete; absence in sampled logs is not universal proof. Destroy canary and captured artifacts. |
+| AC-7 / UAT-63-07 | Baseline-approved supported grant with valid authenticated client, compared against pre-change expected behavior; no grant or refresh modifications. | Same token route and helper dispatch. | For authenticated request, grant dispatch and token response semantics unchanged; no new grant/refresh/metadata/authorization-code behavior. | Runtime regression on isolated DB plus source diff review (future stage only). | NOT RUN | No changes exist to test; downstream grant fixture may entail scope and requires separate approval. Drop disposable DB. |
+| AC-8 / UAT-63-08 | Load the agreed module set after ADDONS13-38 sequencing; inspect Odoo route registry for all registrations. | Route registry, `/oidc/token`; compare owner and method set to explicitly agreed owner. | Exactly one registered POST `/oidc/token`; no duplicate route; GET rejected/not mapped; neighboring routes unaffected and ownership migration remains with ADDONS13-38. | Runtime route-registry introspection plus source-level route search; source-only is not runtime PASS. | NOT RUN | Current baseline has route in `amr_token/controllers/main.py:56-63`, inherited by `amr_oidc`; changed ownership depends on ADDONS13-38. Tear down server/DB. |
+| AC-9 / UAT-63-09 | Review implementation/test syntax and APIs against Python 3.7 and Odoo 13; once authorized, execute approved compatibility suite in matching environment. | Static compatibility review plus relevant isolated Odoo tests; token boundary. | No syntax/API incompatibility; approved tests pass on supported versions. | Static review plus actual Odoo 13/Python 3.7 test runtime required for PASS. | NOT RUN | No tests/runtime authorized in this analysis. Remove disposable environment after future approved run. |
+
+## Cross-case route/method/secrets assurance
+
+- **No route duplication:** UAT-63-08 must show one route registration at agreed owner; route source search alone is preliminary, not proof of runtime registration.
+- **No method confusion:** UAT-63-04/05 distinguish auth method from grant type; one approved channel only, credential source constrained to header or form as accepted, no query fallback. Authentication failure must be shown before grant dispatch.
+- **No secrets leakage:** UAT-63-06 uses canary credentials and checks sanitized outputs/logs/storage/access controls. Never collect raw authorization headers; no real credentials. Log sampling is limited evidence, not a universal guarantee.
+- **HTTP method boundary:** UAT-63-01/02/08 verify POST-only route behavior; tests must not treat controller inheritance or handler reachability as proof of correct owner.
+
+## Limitations / blockers and open decisions
+
+1. Baseline has not implemented the feature; all cases are NOT RUN. User explicitly prohibited tests, runtime, DB and install in this stage.
+2. ADDONS13-38 is In Progress and owns all OIDC endpoint migration and Discovery/deprecation decisions. `/oidc/token` ownership and sequencing must be explicitly coordinated before implementation/UAT execution. This draft does not edit routes or metadata.
+3. The existing `authentication_method='client_secret'` value does not unambiguously establish Basic vs post semantics. Lead/Owner must accept compatibility/default behavior, error mapping, encoding rules, test fixture/grant seam, and public/unsupported client behavior before execution.
+4. Static source evidence cannot prove live Odoo route registry, actual logs, credential parsing, or runtime compatibility.
+
+## Teardown
+
+After an authorized future UAT run: remove disposable database and synthetic clients, hashes, users and configuration; stop isolated Odoo instance; securely discard request traces/log captures containing any credential material; retain only redacted evidence, candidate SHA, runtime version and case verdict. Do not modify shared or production systems.
+
+**UAT disposition:** Draft only. No case executed, passed, waived, or approved. Draft creation does not accept PRD/UAT, approve residual risk, or authorize implementation.
