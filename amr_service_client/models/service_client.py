@@ -139,16 +139,18 @@ class ServiceClientSend:
                 )
 
         except Exception as e:
-            self.service_client._report_sentry("error", response=response, exception=e, method=request_context.get('method'))
+            self.service_client._report_sentry("error", response=response, exception=e,
+                                               method=request_context.get('method'))
             _logger.exception("error dispatch_send")
             self.env["service.client.log"].create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                 request_context=request_context
             )
 
+
 class ServiceClient:
 
-    def __init__(self, env, endpoint, credential, service_client=None, path=None, method=None, client_id=None,sentry_opt_in=False):
+    def __init__(self, env, endpoint, credential, service_client=None, path=None, method=None, client_id=None):
         self.env = env
         self.endpoint = endpoint
         self.credential_id = credential
@@ -160,7 +162,7 @@ class ServiceClient:
         self.method = method
         self.active_log = endpoint.active_log
         self.service_client = service_client
-        self.client_id = client_id
+        self.client_id = client_id or (service_client and service_client.id)
 
     def __enter__(self):
         # self.client.connect()
@@ -181,7 +183,7 @@ class ServiceClient:
             request_context['method'] = method
         elif self.method:
             request_context['method'] = self.method
-        if  request_context['method'] in ("POST", "PUT", "PATCH"):
+        if request_context['method'] in ("POST", "PUT", "PATCH"):
             request_context["json"] = normalize_json(payload)
         else:
             _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
@@ -189,11 +191,14 @@ class ServiceClient:
         return request_context
 
     def _report_sentry(self, response=None, exception=None, method=None):
-        report_outcome(self.env, service_client=self.service_client, response=response, exception=exception, method=method )
+        report_outcome(self.env, service_client=self.service_client, response=response, exception=exception,
+                       method=method)
 
-    def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False, raise_exception=True):
+    def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False,
+             raise_exception=True):
         try:
-            request_context = self.prepare_request_context(path, method, params=params, payload=payload, headers=headers)
+            request_context = self.prepare_request_context(path, method, params=params, payload=payload,
+                                                           headers=headers)
             response = requests.request(**request_context)
             response.raise_for_status()
             self._report_sentry(response=response, method=method)
@@ -216,9 +221,7 @@ class ServiceClient:
         return self.call(method="DELETE", path=path, **kwargs)
 
     def prepare_payload(self, **payload):
-        return ServiceClientSend(
-            self, payload, endpoint_id=self.endpoint, active_log=self.endpoint.active_log, sentry_opt_in=self.sentry_opt_in
-        )
+        return ServiceClientSend(self, payload, endpoint_id=self.endpoint)
 
 
 class RemoteObjectProxy:
@@ -445,7 +448,8 @@ class ServiceClientFactory(models.Model):
                         "run_action_service_client: calling service client with method=%s, path=%s, params=%s, headers=%s, payload=%s"
                         , method, path, params, headers, payload
                     )
-                    response = client.call(method=method, path=path, params=params, payload=payload, headers=headers, raise_exception=raise_exception)
+                    response = client.call(method=method, path=path, params=params, payload=payload, headers=headers,
+                                           raise_exception=raise_exception)
                     eval_context_local['response'] = response
                     eval_context_local.update(self._run_action_handle(eval_context_local) or {})
                     eval_context_local['action'] = self.action_next_id.with_context(eval_context_local).run()
@@ -490,14 +494,13 @@ class ServiceClientFactory(models.Model):
             endpoint = self._get_endpoint(service_code)
             credential = credential or endpoint.credential_id
 
-        client = ServiceClient(self.env, endpoint, credential, path=path, method=method)
-        client.sentry_opt_in = bool(self and self.sentry_opt_in)
+        client = ServiceClient(self.env, endpoint, credential, service_client=self, path=path, method=method)
         return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)
         credential = credential or endpoint.credential_id
-        client = ServiceClient(self.env, endpoint, credential)
+        client = ServiceClient(self.env, endpoint, credential, service_client=self)
         return RemoteObjectProxy(client, model_name, **kwargs)
 
     def call(self, service, method, path, params=None, payload=None, headers=None, credential=None, audience=None):
