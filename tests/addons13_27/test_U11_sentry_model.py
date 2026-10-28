@@ -32,19 +32,25 @@ class TestOptionalSentryModelHook(unittest.TestCase):
         )
         odoo = types.ModuleType("odoo")
         setattr(odoo, "models", types.SimpleNamespace(Model=object))
-        addon = types.ModuleType("amr_sentry")
+        odoo_addons = types.ModuleType("odoo.addons")
+        odoo_addons.__path__ = []
+        addon = types.ModuleType("odoo.addons.amr_sentry")
         addon.__path__ = []
-        services = types.ModuleType("amr_sentry.services")
+        models = types.ModuleType("odoo.addons.amr_sentry.models")
+        models.__path__ = []
+        services = types.ModuleType("odoo.addons.amr_sentry.services")
         services.__path__ = []
         setattr(services, "REPORTER", reporter)
         modules = {
             "odoo": odoo,
-            "amr_sentry": addon,
-            "amr_sentry.services": services,
+            "odoo.addons": odoo_addons,
+            "odoo.addons.amr_sentry": addon,
+            "odoo.addons.amr_sentry.models": models,
+            "odoo.addons.amr_sentry.services": services,
         }
         with mock.patch.dict(sys.modules, modules):
             spec = importlib.util.spec_from_file_location(
-                "amr_sentry_model_under_test", _MODEL_PATH
+                "odoo.addons.amr_sentry.models.service_client", _MODEL_PATH
             )
             if spec is None or spec.loader is None:
                 raise AssertionError("could not create source loader for optional model module")
