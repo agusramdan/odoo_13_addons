@@ -16,7 +16,6 @@
         'views/service_endpoint_views.xml',
         'views/service_credential_views.xml',
         'views/service_client_views.xml',
-        'views/res_config_settings_views.xml',
         'views/service_client_log_views.xml',
 
         'views/menuitem.xml',
