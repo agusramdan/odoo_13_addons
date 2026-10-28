@@ -4,7 +4,11 @@ import logging
 
 from odoo import models
 
-from amr_sentry.services import REPORTER
+try:
+    from ..services import REPORTER
+except ImportError:
+    # Offline contract tests load this file without its Odoo addon package.
+    from amr_sentry.services import REPORTER
 
 
 class ServiceClient(models.Model):
