@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 
+import logging
+
 from odoo import api
 from odoo.addons.amr_token.controllers.main import ControllerToken
 from odoo.http import request, route
+
+
+_logger = logging.getLogger(__name__)
 
 
 class ControllerOIDC(ControllerToken):
@@ -45,6 +50,15 @@ class ControllerOIDC(ControllerToken):
 
     def oidc_authorize(self, **params):
         return self._unsupported_authorization_response()
+
+    @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
+    def api_oidc_token(self, **kwargs):
+        try:
+            payload = request.env['amr.oidc.helper'].sudo().oidc_token(**kwargs)
+        except Exception as ex:
+            _logger.exception("Error oidc_token")
+            return self.handle_exception(ex, 401, "invalid_request")
+        return self.make_response(**payload)
 
     @route('/oidc/introspect', type='http', auth='none', methods=['GET', 'POST'], csrf=False)
     def api_oidc_introspect(self, **kwargs):
