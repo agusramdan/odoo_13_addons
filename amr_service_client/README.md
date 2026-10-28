@@ -10,6 +10,8 @@
 | Status migrasi Odoo 20 | Tidak diklaim (di luar cakupan); kompatibilitas belum diverifikasi |
 | Cakupan | Dokumentasi berbasis sumber untuk development/demo; runtime Odoo 13 belum diverifikasi; bukan untuk produksi |
 
+[Optional Sentry integration](../amr_sentry/README.md) — configuration and reporting policy.
+
 ## Untuk Developer
 
 Panduan teknis lengkap berbasis sumber: [Panduan Developer](docs/developer.md). Ini tidak membuktikan instalasi, keamanan, atau perilaku runtime.

@@ -1,0 +1,37 @@
+# AMR Sentry operator guide
+
+This optional addon reports service-client outcomes to Sentry when explicitly enabled. It depends on `amr_service_client`. Install the pinned Python dependencies `sentry-sdk==2.73.0` and `PyYAML==6.0.1` as part of your separately managed deployment process.
+
+## Configuration
+
+`AMR_SENTRY_CONFIG` selects the configuration file. If unset or empty, the path is `/etc/odoo/amr_sentry.yaml`. The file extension selects the parser: `.yaml` and `.yml` use YAML; `.json` uses JSON. The top-level `sentry` and `service_client` values must both be mappings. The `sentry` mapping is passed as keyword arguments to `sentry_sdk.init()` when reporting is enabled and configured. `service_client` accepts `enabled` and `mode`.
+
+Use a secret-safe deployment mechanism for a real DSN. Restrict file ownership and permissions according to your environment; this is an operator recommendation, not a permission check enforced by the addon.
+
+```yaml
+sentry:
+  dsn: "https://example.invalid/project"
+  environment: development
+service_client:
+  enabled: false
+  mode: none
+```
+
+The equivalent JSON shape is `{"sentry":{"dsn":"https://example.invalid/project","environment":"development"},"service_client":{"enabled":false,"mode":"none"}}`.
+
+## Reporting modes
+
+- `all`: report successful outcomes and failures.
+- `error`: report failures only.
+- `selected`: report success or failure only for service clients with `sentry_opt_in` enabled.
+- `none`: no reporting. This is the default mode; `enabled` also defaults to false.
+
+A real DSN, `enabled: true`, and a reportable mode are all needed for initialization. Configuration is loaded at import/process startup; restart Odoo processes after changes. There is no hot reload or global Settings UI. Per-client opt-in remains relevant only for `selected` mode.
+
+## Failure behavior and data handling
+
+Configuration load, SDK import, SDK initialization, and reporting failures are fail-closed/best-effort: reporting is disabled or the service-client outcome is retained, with generic warnings. Do not rely on reporting for service operation or diagnostics.
+
+The addon does not explicitly attach request/response bodies, headers, credentials, or customer data. Sentry SDK standard capture behavior still applies; no custom scrubber or broad privacy guarantee is provided. Review your Sentry project and SDK configuration for your own requirements.
+
+This guide documents source behavior only. It does not verify Odoo installation, registry startup, production use, migration or deletion of stale configuration values, or a deployment's secret handling.
