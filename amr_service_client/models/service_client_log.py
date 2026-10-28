@@ -31,6 +31,8 @@ class ServiceClientLog(models.Model):
     def send(self):
         client = None
         response = None
+        exception = None
+        request_context = None
         try:
             client = self.client_id.get_service_client(self.endpoint_id, self.credential_id)
             request_context = json.loads(self.request_context)
@@ -41,12 +43,19 @@ class ServiceClientLog(models.Model):
             state = 'done'
             response_text = response.text
         except Exception as e:
+            exception = e
             response_text = self.format_error(e)
             state = 'error'
         self.write({
             "state": state,
             "response": self.sanitize_sensitive_data(response_text)
         })
+        if client:
+            method = request_context.get('method') if isinstance(request_context, dict) else None
+            try:
+                client._report_sentry(response=response, exception=exception, method=method)
+            except Exception:
+                _logger.debug("Sentry reporting failed", exc_info=False)
         return self
 
     @api.model
