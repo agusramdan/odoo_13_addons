@@ -7,7 +7,7 @@
     'depends': ['base', 'web', 'base_setup', 'amr_resource'],
     'license': 'LGPL-3',
     'external_dependencies': {
-        'python': ['pyjwt', 'sentry_sdk'],
+        'python': ['pyjwt'],
     },
     'data': [
         'security/ir.model.access.csv',
