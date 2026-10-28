@@ -1,0 +1,38 @@
+# ADDONS13-63 — UAT-DRAFT r4
+
+**Status and provenance:** Current candidate UAT aligned to PRD-DRAFT-r4. Earlier approved PRD/UAT files and r2/r3 drafts are preserved unchanged; r2/r3 are historical drafts. The direct Owner scope update cancels `client_secret_post` and requires Basic-only client authentication. Legacy `authentication_method='client_secret'` is retained as a Basic-only backwards-compatibility alias as an implementation assumption, not a separately confirmed Owner decision; no auth migrations. This documentation task makes no source, test, runtime, database, configuration, Plane, commit, push, or deployment changes. Local code/tests were authorized separately; no external configuration, commit/push, deployment, or Plane updates are authorized. Repository HEAD: `7ecf5147811ba4a90616f74c6161739fc799394a` (branch `ADDONS13-63`). Pre-existing dirty candidate changes are preserved. Prior focused HTTP run under superseded Post-support behavior: 12 tests, 11 passed, 1 failed for malformed form `%ZZ` expecting 401 but receiving HTTP 400. No r4 UAT has run; every case is NOT RUN.
+
+## Execution constraints
+
+- If later executed, target only an authorized isolated disposable Odoo 13 / Python 3.7 environment with synthetic clients/secrets; no production/shared systems.
+- Do not add or require a `Root.get_request` hook, bootstrap addon, or external configuration. Body credential channels are rejected; generic Odoo parser behavior for malformed non-credential bodies with valid Basic is not an acceptance requirement.
+- Verify authentication before grant dispatch using instrumentation or a narrow test seam; do not infer authentication success from a downstream grant error.
+- Preserve returned-payload/HTTP semantics. Unsupported grant remains the returned status/error dictionary, not an exception.
+- Capture sanitized evidence only; never retain raw Authorization headers, secrets, or credential-bearing bodies.
+- Verify effective route registration and sentinel HTTP dispatch. Compare complete non-token OIDC route inventory/metadata to prove unchanged routes.
+- All cases below are NOT RUN.
+
+## Cases and AC mapping
+
+| AC / unique case | Setup and request | Boundary and assertions | Evidence required | Status | Limits / teardown |
+|---|---|---|---|---|---|
+| AC-1 / UAT-63-01 | Active synthetic clients with valid protected hashes, one configured `client_secret_basic`, one legacy `client_secret`; POST each with one valid Basic pair. | Both authenticate before grant dispatch; legacy alias accepts Basic; no migration or second route. | Odoo HTTP integration, auth-boundary spy, sanitized response, effective route registry. | NOT RUN | Synthetic data only; redact headers and remove fixtures. |
+| AC-2 / UAT-63-02 | Exercise wrong/missing/malformed Basic, unknown/inactive client, unsupported method, and invalid/missing verifier. | Each fails before grant dispatch with `invalid_client`, HTTP 401, Basic challenge, and no credential/verifier disclosure. | Real-route assertions, dispatch spy, sanitized logs and response headers. | NOT RUN | Check exact status/body/header; clear fixtures and sanitize logs. |
+| AC-3 / UAT-63-03 | For `client_secret_basic` and legacy `client_secret`, send otherwise valid credentials only in form body; inspect method-selection options and attempt `client_secret_post`. | Body credentials rejected for both methods; Post is not offered and is not accepted. | HTTP integration and selection/API assertions, auth dispatch spy. | NOT RUN | No Post success expectation; synthetic values only. |
+| AC-4 / UAT-63-04 | Query-only credentials; Basic plus body; duplicate/partial Basic or body credentials; conflicting client identities. | Each request fails closed before grant dispatch, without fallback; query is never a credential source. | HTTP integration, dispatch spy, sanitized trace. | NOT RUN | Never retain raw credential-bearing traces; clear fixtures. |
+| AC-5 / UAT-63-05 | Valid Basic including encoded characters and a colon in the secret; content-type headers with casing/charset variations for rejection checks; malformed Basic payloads. | Basic decoding follows RFC rules and splits decoded pair at first colon; normalized `httprequest.mimetype` is used when relevant. No `%ZZ`-to-401 parser requirement. | Real HTTP assertions and focused content-type/decoding checks with credential-safe evidence. | NOT RUN | Generic parser errors for malformed non-credential body with valid Basic are out of scope. |
+| AC-6 / UAT-63-06 | Unique synthetic canary; exercise Basic success and failure; inspect allowed logs, response, stored verifier and access controls. | Canary, raw Authorization value, decoded Basic value, and verifier absent from response/logs; plaintext not stored; verifier hashed/restricted. | Runtime security checks, ORM access checks, sanitized log scan. | NOT RUN | Sampled logs are limited evidence; destroy canary/captures. |
+| AC-7 / UAT-63-07 | Authenticated valid client submits an existing supported grant and separately an unsupported grant; compare existing behavior. | Dispatch/issuance semantics unchanged. Unsupported grant is the returned status/error dictionary with existing HTTP mapping, not raised. | Isolated regression, returned-value/HTTP assertions, source diff review. | NOT RUN | If isolated fixture unavailable, remain NOT RUN; no added grant scope. |
+| AC-8 / UAT-63-08 | Load required addon composition; inspect effective route table and inventory other OIDC routes. | Exactly one effective POST `/oidc/token` route owned by `amr_oidc`, none in `amr_token`; retain `http`, POST, `auth='none'`, `csrf=False`; other OIDC routes unchanged. | Effective route-registry introspection and before/after inventory. | NOT RUN | Approved addon set only; disposable server/DB teardown. |
+| AC-9 / UAT-63-09 | Review syntax/APIs against Odoo 13/Python 3.7; inspect for absence of bootstrap/global-hook dependency. | Supported runtime compatibility; no global hook/bootstrap required. | Static review and actual supported-runtime run when authorized. | NOT RUN | This documentation revision has run no tests/runtime. |
+| AC-10 / UAT-63-10 | Sentinel POST `/oidc/token`; inspect `amr_token`-only and `amr_oidc` plus dependency compositions in isolated environments. | Sentinel proves OIDC helper called. `amr_token` alone does not expose route; composition including `amr_oidc` exposes exactly one OIDC-owned route. | HTTP sentinel integration and effective route-registry checks in both compositions. | NOT RUN | No production/shared install; destroy disposable environments. |
+
+## Compatibility and route contract
+
+After transfer, installations with only `amr_token` no longer expose `/oidc/token`; installation must include `amr_oidc`, which depends on `amr_token`. No dual-route compatibility mechanism is proposed. Other OIDC routes, including JWKS, introspection, profile, authorization, and discovery, are outside this transfer and must remain unchanged, assigned/deferred as specified for ADDONS13-38.
+
+## Teardown and evidence handling
+
+Delete disposable databases, synthetic clients, hashes, users, and configuration; stop isolated Odoo instances; securely discard credential-bearing traces and retain only redacted evidence, candidate SHA, runtime version, and case verdicts. Never modify production/shared systems. Do not add external configuration or global-hook activation steps.
+
+**Disposition:** All ten cases are **NOT RUN**. The historical 12-test/11-pass/1-failure run was under superseded Post-support behavior; its malformed `%ZZ` expectation is not an r4 acceptance criterion. No r4 UAT was executed. This document does not authorize external configuration, commit/push, deployment, or Plane updates.
