@@ -1,15 +1,16 @@
 import importlib.util
 import base64
 import json
-from io import BytesIO
+import logging
+from io import BytesIO, StringIO
 import sys
 import unittest
 from urllib.parse import quote_plus, urlencode
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from support import load
+from support import load, load_controller, StubHTTPException, StubResponse
 
 ADDON = Path(__file__).resolve().parents[1]
 
@@ -546,6 +547,64 @@ class TestTokenClientAuthOffline(unittest.TestCase):
             result = helper.oidc_token(grant_type=grant)
             descriptions.add(result['error_description'])
         self.assertEqual(len(descriptions), 1, 'grant dispatcher reflects untrusted grant_type')
+
+
+class TestTokenRouteExceptionPrivacy(unittest.TestCase):
+    def test_unexpected_exception_returns_generic_response_without_raw_logs(self):
+        sentinel = 'synthetic-token-route-exception-canary'
+        module = load_controller()
+        helper = SimpleNamespace(sudo=lambda: helper,
+                                 oidc_token=Mock(side_effect=ValueError(sentinel)))
+        module.request.env = {'amr.oidc.helper': helper}
+        output = StringIO()
+        handler = logging.StreamHandler(output)
+        handler.setFormatter(logging.Formatter('%(name)s:%(levelname)s:%(message)s'))
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+        try:
+            response = module.ControllerOIDC().api_oidc_token(grant_type=sentinel)
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(json.loads(response.data), {
+            'success': False,
+            'error': 'invalid_request',
+            'error_description': 'Request could not be processed.',
+        })
+        self.assertNotIn(sentinel, response.data.decode('utf-8'))
+        self.assertNotIn(sentinel, output.getvalue())
+        self.assertNotIn('Traceback', output.getvalue())
+
+    def test_prepared_http_exception_is_reraised_unchanged_without_raw_logs(self):
+        sentinel = 'synthetic-token-route-http-canary'
+        module = load_controller()
+        for status, error in ((400, 'invalid_request'), (401, 'invalid_client')):
+            with self.subTest(status=status):
+                prepared = StubResponse(json.dumps({'error': error}), status=status,
+                    headers={'WWW-Authenticate': 'Basic'} if status == 401 else {})
+                exception = StubHTTPException(sentinel, response=prepared)
+                helper = SimpleNamespace(sudo=lambda: helper,
+                                         oidc_token=Mock(side_effect=exception))
+                module.request.env = {'amr.oidc.helper': helper}
+                output = StringIO()
+                handler = logging.StreamHandler(output)
+                logger = logging.getLogger()
+                logger.addHandler(handler)
+                try:
+                    with self.assertRaises(StubHTTPException) as caught:
+                        module.ControllerOIDC().api_oidc_token()
+                finally:
+                    logger.removeHandler(handler)
+                    handler.close()
+                self.assertIs(caught.exception, exception)
+                self.assertIs(caught.exception.response, prepared)
+                self.assertEqual(prepared.status_code, status)
+                self.assertEqual(json.loads(prepared.data), {'error': error})
+                self.assertEqual(prepared.headers.get('WWW-Authenticate'),
+                                 'Basic' if status == 401 else None)
+                self.assertNotIn(sentinel, output.getvalue())
+                self.assertNotIn('Traceback', output.getvalue())
 
 
 class TestWerkzeugAuthorizationBoundary(unittest.TestCase):

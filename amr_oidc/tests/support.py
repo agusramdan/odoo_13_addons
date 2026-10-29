@@ -1,6 +1,5 @@
 """Narrow import doubles: declarations and parent delegation, never Odoo boot."""
 import importlib.util
-import json
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -28,11 +27,18 @@ class StubResponse:
             response = response.encode("utf-8")
         self.data = response
         self.response = response
+        self.headers = kwargs.get('headers', {})
 
 
 class StubNotFound(Exception):
     code = 404
     description = "Not Found"
+
+
+class StubHTTPException(Exception):
+    def __init__(self, message, response=None):
+        super().__init__(message)
+        self.response = response
 
 
 def _route(paths, **options):
@@ -103,32 +109,25 @@ def load_controller():
     setattr(http, 'route', _route)
     setattr(http, 'Controller', type('Controller', (), {}))
 
-    class ControllerToken:
-        def make_response(self, status=200, **payload):
-            body = json.dumps(payload)
-            return StubResponse(response=body, status=status)
-
-        def invalid_response(self, status, error, info=""):
-            return self.make_response(
-                status=status,
-                error=error,
-                error_description=info,
-            )
-
     addons = ModuleType('odoo.addons')
     setattr(addons, '__path__', [])
     amr_token = ModuleType('odoo.addons.amr_token')
     setattr(amr_token, '__path__', [])
     controllers = ModuleType('odoo.addons.amr_token.controllers')
     setattr(controllers, '__path__', [])
-    parent_controller = ModuleType('odoo.addons.amr_token.controllers.main')
-    setattr(parent_controller, 'ControllerToken', ControllerToken)
+    parent_spec = importlib.util.spec_from_file_location(
+        'odoo.addons.amr_token.controllers.main',
+        str(ADDON.parent / 'amr_token/controllers/main.py'),
+    )
+    if parent_spec is None or parent_spec.loader is None:
+        raise ImportError('cannot create parent controller module spec')
+    parent_controller = importlib.util.module_from_spec(parent_spec)
 
     werkzeug = ModuleType('werkzeug')
     utils = ModuleType('werkzeug.utils')
     setattr(utils, 'redirect', lambda url, code=302: StubResponse(status=code))
     exceptions = ModuleType('werkzeug.exceptions')
-    setattr(exceptions, 'HTTPException', type('HTTPException', (Exception,), {}))
+    setattr(exceptions, 'HTTPException', StubHTTPException)
     setattr(exceptions, 'NotFound', StubNotFound)
     wrappers = ModuleType('werkzeug.wrappers')
     setattr(wrappers, 'Response', StubResponse)
@@ -155,5 +154,6 @@ def load_controller():
         raise ImportError('cannot create controller module spec')
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, replacements):
+        parent_spec.loader.exec_module(parent_controller)
         spec.loader.exec_module(module)
     return module
