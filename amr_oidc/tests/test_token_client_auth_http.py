@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import base64
 import json
+from urllib.parse import quote_plus, urlencode
 
 from odoo.tests import tagged
 from odoo.tests.common import HttpCase
@@ -8,8 +9,8 @@ from odoo.tests.common import HttpCase
 
 @tagged("-at_install", "post_install")
 class TestTokenClientAuthHttp(HttpCase):
-    def _client(self, client_id, secret, method=None, active=True):
-        values = {"client_id": client_id, "active": active}
+    def _client(self, client_id, secret, method=None, active=True, confidential=True):
+        values = {"client_id": client_id, "active": active, "is_confidential": confidential}
         if method:
             values["authentication_method"] = method
         client = self.env["oidc.client"].create(values)
@@ -22,11 +23,16 @@ class TestTokenClientAuthHttp(HttpCase):
             "grant_type": "client_credentials",
         })
 
-    def test_missing_credentials_return_basic_challenge(self):
+    def _assert_error(self, response, error, status=400, basic=False):
+        self.assertEqual(response.status_code, status)
+        self.assertEqual(response.json().get("error"), error)
+        self.assertEqual(response.headers.get("WWW-Authenticate"), "Basic" if basic else None)
+        for field in ("access_token", "refresh_token", "id_token"):
+            self.assertNotIn(field, response.json())
+
+    def test_missing_credentials_return_400_without_basic_challenge(self):
         response = self.url_open("/oidc/token", data={"grant_type": "client_credentials"})
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.headers.get("WWW-Authenticate"), "Basic")
-        self.assertEqual(response.json().get("error"), "invalid_client")
+        self._assert_error(response, "invalid_client")
 
     def test_bad_basic_client_credentials_return_oauth_401_challenge(self):
         secret = "never-echo-this-secret"
@@ -74,15 +80,16 @@ class TestTokenClientAuthHttp(HttpCase):
         self.assertEqual(response.json().get("error"), "unsupported_grant_type")
         self.assertNotIn("access_token", response.json())
 
-    def test_client_secret_post_is_not_an_available_authentication_method(self):
+    def test_client_secret_post_is_an_available_opt_in_authentication_method(self):
         selection = dict(self.env["oidc.client"]._fields["authentication_method"].selection)
-        self.assertNotIn("client_secret_post", selection)
+        self.assertIn("client_secret_post", selection)
+        self.assertEqual(self.env["oidc.client"].default_get(["authentication_method"])
+                         ["authentication_method"], "client_secret")
 
     def test_legacy_client_secret_rejects_body_credentials(self):
         client = self._client("legacy-post", "legacy-secret")
         response = self._post_credentials(client, "legacy-secret")
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json().get("error"), "invalid_client")
+        self._assert_error(response, "invalid_client")
 
     def test_legacy_alias_accepts_basic_credentials(self):
         client = self._client("legacy-basic", "legacy-secret")
@@ -101,22 +108,28 @@ class TestTokenClientAuthHttp(HttpCase):
     def test_explicit_basic_rejects_body_credentials(self):
         basic = self._client("explicit-basic", "secret-basic", "client_secret_basic")
         post_response = self._post_credentials(basic, "secret-basic")
-        self.assertEqual(post_response.status_code, 401)
-        self.assertEqual(post_response.json().get("error"), "invalid_client")
-        self.assertIsNone(post_response.headers.get("WWW-Authenticate"))
+        self._assert_error(post_response, "invalid_client")
 
-    def test_rejects_mixed_duplicate_query_and_partial_credentials(self):
+    def test_mixed_duplicate_and_query_credentials_are_invalid_request(self):
         client = self._client("ambiguous-client", "ambiguous-secret")
         encoded = base64.b64encode((client.client_id + ":ambiguous-secret").encode()).decode()
         mixed = self.url_open("/oidc/token", data={"client_id": client.client_id, "client_secret": "ambiguous-secret", "grant_type": "client_credentials"}, headers={"Authorization": "Basic " + encoded})
         conflicting = self.url_open("/oidc/token", data={"client_id": "different-client", "client_secret": "different-secret", "grant_type": "client_credentials"}, headers={"Authorization": "Basic " + encoded})
         duplicate = self.url_open("/oidc/token", data="client_id=ambiguous-client&client_id=ambiguous-client&client_secret=ambiguous-secret&grant_type=client_credentials", headers={"Content-Type": "application/x-www-form-urlencoded"})
         query = self.url_open("/oidc/token?client_id=ambiguous-client&client_secret=", data={"grant_type": "client_credentials"})
-        partial = self.url_open("/oidc/token", data={"client_id": client.client_id, "grant_type": "client_credentials"})
-        for response in (mixed, conflicting, duplicate, query, partial):
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(response.json().get("error"), "invalid_client")
+        for response in (mixed, conflicting, duplicate, query):
+            self._assert_error(response, "invalid_request")
             self.assertNotIn("ambiguous-secret", response.content.decode())
+
+    def test_partial_post_credentials_are_invalid_client(self):
+        client = self._client("partial-post", "partial-secret", "client_secret_post")
+        for credentials in ({"client_id": client.client_id},
+                            {"client_secret": "partial-secret"},
+                            {"client_id": client.client_id, "client_secret": ""}):
+            with self.subTest(fields=sorted(credentials)):
+                response = self.url_open("/oidc/token", data=dict(
+                    credentials, grant_type="client_credentials"))
+                self._assert_error(response, "invalid_client")
 
     def test_rejects_valid_body_credentials_for_legacy_and_explicit_basic(self):
         clients = (
@@ -125,12 +138,11 @@ class TestTokenClientAuthHttp(HttpCase):
         )
         for client, secret in zip(clients, ("legacy-body-secret", "explicit-body-secret")):
             response = self._post_credentials(client, secret)
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(response.json().get("error"), "invalid_client")
-            self.assertIsNone(response.headers.get("WWW-Authenticate"))
+            self._assert_error(response, "invalid_client")
 
     def _basic_request(self, client_id, secret):
-        encoded = base64.b64encode((client_id + ":" + secret).encode()).decode()
+        pair = quote_plus(client_id, safe="") + ":" + quote_plus(secret, safe="")
+        encoded = base64.b64encode(pair.encode("ascii")).decode("ascii")
         return self.url_open(
             "/oidc/token", data={"grant_type": "client_credentials"},
             headers={"Authorization": "Basic " + encoded},
@@ -170,9 +182,102 @@ class TestTokenClientAuthHttp(HttpCase):
                 "Content-Type": "Application/X-WWW-Form-Urlencoded; Charset=UTF-8",
             },
         )
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json().get("error"), "invalid_client")
-        self.assertEqual(response.headers.get("WWW-Authenticate"), "Basic")
+        self._assert_error(response, "invalid_request")
+
+    def test_explicit_post_authenticates_and_all_grants_stay_fail_closed(self):
+        client = self._client("selected-post", "selected-secret", "client_secret_post")
+        basic = self._client("selected-basic", "selected-secret", "client_secret_basic")
+        grants = (None, "client_credentials", "password", "refresh_token",
+                  "authorization_code", "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "challenge_approval", "digital_signature", "untrusted-grant-canary")
+        descriptions = set()
+        pair = quote_plus(basic.client_id) + ":selected-secret"
+        header = "Basic " + base64.b64encode(pair.encode("ascii")).decode("ascii")
+        for method in ("basic", "post"):
+            for grant in grants:
+                with self.subTest(method=method, grant=grant):
+                    data = {} if grant is None else {"grant_type": grant}
+                    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                    if method == "basic":
+                        headers["Authorization"] = header
+                    else:
+                        data.update(client_id=client.client_id, client_secret="selected-secret")
+                    # A truthy body keeps HttpCase.url_open on POST for missing grant.
+                    response = self.url_open("/oidc/token", data=urlencode(data) or "ignored=1",
+                                             headers=headers)
+                    self._assert_error(response, "unsupported_grant_type")
+                    description = response.json().get("error_description")
+                    self.assertNotIn("untrusted-grant-canary", description or "")
+                    descriptions.add(description)
+        self.assertEqual(len(descriptions), 1)
+
+    def test_failed_post_and_public_clients_do_not_fall_back(self):
+        post = self._client("failed-post", "correct-secret", "client_secret_post")
+        inactive = self._client("inactive-post", "correct-secret", "client_secret_post", active=False)
+        public = self._client("public-post", "correct-secret", "client_secret_post", confidential=False)
+        for client, secret in ((post, "wrong-secret"), (inactive, "correct-secret"),
+                               (public, "correct-secret")):
+            with self.subTest(client=client.client_id):
+                self._assert_error(self._post_credentials(client, secret), "invalid_client")
+        for method in ("client_secret", "client_secret_basic"):
+            client = self._client("public-" + method, "correct-secret", method, confidential=False)
+            self._assert_error(self._basic_request(client.client_id, "correct-secret"),
+                               "invalid_client", 401, basic=True)
+        self._assert_error(self._basic_request(post.client_id, "correct-secret"),
+                           "invalid_client", 401, basic=True)
+        self._assert_error(self.url_open("/oidc/token", data={
+            "client_id": "unknown-post", "client_secret": "synthetic-secret",
+            "grant_type": "client_credentials"}), "invalid_client")
+        empty = self._client("empty-post-verifier", "synthetic-secret", "client_secret_post")
+        empty.sudo().write({"client_secret_hash": False})
+        self._assert_error(self._post_credentials(empty, "synthetic-secret"), "invalid_client")
+
+    def test_non_basic_and_malformed_basic_have_distinct_errors(self):
+        for header in ("Bearer synthetic-token", "Digest synthetic-token"):
+            response = self.url_open("/oidc/token", data={"grant_type": "client_credentials"},
+                                     headers={"Authorization": header})
+            self._assert_error(response, "invalid_request")
+        for header in ("Basic", "Basic !!!", "Basic " + base64.b64encode(b"no-colon").decode()):
+            response = self.url_open("/oidc/token", data={"grant_type": "client_credentials"},
+                                     headers={"Authorization": header})
+            self._assert_error(response, "invalid_client", 401, basic=True)
+
+    def test_duplicate_consumed_parameters_and_malformed_forms(self):
+        client = self._client("form-post", "form-secret", "client_secret_post")
+        pairs = [("client_id", client.client_id), ("client_secret", "form-secret"),
+                 ("grant_type", "client_credentials")]
+        for name in ("client_id", "client_secret", "grant_type"):
+            for value in (dict(pairs)[name], ""):
+                response = self.url_open("/oidc/token", data=urlencode(pairs + [(name, value)]),
+                                         headers={"Content-Type": "application/x-www-form-urlencoded"})
+                self._assert_error(response, "invalid_request")
+        for body in ("client_id=%ZZ", "client_id=%FF", "client_id=one&bare", "client_id=%"):
+            response = self.url_open("/oidc/token", data=body,
+                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+            self._assert_error(response, "invalid_request")
+        for name in ("client_id", "client_secret"):
+            response = self.url_open("/oidc/token?" + name + "=", data={"grant_type": "client_credentials"})
+            self._assert_error(response, "invalid_request")
+
+    def test_unsupported_media_are_not_credential_channels(self):
+        for media, body in (("application/json", '{"client_id":"synthetic"}'),
+                            ("multipart/form-data; boundary=synthetic", "--synthetic--\r\n"),
+                            ("text/plain", "client_id=synthetic")):
+            with self.subTest(media=media):
+                response = self.url_open("/oidc/token", data=body, headers={"Content-Type": media})
+                self._assert_error(response, "invalid_request")
+
+    def test_post_form_encoding_and_ignored_parameters(self):
+        client = self._client("form:plus+ spaceé", "secret:plus+ spaceé", "client_secret_post")
+        response = self.url_open("/oidc/token", data={
+            "client_id": client.client_id, "client_secret": "secret:plus+ spaceé",
+            "grant_type": "client_credentials", "unrecognized": "ignored"})
+        self._assert_error(response, "unsupported_grant_type")
+        self._client("ignored-basic", "synthetic-secret")
+        encoded = base64.b64encode(b"ignored-basic:synthetic-secret").decode("ascii")
+        response = self.url_open("/oidc/token", data={"grant_type": "client_credentials", "unrecognized": "ignored"},
+                                 headers={"Authorization": "Basic " + encoded})
+        self._assert_error(response, "unsupported_grant_type")
 
     def test_effective_route_registry_has_one_post_token_route(self):
         routes = [rule for rule in self.env["ir.http"].routing_map().iter_rules()

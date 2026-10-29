@@ -168,4 +168,7 @@ class TokenHelperClientAuth(models.AbstractModel):
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):
         self._authenticate_token_client()
-        return super(TokenHelperClientAuth, self).oidc_token(grant_type=grant_type, **kwargs)
+        result = super(TokenHelperClientAuth, self).oidc_token(grant_type=grant_type, **kwargs)
+        if result.get("error") == "unsupported_grant_type":
+            result["error_description"] = "Grant type is not supported."
+        return result

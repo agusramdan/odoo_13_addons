@@ -18,6 +18,16 @@ README ini adalah indeks; panduan lengkap ada di [panduan pengembang](docs/devel
 - [Konfigurasi dan galat](docs/developer.md#konfigurasi)
 - [Keamanan, batas protokol, Odoo 13 vs 20, dan peta kode sumber/hash](docs/developer.md#keamanan-dan-batas)
 
+### Batas parser pada permintaan token
+
+Helper addon hanya dapat memeriksa informasi permintaan yang masih tersedia pada boundary aplikasi. Pada body `application/x-www-form-urlencoded`, parsing dapat mengonsumsi body mentah dan menormalisasi escape sebelum helper dipanggil. Akibatnya, escape `%HH` yang malformed dapat menjadi tidak dapat dibedakan dari literal yang dikodekan secara valid; misalnya `post%ZZ` dan `post%25ZZ` dapat menghasilkan nilai parsed yang sama. Keberadaan `%` dalam nilai hasil decoding saja bukan bukti bahwa sintaks mentahnya malformed.
+
+Parser/server/proxy juga dapat mereduksi beberapa field mentah `Authorization` menjadi satu nilai yang bertahan sebelum mencapai helper. Jumlah field asli tidak dapat disimpulkan dari satu nilai WSGI tersebut, dan permintaan dapat diperlakukan seolah nilai yang bertahan adalah satu-satunya field yang dikirim.
+
+Addon tidak mengklaim penolakan berdasarkan sintaks escape body mentah atau jumlah field mentah `Authorization` setelah informasi tersebut hilang akibat normalisasi/parsing. Keterbatasan ini bukan klaim bahwa perilakunya aman atau bahwa semua deployment memakai parser/versi yang sama. Validasi terhadap kredensial dan informasi permintaan yang masih tersedia tetap diperlukan; keterbatasan ini tidak membenarkan fallback autentikasi atau pengabaian pelanggaran lain.
+
+Deployment yang mensyaratkan penolakan kedua bentuk permintaan tersebut memerlukan titik enforcement sebelum parser/normalisasi, yang telah diverifikasi masih memiliki byte body dan jumlah field asli pada seluruh jalur ingress yang relevan. Penempatan helper setelah informasi hilang tidak dapat menggantikan enforcement itu. Rantai ingress dan versi parser/server deployment harus diverifikasi, bukan diasumsikan dari dependensi sumber.
+
 ## Untuk Pengguna
 
 README ini adalah indeks; panduan lengkap ada di [panduan pengguna](docs/user.md).
