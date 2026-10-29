@@ -37,6 +37,29 @@ You are an expert Odoo developer. This project contains Odoo custom modules
 - `_name`: dotted lowercase (e.g. `project.resource.booking`).
 - `_description`: human-readable string, always present.
 - `_inherit` for extension, `_inherits` only for delegation inheritance (rare).
+- Distinguish Python class inheritance from Odoo ORM model inheritance. Do not
+  assume subclassing a Python class derived from `models.AbstractModel` alone
+  creates a concrete persisted model or correctly registers ORM inheritance.
+- When creating a new concrete model from an abstract ORM mixin, declare the
+  class on `models.Model` and set both `_name` and `_inherit` to the Odoo model
+  names explicitly. Example:
+  ```python
+  class AmrResourceUserMapping(models.Model):
+      _name = 'oidc.issuer.user.mapping'
+      _inherit = 'amr.resource.registry.access'
+  ```
+  Do not replace `_inherit` with Python syntax such as
+  `class AmrResourceUserMapping(RegistryAccess)` as the sole inheritance
+  declaration. Preserve `_description`, `_rec_name`, fields, and methods.
+- For an in-place extension of an existing Odoo model, set `_inherit` without
+  `_name`; for a new concrete model based on an abstract mixin, use `_name` and
+  `_inherit` together. Use `models.AbstractModel` for an abstract reusable
+  mixin, not a persisted concrete model.
+- Verify model inheritance in the live Odoo registry: inspect `_name`,
+  `_inherit`, `_abstract`, `_auto`, and `_table`, then verify the physical table
+  exists and ORM operations work in a fresh isolated database. Source-level
+  checks and offline tests alone do not prove registry registration or table
+  creation.
 - Field order: `_name`, `_description`, `_inherit`, `_order`, then fields
   grouped by type (Char/Int/Float > Date/Datetime > Many2one > One2many >
   Many2many > computed), then methods ordered: CRUD overrides, compute,
