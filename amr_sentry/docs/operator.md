@@ -33,6 +33,12 @@ The equivalent JSON shape is `{"sentry":{"dsn":"https://example.invalid/project"
 
 For activation, replace the placeholder DSN and set `enabled: true` and a reportable mode; retain all 12 safety keys exactly as shown, including their types. Missing or unsafe safety values cause active configuration to be rejected before SDK initialization. Only `dsn`, these safety keys, and the optional string metadata `environment`, `release`, `server_name`, and `project_root` are allowed in `sentry`; other SDK options are rejected. Use synthetic, non-customer metadata. Omitted metadata may use SDK environment or automatic defaults; choose explicit, approved metadata for exclusive-process acceptance.
 
+## Exclusive process eligibility
+
+Enable this addon only in dedicated Odoo processes/workers where operators can exclude all other Sentry SDK initialization, integrations and event processors, and any ambient customer data in SDK global, isolation or current scopes. Inventory the loaded addons, startup hooks and instrumentation for every worker and database served by those processes; restrict the deployment so other tenants or databases cannot be reported without authority. Verify these conditions before activation and after deployment changes, and restart all affected workers for configuration changes. If exclusivity cannot be established or maintained, do not enable reporting in that process; a separately reviewed isolation design is needed.
+
+The SDK is process-global: this addon does not enforce exclusivity, prevent another component from reinitializing the SDK or mutating its scopes, or isolate databases. Disabling this addon does not disable an SDK initialized by another component. Use explicit approved metadata and check for environment or automatic defaults as part of deployment eligibility; the example alone does not prove isolation.
+
 ## Reporting modes
 
 - `all`: report successful outcomes and failures.
@@ -47,5 +53,7 @@ A real DSN, `enabled: true`, a reportable mode, the complete valid safety profil
 Configuration load, SDK import, SDK initialization, and reporting failures are fail-closed/best-effort: reporting is disabled or the service-client outcome is retained, with generic warnings. Do not rely on reporting for service operation or diagnostics.
 
 The addon does not explicitly attach request/response bodies, headers, credentials, or customer data. Sentry SDK standard capture behavior still applies; no custom scrubber or broad privacy guarantee is provided. Review your Sentry project and SDK configuration for your own requirements.
+
+For reportable failures, the original exception is sent to Sentry. Its message, chained cause, or path/URL may contain sensitive data, including tokens or customer data. The safety profile is not a guarantee that arbitrary exception text is clean. The Owner accepted the bounded D-EX residual exposure (Plane comment `ecaba4b8-afcb-47b4-924b-94d97e4a1b9b`); this is not a general waiver or a guarantee of strict zero-data handling. Exception-text UAT remains unverified, and this acceptance is not privacy, runtime, or security PASS. Do not treat this guide or the safety profile as such approval.
 
 This guide documents source behavior only. It does not verify Odoo installation, registry startup, production use, migration or deletion of stale configuration values, or a deployment's secret handling.

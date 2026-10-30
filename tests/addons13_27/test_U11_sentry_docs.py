@@ -53,6 +53,20 @@ class SentryDocs(OfflineCase):
             with self.subTest(required=required):
                 self.assertIn(required, docs)
 
+    def test_operator_discloses_original_exception_residual_risk(self):
+        text = (ROOT / 'amr_sentry/docs/operator.md').read_text().lower()
+        self.assertRegex(text, r'original exception[^\n]*sentry')
+        for detail in ('message', 'chained cause', 'path/url', 'sensitive data'):
+            with self.subTest(detail=detail):
+                self.assertIn(detail, text)
+        self.assertIn('residual', text)
+        self.assertIn('not a guarantee', text)
+        self.assertIn('owner accepted the bounded d-ex residual', text)
+        self.assertIn('ecaba4b8-afcb-47b4-924b-94d97e4a1b9b', text)
+        self.assertIn('exception-text uat remains unverified', text)
+        self.assertIn('not privacy, runtime, or security pass', text)
+        self.assertNotIn('until that decision', text)
+
     def test_yaml_example_is_valid_and_safe_by_default(self):
         if not self._guides_exist():
             return

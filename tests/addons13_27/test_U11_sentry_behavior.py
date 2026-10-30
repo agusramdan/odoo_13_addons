@@ -191,6 +191,38 @@ class SentryReporting(unittest.TestCase):
             status, error = dispatch_errors[0]
             self.fail('dispatch_send failed to preserve outcome after reporter failure (HTTP %s): %r' % (status, error))
 
+    def test_dispatch_success_log_failure_uses_baseline_error_log_path(self):
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        business_error = RuntimeError('done log failed')
+        response = types.SimpleNamespace(text='ok', raise_for_status=lambda: None)
+        reports, logs = [], []
+        class Client:
+            def prepare_request_context(self, **kwargs):
+                return {'method': 'POST'}
+            def _report_sentry(self, response=None, exception=None, method=None):
+                reports.append((response, exception, method))
+        def create_error(*args, **kwargs):
+            logs.append((args, kwargs))
+            if args[0] == 'done':
+                raise business_error
+        sender = types.SimpleNamespace(active_log=True, payload={}, service_client=Client(),
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': types.SimpleNamespace(create_error=create_error)})
+        dispatch = extracted_method(path, 'ServiceClientSend', 'dispatch_send', {
+            'requests': types.SimpleNamespace(request=lambda **kw: response),
+            '_logger': types.SimpleNamespace(exception=lambda *a: None, debug=lambda *a, **kw: None),
+        })
+        try:
+            result = dispatch(sender)
+        except RuntimeError as error:
+            self.fail('baseline handled the done-log failure, but it escaped: %s' % error)
+        self.assertIsNone(result)
+        self.assertEqual(len(logs), 2)
+        self.assertEqual(logs[0][0][0], 'done')
+        self.assertIs(logs[1][0][0], business_error)
+        self.assertNotIn('response_text', logs[1][1])
+        self.assertEqual(reports, [(response, None, 'POST'), (response, business_error, 'POST')])
+
     def test_real_log_send_reports_success(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
         events = []
