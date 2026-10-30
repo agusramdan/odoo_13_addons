@@ -2,6 +2,8 @@
 
 This optional addon reports service-client outcomes to Sentry when explicitly enabled. It depends on `amr_service_client`. Install the pinned Python dependencies `sentry-sdk==2.73.0` and `PyYAML==6.0.1` as part of your separately managed deployment process.
 
+The target is Odoo 13 / CPython 3.7.3. The dependency overlay, including the Requests adjustment, is test-only and confined to the sandbox. It is not production compatibility or security clearance; production dependency changes require separate approval. The root `requirement.txt` records the current Requests pin, not production approval.
+
 ## Configuration
 
 `AMR_SENTRY_CONFIG` selects the configuration file. If unset or empty, the path is `/etc/odoo/amr_sentry.yaml`. The file extension selects the parser: `.yaml` and `.yml` use YAML; `.json` uses JSON. The top-level `sentry` and `service_client` values must both be mappings. The `sentry` mapping is passed as keyword arguments to `sentry_sdk.init()` when reporting is enabled and configured. `service_client` accepts `enabled` and `mode`.

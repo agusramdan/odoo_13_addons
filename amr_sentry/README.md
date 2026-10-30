@@ -2,6 +2,8 @@
 
 > Optional Odoo 13 addon for reporting service-client outcomes. Documentation is based on committed source; Odoo installation, registry loading, and production operation are not verified.
 
+The target is Odoo 13 / CPython 3.7.3. The dependency overlay, including the Requests adjustment, is test-only and confined to the sandbox. It is not production compatibility or security clearance; production dependency changes require separate approval.
+
 | | |
 |---|---|
 | Depends | `amr_service_client` |

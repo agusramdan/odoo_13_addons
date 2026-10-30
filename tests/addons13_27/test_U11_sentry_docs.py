@@ -53,6 +53,16 @@ class SentryDocs(OfflineCase):
             with self.subTest(required=required):
                 self.assertIn(required, docs)
 
+    def test_guides_document_target_and_test_only_dependency_boundary(self):
+        for relpath in ('amr_sentry/README.md', 'amr_sentry/docs/operator.md'):
+            text = (ROOT / relpath).read_text().lower()
+            for phrase in ('odoo 13', 'cpython 3.7.3', 'test-only',
+                           'requests', 'production compatibility', 'security clearance'):
+                with self.subTest(guide=relpath, phrase=phrase):
+                    self.assertIn(phrase, text)
+            with self.subTest(guide=relpath, boundary='no approval'):
+                self.assertRegex(text, r'not (?:a |an )?production compatibility or security clearance')
+
     def test_operator_discloses_original_exception_residual_risk(self):
         text = (ROOT / 'amr_sentry/docs/operator.md').read_text().lower()
         self.assertRegex(text, r'original exception[^\n]*sentry')
