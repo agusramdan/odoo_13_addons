@@ -29,7 +29,7 @@ README ini adalah indeks; panduan lengkap ada di [panduan pengguna](docs/user.md
 
 - **Arsitektur:** graf impor addon memuat pengendali, model, dan wizard; helper mewarisi `amr.token.helper` dari `amr_token`.
 - **Model:** `oidc.client`, `oidc.authorization.code`, `oidc.client.key`, `oidc.jwt.replay`, `oidc.refresh.token`; detail atribut di panduan pengembang.
-- **Konsumen:** `amr_resource.get_oidc_config()` mengambil Discovery dari issuer dan digunakan oleh `generate_token()`, `introspect_token()`, dan `validate()`; issuer lokal dapat terdampak oleh route 404. Consumer/cache eksternal belum diinventarisasi.
+- **Konsumen:** `amr_oidc` melakukan generasi tokennya sendiri. `amr_resource.get_oidc_config()` hanya menyediakan konfigurasi issuer/resource-server dan tidak menjadi generator token.
 - **Metode/rute:** permukaan lokal dan jalur delegasi dirinci di panduan pengembang; bukan kontrak runtime/API teruji.
 - **Dependensi:** addon `base`, `web`, `amr_token`; Python `pyjwt`, `cryptography` menurut manifest. Target Python proyek 3.7.9; unit test dijalankan pada interpreter 3.7.9 dalam container, tetapi Odoo runtime belum diuji.
 - **Konfigurasi:** parameter yang tampak pada kode sumber: `amr_token.expires_in`, `amr_token.secret`, `web.base.url`; jangan menyalin atau mengubah nilai produksi berdasar dokumen ini.

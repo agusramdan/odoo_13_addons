@@ -32,7 +32,6 @@ Pilihan `get_user_match` berlabel **Default**, tanpa default/preselection otomat
 | `get_issuer`, `get_audience`, `get_audiences` | Registry aktif pada company efektif; tanpa selector harus tepat satu profil yang sesuai. Tidak fallback ke `web.base.url`. |
 | `get_oidc_config(issuer)` | Mapping endpoint dari registry; namanya dipertahankan tetapi tidak melakukan Discovery. |
 | `get_jwks_data(issuer)` | JWKS endpoint registry dengan transport terbatas; tidak memakai PyJWKClient/cachenya. |
-| `generate_token`, `encode` | Endpoint statis dan credential reference profil; generate mengembalikan JSON, encode scalar access_token. Alias issuer yang konflik/caller credential ditolak. |
 | `validate`, `decode`, `get_validate_user` | Claims terverifikasi dengan provenance internal; signature public dipertahankan. HS/ID token ditolak, bukan introspection fallback. |
 | `get_user_match`, `get_uid`, `is_user_match` | Memerlukan provenance internal yang terikat company/UID dan payload utuh; dict biasa/context marker tidak cukup. |
 | `get_param_token`, `get_header_token`, `get_bearer_token` | Ekstraksi saja, bukan validasi; header bearer hadir namun malformed ditolak. |

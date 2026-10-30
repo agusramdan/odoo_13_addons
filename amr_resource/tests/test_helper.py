@@ -209,6 +209,7 @@ class TestResourceHelper(ResourceCase):
         claims = dict(iss=self.profile.issuer, sub='subject-a', client_id='client-a', aud='resource-a',
                       exp=int(time.time())+300, iat=int(time.time())-1, jti='synthetic-id')
         token = jwt.encode(claims, key, algorithm='RS256', headers={'typ': 'at+jwt'})
+        self.logger.reset_mock()
         with patch.object(helper_module, 'fetch_json') as fetch:
             result = self.helper.validate(token)
             self.assertTrue(self.helper._verified(result))
@@ -234,11 +235,14 @@ class TestResourceHelper(ResourceCase):
             with patch.object(jwt, 'get_unverified_header', side_effect=error):
                 with self.assertRaises(Unauthorized):
                     self.helper.validate(token)
+        self.assertFalse(self.logger.called)
         jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
         jwk.update(kid='synthetic-key', alg='RS256', use='sig')
         self.profile.write({'local_key_ref': False, 'jwks_uri': 'https://keys.invalid/jwks',
                             'verification_source': 'jwks', 'metadata_mode': 'manual',
                             'introspection_source': 'none'})
+        # Profile writes emit registry audit logs; spy only on helper validation.
+        self.logger.reset_mock()
         remote_token = jwt.encode(claims, key, algorithm='RS256',
                                   headers={'typ': 'at+jwt', 'kid': 'synthetic-key'})
         with patch.object(helper_module, 'fetch_json', return_value={'keys': [jwk]}) as fetch, \

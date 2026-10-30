@@ -13,7 +13,7 @@ Metadata sukses tidak dipublikasikan: candidate tidak mengeluarkan response type
 
 ## Konsumen internal dan kompatibilitas
 
-Di repositori yang sama, `amr_resource.get_oidc_config()` mengambil `/.well-known/openid-configuration` dari issuer dan dipakai oleh `generate_token()`, `introspect_token()`, serta `validate()` (`../../amr_resource/models/helper.py:40-44,60-73,82-103,130-136`). Jika konfigurasi issuer menunjuk ke instance ini, kontrak 404 akan membuat pemanggil tersebut gagal. Source consumer tidak diubah; issuer/configuration, caller di luar repo, cache, pemberitahuan, serta rencana migrasi belum diinventarisasi. Ini blocker release, bukan alasan untuk mengarang compatibility.
+Di repositori yang sama, `amr_resource.get_oidc_config()` hanya mengekspos konfigurasi registry resource-server; ia tidak memasok `amr_oidc` ke generasi token. `amr_oidc` mempertahankan generator token terpisah. Consumer/cache eksternal belum diinventarisasi.
 
 Helper publik `openid_configuration` dihapus. Helper private `_service_account_endpoint_defaults` hanya dipakai oleh `oidc.client.export_service_account` untuk menjaga field `issuer`, `authorization_endpoint`, dan `token_endpoint` pada ekspor lama; tiga nilai tersebut bukan Discovery document dan bukan bukti flow dapat digunakan. Ekspor service-account dan konsumennya belum menjadi release-approved.
 
