@@ -13,6 +13,8 @@ class ServiceClient(models.Model):
     def _report_sentry(self, service_client=None, response=None, exception=None,
                        method=None, **kw):
         try:
+            if service_client is None and len(self) == 1:
+                service_client = self
             REPORTER.report(
                 success=(exception is None),
                 service_client=service_client,

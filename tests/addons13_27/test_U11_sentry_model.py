@@ -6,6 +6,19 @@ import types
 import unittest
 from unittest import mock
 
+from test_U11_sentry_behavior import ROOT, extracted_method, policy
+
+
+class _Recordset(object):
+    """Offline ORM shape: model access is empty, a bound client is singleton."""
+
+    def __init__(self, size=0, sentry_opt_in=False):
+        self._size = size
+        self.sentry_opt_in = sentry_opt_in
+
+    def __len__(self):
+        return self._size
+
 
 _MODEL_PATH = os.path.join(
     os.path.dirname(__file__), "../../amr_sentry/models/service_client.py"
@@ -31,7 +44,7 @@ class TestOptionalSentryModelHook(unittest.TestCase):
             "optional Sentry model module must exist at amr_sentry/models/service_client.py",
         )
         odoo = types.ModuleType("odoo")
-        setattr(odoo, "models", types.SimpleNamespace(Model=object))
+        setattr(odoo, "models", types.SimpleNamespace(Model=_Recordset))
         odoo_addons = types.ModuleType("odoo.addons")
         odoo_addons.__path__ = []
         addon = types.ModuleType("odoo.addons.amr_sentry")
@@ -71,6 +84,93 @@ class TestOptionalSentryModelHook(unittest.TestCase):
             "optional ServiceClient must override _report_sentry",
         )
         return model_class, hook
+
+    def selected_model(self):
+        events = []
+        sdk = types.SimpleNamespace(
+            init=lambda **kw: None,
+            capture_message=lambda *a, **kw: events.append(('message', a, kw)),
+            capture_exception=lambda error: events.append(('exception', error)),
+        )
+        reporter = policy.build_reporter(
+            {'dsn': 'https://example.invalid/1'},
+            {'enabled': True, 'mode': 'selected'}, sdk,
+        )
+        model_class, _hook = self.get_hook(reporter)
+        return model_class, events
+
+    def dispatch(self, client, error):
+        """Execute the actual dispatch body with its bound optional model hook."""
+        response = types.SimpleNamespace(text='ok')
+
+        def raise_for_status():
+            if error is not None:
+                raise error
+
+        response.raise_for_status = raise_for_status
+        client.prepare_request_context = lambda **kw: {
+            'url': 'https://example.invalid', 'method': 'POST',
+        }
+        logs = []
+        sender = types.SimpleNamespace(
+            active_log=False, payload={}, service_client=client,
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': types.SimpleNamespace(
+                create_error=lambda *a, **kw: logs.append((a, kw)))},
+        )
+        dispatch = extracted_method(
+            ROOT / 'amr_service_client/models/service_client.py',
+            'ServiceClientSend', 'dispatch_send', {
+                'requests': types.SimpleNamespace(request=lambda **kw: response),
+                '_logger': types.SimpleNamespace(exception=lambda *a: None),
+            },
+        )
+        self.assertIsNone(dispatch(sender))
+        self.assertEqual(len(logs), int(error is not None))
+        if error is not None:
+            self.assertIs(logs[0][0][0], error)
+
+    def test_selected_dispatch_bound_opted_in_singleton_reports_once(self):
+        for error in (None, RuntimeError('http failure')):
+            with self.subTest(outcome='error' if error else 'success'):
+                model_class, events = self.selected_model()
+                client = model_class(size=1, sentry_opt_in=True)
+                self.assertEqual(len(client), 1)
+                self.assertTrue(client)
+                self.dispatch(client, error)
+                expected = ([('exception', error)] if error is not None else [
+                    ('message', ('Service client request completed',), {'level': 'info'}),
+                ])
+                self.assertEqual(events, expected)
+
+    def test_selected_dispatch_suppresses_opted_out_and_empty_recordsets(self):
+        for size in (0, 1):
+            for error in (None, RuntimeError('http failure')):
+                with self.subTest(size=size, outcome='error' if error else 'success'):
+                    model_class, events = self.selected_model()
+                    client = model_class(size=size, sentry_opt_in=False)
+                    self.assertEqual(len(client), size)
+                    self.assertEqual(bool(client), bool(size))
+                    self.dispatch(client, error)
+                    self.assertEqual(events, [])
+
+    def test_selected_explicit_client_takes_precedence_over_bound_client(self):
+        for bound_opt_in, explicit_size, explicit_opt_in in (
+                (True, 1, False), (False, 1, True), (True, 0, False)):
+            for error in (None, RuntimeError('http failure')):
+                with self.subTest(bound=bound_opt_in, explicit=explicit_opt_in,
+                                  size=explicit_size,
+                                  outcome='error' if error else 'success'):
+                    model_class, events = self.selected_model()
+                    bound = model_class(size=1, sentry_opt_in=bound_opt_in)
+                    explicit = model_class(size=explicit_size, sentry_opt_in=explicit_opt_in)
+                    bound._report_sentry(service_client=explicit, exception=error)
+                    expected = []
+                    if explicit_opt_in:
+                        expected = ([('exception', error)] if error is not None else [
+                            ('message', ('Service client request completed',), {'level': 'info'}),
+                        ])
+                    self.assertEqual(events, expected)
 
     def test_success_reports_once_with_exact_service_client(self):
         reporter = _Reporter()
