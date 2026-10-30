@@ -1044,8 +1044,9 @@ class AmrResourceBinding(models.Model):
                 raise ValidationError('Binding requires an active eligible internal user.')
 
 
-class AmrResourceUserMapping(RegistryAccess):
+class AmrResourceUserMapping(models.Model):
     _name = 'oidc.issuer.user.mapping'
+    _inherit = 'amr.resource.registry.access'
     _description = 'Issuer User Claim Mapping'
     _rec_name = 'jwt_key'
 
@@ -1113,8 +1114,9 @@ class OidcAlgorithm(models.Model):
         raise AccessError('Algorithm catalog is immutable; update it in code.')
 
 
-class OidcIssuerAlgorithmPolicy(RegistryAccess):
+class OidcIssuerAlgorithmPolicy(models.Model):
     _name = 'oidc.issuer.algorithm.policy'
+    _inherit = 'amr.resource.registry.access'
     _description = 'Issuer Enabled OIDC Algorithm Policy'
     _rec_name = 'algorithm_id'
 
