@@ -1,0 +1,33 @@
+{
+  "task": "ADDONS13-64",
+  "status": "OWNER_ACCEPTED_STEP0_DONE",
+  "approval_source": "Direct Owner: prd dan uat approve; lakukan commit dan push; step 0 done ; lanjutkan step 1-4 (after rebase0922aa4)",
+  "artifacts": {
+    "PRD-v3.1-DRAFT.md": "cf17ac528211a9661f35c1d1c4561937a7d48f41a68a0236b8e1b6c769424f5f",
+    "UAT-v3.1-DRAFT.md": "508da8bd2bc6ed6d1f6f98568a2e61418d204750152a8a21f59b3620579eb81e"
+  },
+  "approved_analysis_candidate": "4c39fd76cb3818f0fd29cd8c7738fb647e85fde5",
+  "post_rebase_candidate": "0922aa434df41654f6451da4ae62ec408773c838",
+  "integration_base": "573cce2f3f8e996f77d48489f3999dc7f93f259d",
+  "rebase_provenance": "11/11 equivalent patches verified by Lead/Tester; upstream AGENTS+skills only; product paths unchanged. Acceptance recorded for exact immutable v3.1 artifacts; no edits silently folded in.",
+  "metadata_authority": "This acceptance supersedes draft/not accepted and G0 v3 labels only for the exact v3.1 artifacts named here. Historical binding statements remain provenance, current execution candidate bound above.",
+  "already_directed_contract": "Selected requires opted-in client record; absent/off client suppresses selected only, all/error eligibility unchanged. QA UAT-12 ambiguity is interpreted with PRD mode table, not as a new all/error suppression contract.",
+  "authorized": [
+    "M1 safe-file schema delta approved as part of PRD",
+    "scoped commit/push on ADDONS13-64",
+    "serial Steps1\u20134 subject to gates"
+  ],
+  "open_decisions": [
+    "D-EX original-exception residual vs revised strict-zero telemetry contract",
+    "D-GLOBAL exclusive-process evaluation vs separate adapter design"
+  ],
+  "not_inferred": [
+    "D-EX or D-GLOBAL option selection",
+    "risk/security waiver",
+    "UAT PASS",
+    "PR_ACCEPT on behalf of Owner",
+    "merge",
+    "deploy",
+    "issue closure"
+  ]
+}

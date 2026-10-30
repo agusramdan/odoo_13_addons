@@ -1,6 +1,12 @@
 """Documentation contract checks for the optional AMR Sentry addon."""
+import importlib.util
+import json
+import os
 import pathlib
 import re
+import tempfile
+import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -63,3 +69,38 @@ class SentryDocs(OfflineCase):
         dsn = config['sentry'].get('dsn', '')
         self.assertIn('example.invalid', dsn)
         self.assertNotIn('sentry.io', dsn)
+
+
+class ActivatedOperatorExamples(unittest.TestCase):
+    def test_yaml_and_json_examples_load_when_activated(self):
+        text = (ROOT / 'amr_sentry/docs/operator.md').read_text()
+        yaml_match = re.search(r'```yaml\s*\n(.*?)\n```', text, re.DOTALL)
+        json_match = re.search(r'The equivalent JSON shape is `([^`]+)`', text)
+        self.assertIsNotNone(yaml_match)
+        self.assertIsNotNone(json_match)
+        examples = ((".yaml", yaml.safe_load(yaml_match.group(1))),
+                    (".json", json.loads(json_match.group(1))))
+        self.assertEqual(examples[0][1], examples[1][1])
+        spec = importlib.util.spec_from_file_location(
+            'operator_config_test', ROOT / 'amr_sentry/services/config.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for suffix, example in examples:
+            with self.subTest(format=suffix):
+                self.assertIs(example['service_client']['enabled'], False)
+                self.assertEqual(example['service_client']['mode'], 'none')
+                example['service_client'].update(enabled=True, mode='error')
+                example['sentry']['dsn'] = 'https://public@example.invalid/1'
+                with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, encoding='utf-8') as stream:
+                    if suffix == '.json':
+                        json.dump(example, stream)
+                    else:
+                        yaml.safe_dump(example, stream)
+                    stream.flush()
+                    with patch.dict(os.environ, {'AMR_SENTRY_CONFIG': stream.name}):
+                        try:
+                            sentry, policy = module.load_config()
+                        except module.SentryConfigError as error:
+                            self.fail('Activated {} operator example rejected: {}'.format(suffix, error))
+                self.assertEqual(sentry, example['sentry'])
+                self.assertEqual(policy, {'enabled': True, 'mode': 'error'})

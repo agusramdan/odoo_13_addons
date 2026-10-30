@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import yaml
+from test_U11_sentry_safe_file import PROFILE
+
 
 class TestSentryConfig(unittest.TestCase):
     @classmethod
@@ -14,7 +17,8 @@ class TestSentryConfig(unittest.TestCase):
 
     def test_yaml_override_maps_sentry_kwargs_and_policy(self):
         with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", encoding="utf-8") as config:
-            config.write("sentry:\n  dsn: marker\nservice_client:\n  enabled: true\n  mode: error\n")
+            yaml.safe_dump({'sentry': dict(PROFILE, dsn='marker'),
+                            'service_client': {'enabled': True, 'mode': 'error'}}, config)
             config.flush()
             with patch.dict(os.environ, {"AMR_SENTRY_CONFIG": config.name}):
                 try:
@@ -22,19 +26,19 @@ class TestSentryConfig(unittest.TestCase):
                 except self.config_error as error:
                     self.fail("Valid YAML configuration should load: {}".format(error))
         sentry, policy = actual
-        self.assertEqual(sentry, {"dsn": "marker"})
+        self.assertEqual(sentry, dict(PROFILE, dsn="marker"))
         self.assertEqual(policy, {"enabled": True, "mode": "error"})
 
     def test_json_override_maps_configuration(self):
         with tempfile.NamedTemporaryFile(suffix=".json", mode="w", encoding="utf-8") as config:
-            config.write('{"sentry":{"sample_rate":0.25},"service_client":{}}')
+            config.write('{"sentry":{"environment":"synthetic"},"service_client":{}}')
             config.flush()
             with patch.dict(os.environ, {"AMR_SENTRY_CONFIG": config.name}):
                 try:
                     actual = self.load_config()
                 except self.config_error as error:
                     self.fail("JSON configuration should be accepted: {}".format(error))
-        self.assertEqual(actual, ({"sample_rate": 0.25}, {"enabled": False, "mode": "none"}))
+        self.assertEqual(actual, ({"environment": "synthetic"}, {"enabled": False, "mode": "none"}))
 
     def test_empty_environment_uses_default_path(self):
         with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", encoding="utf-8") as config:

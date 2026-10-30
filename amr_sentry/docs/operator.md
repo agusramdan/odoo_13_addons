@@ -12,12 +12,26 @@ Use a secret-safe deployment mechanism for a real DSN. Restrict file ownership a
 sentry:
   dsn: "https://example.invalid/project"
   environment: development
+  default_integrations: false
+  auto_enabling_integrations: false
+  integrations: []
+  include_local_variables: false
+  include_source_context: false
+  send_default_pii: false
+  max_request_body_size: "never"
+  max_breadcrumbs: 0
+  auto_session_tracking: false
+  send_client_reports: false
+  enable_metrics: false
+  debug: false
 service_client:
   enabled: false
   mode: none
 ```
 
-The equivalent JSON shape is `{"sentry":{"dsn":"https://example.invalid/project","environment":"development"},"service_client":{"enabled":false,"mode":"none"}}`.
+The equivalent JSON shape is `{"sentry":{"dsn":"https://example.invalid/project","environment":"development","default_integrations":false,"auto_enabling_integrations":false,"integrations":[],"include_local_variables":false,"include_source_context":false,"send_default_pii":false,"max_request_body_size":"never","max_breadcrumbs":0,"auto_session_tracking":false,"send_client_reports":false,"enable_metrics":false,"debug":false},"service_client":{"enabled":false,"mode":"none"}}`.
+
+For activation, replace the placeholder DSN and set `enabled: true` and a reportable mode; retain all 12 safety keys exactly as shown, including their types. Missing or unsafe safety values cause active configuration to be rejected before SDK initialization. Only `dsn`, these safety keys, and the optional string metadata `environment`, `release`, `server_name`, and `project_root` are allowed in `sentry`; other SDK options are rejected. Use synthetic, non-customer metadata. Omitted metadata may use SDK environment or automatic defaults; choose explicit, approved metadata for exclusive-process acceptance.
 
 ## Reporting modes
 
@@ -26,7 +40,7 @@ The equivalent JSON shape is `{"sentry":{"dsn":"https://example.invalid/project"
 - `selected`: report success or failure only for service clients with `sentry_opt_in` enabled.
 - `none`: no reporting. This is the default mode; `enabled` also defaults to false.
 
-A real DSN, `enabled: true`, and a reportable mode are all needed for initialization. Configuration is loaded at import/process startup; restart Odoo processes after changes. There is no hot reload or global Settings UI. Per-client opt-in remains relevant only for `selected` mode.
+A real DSN, `enabled: true`, a reportable mode, the complete valid safety profile, and a ready SDK are required for initialization. Configuration is loaded at import/process startup; restart all Odoo processes after changes. There is no hot reload or global Settings UI. Per-client opt-in remains relevant only for `selected` mode.
 
 ## Failure behavior and data handling
 

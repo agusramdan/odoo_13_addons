@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from test_U11_sentry_safe_file import PROFILE
+
 
 class SentryBootstrapContractTest(unittest.TestCase):
     def setUp(self):
@@ -41,7 +43,8 @@ class SentryBootstrapContractTest(unittest.TestCase):
 
     def test_import_initializes_once_with_sentry_namespace_only(self):
         marker = "https://synthetic.invalid/never-send-this-dsn"
-        config = {"sentry": {"dsn": marker, "environment": "contract-test"},
+        sentry = dict(PROFILE, dsn=marker, environment="contract-test")
+        config = {"sentry": sentry,
                   "service_client": {"enabled": True, "mode": "all"}}
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as stream:
             json.dump(config, stream)
@@ -54,9 +57,44 @@ class SentryBootstrapContractTest(unittest.TestCase):
                 self.assertIs(package, importlib.import_module("amr_sentry"))
                 self.assertEqual(
                     sdk.init.call_args_list,
-                    [mock.call(dsn=marker, environment="contract-test")],
+                    [mock.call(**sentry)],
                     "optional addon import must initialize SDK exactly once using sentry config only",
                 )
+
+    def test_schema_and_inactive_cases_do_not_initialize_or_capture(self):
+        base = dict(PROFILE, dsn="https://synthetic.invalid/1")
+        cases = []
+        for key in PROFILE:
+            missing = dict(base)
+            del missing[key]
+            cases.append((missing, {"enabled": True, "mode": "all"}))
+            unsafe = dict(base, **{key: None})
+            cases.append((unsafe, {"enabled": True, "mode": "all"}))
+        for key, value in (("unknown", True), ("environment", 1), ("dsn", 1)):
+            cases.append((dict(base, **{key: value}), {"enabled": True, "mode": "all"}))
+        cases.extend([({}, {"enabled": False, "mode": "all"}),
+                      ({}, {"enabled": True, "mode": "none"}),
+                      ({}, {"enabled": True, "mode": "all"}),
+                      ({"dsn": None}, {"enabled": True, "mode": "all"}),
+                      ({"dsn": ""}, {"enabled": True, "mode": "all"})])
+        sdk = mock.MagicMock()
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json") as stream:
+            with mock.patch.dict(os.environ, {"AMR_SENTRY_CONFIG": stream.name,
+                                             "SENTRY_DSN": "https://environment.invalid/1"}), \
+                    mock.patch.dict(sys.modules, dict(self._odoo_stubs(), sentry_sdk=sdk)):
+                for sentry, policy in cases:
+                    with self.subTest(sentry=sentry, policy=policy):
+                        stream.seek(0)
+                        stream.truncate()
+                        json.dump({"sentry": sentry, "service_client": policy}, stream)
+                        stream.flush()
+                        self._remove_sentry_modules()
+                        runtime = importlib.import_module("amr_sentry.services.runtime")
+                        runtime.REPORTER.report(True)
+                        runtime.REPORTER.report(False)
+                        sdk.init.assert_not_called()
+                        sdk.capture_message.assert_not_called()
+                        sdk.capture_exception.assert_not_called()
 
     def test_invalid_override_is_nonfatal_and_warns_without_secrets(self):
         marker = "PRIVATE-SYNTHETIC-CONFIG-MARKER"
