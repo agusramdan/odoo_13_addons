@@ -1,0 +1,12 @@
+{
+  "issue": "ADDONS13-64",
+  "decision": "OWNER_ACCEPTED",
+  "approval_provenance": "Owner approval communicated in chat for the exact addendum hash; recorded separately without changing approved bytes.",
+  "addendum_path": "docs/ADDONS13-64/step0-cleanup-addendum/ADDENDUM-PRD-UAT.md",
+  "addendum_sha256": "43c723a0dbe918ebd88eb91164363b9298c2a067afb006d4abc87db53130c20b",
+  "candidate_baseline_branch": "ADDONS13-64",
+  "candidate_baseline_commit": "3cfc04a754c6b9fd8e3bbe560650de3ee2a62d80",
+  "interpretation": "Cleanup remains mandatory procedure but is not an acceptance gate; failures or uncertainty must be reported in chat. All retained non-cleanup oracles remain applicable.",
+  "historical_verdicts": "Preserved unchanged; UAT-24 rollback/restore rehearsal remains NOT RUN, not PASS.",
+  "authorization_boundary": "This record approves the exact addendum, not risk waiver, PR acceptance, merge, deployment, issue closure, or an implied UAT PASS. Step 0 checkpoint does not execute tests or change code."
+}
