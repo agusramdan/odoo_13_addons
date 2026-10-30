@@ -204,6 +204,37 @@ CODE = registry.CODE_GROUP
 
 
 class RegistryUnitTests(unittest.TestCase):
+    def test_oidc_issuer_algorithm_policy_declares_concrete_orm_inheritance(self):
+        model = next(node for node in ast.walk(ast.parse(
+            (ROOT / 'models/trust_registry.py').read_text()))
+                     if isinstance(node, ast.ClassDef) and node.name == 'OidcIssuerAlgorithmPolicy')
+        expected_base = ast.Attribute(
+            value=ast.Name(id='models', ctx=ast.Load()),
+            attr='Model', ctx=ast.Load())
+        self.assertEqual(ast.dump(model.bases[0]), ast.dump(expected_base))
+        declarations = {node.targets[0].id: ast.literal_eval(node.value)
+                        for node in model.body if isinstance(node, ast.Assign)
+                        and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id in {'_name', '_inherit'}}
+        self.assertEqual(declarations['_name'], 'oidc.issuer.algorithm.policy')
+        self.assertEqual(declarations['_inherit'], 'amr.resource.registry.access')
+
+    def test_user_mapping_declares_concrete_orm_inheritance(self):
+        model = next(node for node in ast.walk(ast.parse(
+            (ROOT / 'models/trust_registry.py').read_text()))
+                     if isinstance(node, ast.ClassDef) and node.name == 'AmrResourceUserMapping')
+        expected_base = ast.Attribute(
+            value=ast.Name(id='models', ctx=ast.Load()),
+            attr='Model', ctx=ast.Load())
+        self.assertEqual(ast.dump(model.bases[0]), ast.dump(expected_base))
+        declarations = {node.targets[0].id: ast.literal_eval(node.value)
+                        for node in model.body if isinstance(node, ast.Assign)
+                        and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id in {'_name', '_inherit', '_description', '_rec_name'}}
+        self.assertEqual(declarations['_name'], 'oidc.issuer.user.mapping')
+        self.assertEqual(declarations['_inherit'], 'amr.resource.registry.access')
+        self.assertEqual(declarations['_description'], 'Issuer User Claim Mapping')
+        self.assertEqual(declarations['_rec_name'], 'jwt_key')
     def test_child_write_rejects_parent_change_observed_after_child_lock(self):
         parent_a = IssuerProbe((ADMIN, TRUST))
         parent_b = IssuerProbe((ADMIN, TRUST))
