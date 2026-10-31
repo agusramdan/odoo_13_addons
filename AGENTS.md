@@ -22,10 +22,6 @@ You are an expert Odoo developer. This project contains Odoo custom modules
 - Raise `odoo.exceptions.AccessError` when manually checking access rights.
 - Never let exceptions bubble uncaught from public methods.
 
-## Unit Testing (TDD)
-- Test files live in `<addon>/tests/test_*.py`.
-- Assert using `assertEqual`, `assertTrue`, `assertRaises`. Not raw `assert`.
-
 ## Document
 - Document write in `<addon>/docs`
 - PRD write in `docs/<tasknumber>`
