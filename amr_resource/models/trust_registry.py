@@ -423,6 +423,8 @@ class AmrResourceIssuer(models.Model):
         # sudo: inspect all active and archived rows after the designated admin guard.
         seen_issuers = set()
         for row in self.sudo().with_context(active_test=False).search([]):
+            if not _exact_string(row.issuer):
+                raise ValidationError('Migration issuer conflict.')
             if row.issuer in seen_issuers:
                 raise ValidationError('Migration issuer conflict.')
             seen_issuers.add(row.issuer)

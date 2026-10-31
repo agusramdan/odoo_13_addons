@@ -224,6 +224,36 @@ class MigrationUnitTests(unittest.TestCase):
         params.set_param.assert_not_called()
         rule.unlink.assert_not_called()
 
+        # The offline fake preserves raw values; unlike real Odoo fields it does
+        # not normalize None/False/empty strings. Exercise each independently.
+        for invalid in (None, False, '', 'https://bad.invalid/\nsecret',
+                        'https://bad.invalid/\x7fsecret'):
+            for dry_run in (True, False):
+                with self.subTest(invalid=repr(invalid), dry_run=dry_run):
+                    registry, storage, params, rule = fixture([(invalid, False)])
+                    row = registry.rows[0]
+                    row.write = Mock()
+                    before_rows = deepcopy([{k: v for k, v in vars(r).items() if k != 'write'}
+                                            for r in registry.rows])
+                    before_storage = deepcopy(storage)
+                    error = None
+                    try:
+                        registry._migrate_legacy_v2(*args, dry_run=dry_run)
+                    except ValidationError as exc:
+                        error = exc
+                    self.assertEqual([{k: v for k, v in vars(r).items() if k != 'write'}
+                                      for r in registry.rows], before_rows)
+                    self.assertEqual(storage, before_storage)
+                    row.write.assert_not_called()
+                    registry.create.assert_not_called()
+                    params.set_param.assert_not_called()
+                    rule.unlink.assert_not_called()
+                    self.assertIsNotNone(error, 'Invalid archived issuer must be rejected')
+                    for sensitive in (invalid, self.values['issuer'],
+                                      self.bindings[0]['sub'], self.values['client_id']):
+                        if isinstance(sensitive, str) and sensitive:
+                            self.assertNotIn(sensitive, str(error))
+
         # Pre-constraint state: issuer B duplicates exactly, while plan targets A.
         for dry_run in (True, False):
             with self.subTest(dry_run=dry_run):
