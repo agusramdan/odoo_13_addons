@@ -451,6 +451,8 @@ class AmrResourceIssuer(models.Model):
                     or user.has_group('base.group_public') or user.has_group('base.group_portal')):
                 raise ValidationError('Migration requires an eligible exact subject binding.')
         if rows:
+            if rows.with_context(active_test=False).user_mapping_ids:
+                raise ValidationError('Existing issuer configuration conflicts with migration.')
             if not rows.active or any(rows[field] != value if field != 'fixed_user_id'
                                       else rows[field].id != value
                                       for field, value in data.items()):

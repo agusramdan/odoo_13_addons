@@ -300,8 +300,9 @@ class MigrationUnitTests(unittest.TestCase):
             user = SimpleNamespace(share=False, has_group=lambda group: True)
             uid = 9
             cr = SimpleNamespace(savepoint=savepoint)
+            rule: object = False
             def ref(self, xml_id, raise_if_not_found=False):
-                return False
+                return self.rule
         env = Environment({'ir.config_parameter': params, 'amr.resource.helper': helper,
                            'res.users': users})
         env.company = company
@@ -313,8 +314,16 @@ class MigrationUnitTests(unittest.TestCase):
             def mapped(self, name):
                 return [getattr(child, name) for child in self]
         class Rows(list):
+            def __init__(self, values, context=None):
+                super().__init__(values)
+                self.context = dict(context or {})
+            def with_context(self, **kw):
+                return Rows(self, dict(self.context, **kw))
             def __getattr__(self, name):
-                return getattr(self[0], name)
+                value = getattr(self[0], name)
+                if name == 'user_mapping_ids' and self.context.get('active_test', True):
+                    return Children([row for row in value if row.active])
+                return value
             def __getitem__(self, key):
                 return getattr(list.__getitem__(self, 0), key) if isinstance(key, str) else list.__getitem__(self, key)
         class Registry(module.AmrResourceIssuer):
@@ -322,11 +331,19 @@ class MigrationUnitTests(unittest.TestCase):
             def check_access_rights(self, operation):
                 return True
             def with_context(self, **kw):
-                return self
+                clone = object.__new__(type(self))
+                clone.__dict__.update(self.__dict__)
+                clone.context = dict(self.context, **kw)
+                return clone
             def sudo(self):
                 return self
             def search(self, domain):
-                return Rows(rows)
+                found = [row for row in rows if row.active or not self.context.get('active_test', True)]
+                for field, operator, value in domain:
+                    if operator != '=':
+                        raise AssertionError('Unsupported fake search operator')
+                    found = [row for row in found if getattr(row, field) == value]
+                return Rows(found, self.context)
             def new(self, data):
                 return SimpleNamespace(_check_profile=Mock())
             def create(self, data):
@@ -335,13 +352,15 @@ class MigrationUnitTests(unittest.TestCase):
                 fields['fixed_user_id'] = SimpleNamespace(id=fields['fixed_user_id'])
                 fields['company_id'] = company
                 fields['active'] = True
+                fields['id'] = 123
+                fields['user_mapping_ids'] = Children([])
                 fields['audience_ids'] = Children([SimpleNamespace(**c[2]) for c in data['audience_ids']])
                 fields['binding_ids'] = Children([SimpleNamespace(sub=c[2]['sub'],
                     user_id=SimpleNamespace(id=c[2]['user_id'])) for c in data['binding_ids']])
                 rows.append(Row(**fields))
                 return Rows(rows)
         registry = Registry()
-        registry.env, registry.created = env, 0
+        registry.env, registry.created, registry.context = env, 0, {}
         args = (self.values, ['resource-a'], self.bindings)
         result = registry._migrate_legacy_v2(*args)
         self.assertTrue(result['dry_run'])
@@ -371,6 +390,60 @@ class MigrationUnitTests(unittest.TestCase):
         with self.assertRaises(AccessError):
             registry._migrate_legacy_v2(*args)
         self.assertEqual(registry.created, 1)
+
+        # Reuse the genuine adapter with a single preexisting matching candidate.
+        env.user = SimpleNamespace(share=False, has_group=lambda group: True)
+        storage.pop('amr_resource.migration.v2.global')
+        params.set_param.reset_mock()
+        rows[:] = []
+        plan = self.plan()
+        registry.create(dict(plan['values'],
+            audience_ids=[(0, 0, {'value': value}) for value in plan['audiences']],
+            binding_ids=[(0, 0, binding) for binding in plan['bindings']]))
+        candidate = rows[0]
+        created_before = registry.created
+        rule = SimpleNamespace(unlink=Mock())
+        rule.sudo = lambda: rule
+        env.rule = rule
+        self.assertTrue(registry._migrate_legacy_v2(*args)['dry_run'])
+        self.assertFalse(registry._migrate_legacy_v2(*args, dry_run=False)['already_applied'])
+        self.assertTrue(registry._migrate_legacy_v2(*args, dry_run=False)['already_applied'])
+        self.assertIs(rows[0], candidate)
+        self.assertEqual(rows[0].id, 123)
+        self.assertEqual(registry.created, created_before)
+        params.set_param.assert_called_once()
+
+        for dry_run, mapping_active in ((True, True), (False, True),
+                                        (True, False), (False, False)):
+            storage.pop('amr_resource.migration.v2.global', None)
+            params.set_param.reset_mock()
+            rule.unlink.reset_mock()
+            candidate.user_mapping_ids = Children([SimpleNamespace(
+                sequence=10, active=mapping_active, field_user='login', jwt_key='sub')])
+            self.assertEqual(bool(Rows([candidate]).user_mapping_ids), mapping_active)
+            self.assertTrue(Rows([candidate]).with_context(active_test=False).user_mapping_ids)
+            before_storage = dict(storage)
+            error = None
+            try:
+                registry._migrate_legacy_v2(*args, dry_run=dry_run)
+            except ValidationError as exc:
+                error = exc
+            with self.subTest(dry_run=dry_run, oracle='reject'):
+                self.assertIsNotNone(error, 'Unsupported existing mapping must be rejected')
+                for sensitive in (self.values['issuer'], self.values['client_id'],
+                                  self.bindings[0]['sub']):
+                    self.assertNotIn(sensitive, str(error))
+            with self.subTest(dry_run=dry_run, oracle='no mutation'):
+                self.assertEqual(storage, before_storage)
+                self.assertEqual(registry.created, created_before)
+                self.assertIs(rows[0], candidate)
+                self.assertEqual(candidate.user_mapping_ids[0].jwt_key, 'sub')
+                params.set_param.assert_not_called()
+                rule.unlink.assert_not_called()
+
+        env.user = SimpleNamespace(share=False, has_group=lambda group: False)
+        with self.assertRaises(AccessError):
+            registry._migrate_legacy_v2(*args, dry_run=False)
 
 if __name__ == '__main__':
     unittest.main()
