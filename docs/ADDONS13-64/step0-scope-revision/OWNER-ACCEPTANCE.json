@@ -1,0 +1,17 @@
+{
+  "task": "ADDONS13-64",
+  "status": "OWNER_ACCEPTED_STEP0_DONE",
+  "approval_source": "Direct Owner: prd dan uat approve; lakukan commit dan push; step 0 done; current instruction explicitly requests Step 0 exact documents and acceptance metadata",
+  "artifacts_sha256": {
+    "PRD-REVISION-DRAFT.md": "cea1b4dff6efb54849a7dd916262f27cfc6a2439b478518c7c1510009f9a6185",
+    "UAT-REVISION-DRAFT.md": "0fb4ef8bb2302ee527140e92b1eb892361fae916e0a9fb42a75cbfe9349ccd3a"
+  },
+  "analysis_baseline": "cc901a2ae8695c61827850bc5191983fc94dc02d",
+  "metadata_authority": "Acceptance overrides DRAFT / NOT ACCEPTED labels only for the exact two named hashes; content preserved unchanged. Earlier v3.1 accepted artifacts remain normative where referenced.",
+  "limitations": [
+    "Acceptance does not imply UAT PASS, waiver, new risk acceptance, PR_ACCEPT, merge, deploy or closure.",
+    "Historical FAIL/HOLD remain bound to their own candidates and oracles; ADDONS13-68 is follow-up, not a waiver; safety gates remain.",
+    "This checkpoint authorizes only documentation commit/push and Step 1 readiness analysis; no implementation or tests under current instruction.",
+    "D-EX limited residual acceptance and D-GLOBAL process exclusivity as separately recorded; neither implies privacy PASS."
+  ]
+}

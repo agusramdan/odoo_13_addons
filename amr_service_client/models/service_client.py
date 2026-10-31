@@ -127,20 +127,31 @@ class ServiceClientSend:
         response = None
         active_log = self.active_log
         request_context = {'payload': self.payload}
+
         try:
             request_context = self.service_client.prepare_request_context(**request_context)
             response = requests.request(**request_context)
             response.raise_for_status()
-            self.service_client._report_sentry("success", response=response, method=request_context.get('method'))
+            method = request_context.get('method') if isinstance(request_context, dict) else None
+            try:
+                self.service_client._report_sentry(response=response, exception=None, method=method)
+            except Exception:
+                debug = getattr(_logger, "debug", None)
+                if debug:
+                    debug("Unable to report service request success", exc_info=False)
             if active_log:
                 self.env["service.client.log"].create_error(
                     'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                     request_context=request_context, response_text=response.text
                 )
-
         except Exception as e:
-            self.service_client._report_sentry("error", response=response, exception=e,
-                                               method=request_context.get('method'))
+            method = request_context.get('method') if isinstance(request_context, dict) else None
+            try:
+                self.service_client._report_sentry(response=response, exception=e, method=method)
+            except Exception:
+                debug = getattr(_logger, "debug", None)
+                if debug:
+                    debug("Unable to report service request failure", exc_info=False)
             _logger.exception("error dispatch_send")
             self.env["service.client.log"].create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
@@ -366,6 +377,10 @@ class ServiceClientFactory(models.Model):
     payload_ids = fields.One2many('service.client.payload', 'service_client_id')
     error_handle_id = fields.Many2one('ir.actions.server')
 
+    def _report_sentry(self, service_client=None, response=None, exception=None, method=None, **kw):
+        """No-op hook overridden by the optional Sentry addon."""
+        return None
+
     @api.model
     def _get_eval_context(self):
         """ evaluation context to pass to safe_eval """
@@ -450,16 +465,29 @@ class ServiceClientFactory(models.Model):
                     )
                     response = client.call(method=method, path=path, params=params, payload=payload, headers=headers,
                                            raise_exception=raise_exception)
-                    eval_context_local['response'] = response
-                    eval_context_local.update(self._run_action_handle(eval_context_local) or {})
-                    eval_context_local['action'] = self.action_next_id.with_context(eval_context_local).run()
                 except Exception as e:
-                    client._report_sentry("error", response=False, exception=e)
+                    # ServiceClient.call already reports request failures; preserve its
+                    # exception for the configured handler without reporting it twice.
                     eval_context_local['exception'] = e
                     if self.error_handle_id:
                         self.error_handle_id.with_context(eval_context_local).run()
                     else:
-                        raise e
+                        raise
+                else:
+                    eval_context_local['response'] = response
+                    try:
+                        eval_context_local.update(self._run_action_handle(eval_context_local) or {})
+                        eval_context_local['action'] = self.action_next_id.with_context(eval_context_local).run()
+                    except Exception as e:
+                        try:
+                            client._report_sentry(response=response, exception=e, method=method)
+                        except Exception:
+                            _logger.debug("Unable to report service action exception", exc_info=False)
+                        eval_context_local['exception'] = e
+                        if self.error_handle_id:
+                            self.error_handle_id.with_context(eval_context_local).run()
+                        else:
+                            raise
                 eval_context_result = eval_context_local
 
             return eval_context_result

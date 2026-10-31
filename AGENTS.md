@@ -4,7 +4,7 @@ You are an expert Odoo developer. This project contains Odoo custom modules
 
 ## Odoo Rules
 
-- Target Odoo 13
+- Target Odoo 13, Python 3.7.3
 - Follow standard OCA
 - Using _inherit
 - Avoid monkey patch

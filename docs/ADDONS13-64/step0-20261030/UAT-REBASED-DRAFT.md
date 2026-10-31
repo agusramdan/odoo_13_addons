@@ -1,0 +1,64 @@
+# ADDONS13-64 — UAT draft analisis ulang Step 0
+
+**DRAFT — NOT ACCEPTED.** Versi 20261030. Candidate SHA pasca-rebase **3774c6fda99aab9b5f3d03241a4a876d1cb493b1**. Semua kasus kandidat baru **NOT RUN**. Tidak ada runtime, tests atau dependency installation dijalankan dalam analisis ini. PRD rujukan: `PRD-REBASED-DRAFT.md`, acceptance AC-01–09. ID 01–21 dipertahankan untuk keterlacakan, bukan mewarisi hasil lama. Tambahan 22–24 mengisolasi gap gate/SDK nyata.
+
+## Prasyarat eksekusi (belum dijalankan)
+
+- Exact candidate SHA dan target main SHA, exact-hash PRD/UAT yang diterima, review gate dan izin eksekusi tersedia. Gunakan clean rebased tree, tidak overlay scratch dependency tanpa menyatakan komposisi baru.
+- Catat Odoo build/image digest, Python (target repo 3.7), OS, dependency/constraints lock, DB fixture/version, config redacted hash, test harness source hash, command/exit status/test counts dan evidence path. Bedakan Python historis 3.7.3 dan 3.7.9; keduanya bukan proof untuk environment baru.
+- DB disposable dengan backup/cleanup terverifikasi, synthetic credentials/markers saja; transport lokal/no vendor egress. Jangan log file konfigurasi/kwargs init nyata.
+- SDK mock digunakan untuk kontrak deterministik, SDK nyata + in-memory transport untuk defaults/automatic integrations/dependency behavior. Mock PASS tidak menggantikan real SDK gate. Fresh process untuk setiap variasi bootstrap/config; bukan import reload in-process sebagai bukti restart.
+- Odoo-native TransactionCase/registry assertions untuk install/ORM, bukan hanya source regex. Core hook callable saja tidak membuktikan optional override efektif.
+- Hasil baru: NOT RUN → PASS/FAIL/BLOCKED/PARTIAL hanya dengan bukti pada SHA yang sama. Expected result bukan actual. Semua kasus mewarisi AC-09.
+
+## Matriks kasus baru
+
+| ID | AC | Prasyarat khusus | Langkah | Expected / oracle | Status baru |
+|---|---|---|---|---|---|
+| UAT-01 | 01 | DB bersih, optional addon tidak installed, SDK absent | Install core, load registry, jalankan service success/error sintetis; audit imports/init/capture | Core usable; tanpa import dependency SDK/init/capture; hasil bisnis baseline tetap | NOT RUN |
+| UAT-02 | 02 | Optional deps disetujui, config valid pada default, init spy | Fresh process dengan env path unset, ulangi empty; lakukan service smoke | Default /etc/odoo/amr_sentry.yaml, namespace sentry saja ke init, policy terpisah; satu init tiap proses | NOT RUN |
+| UAT-03 | 02 | Override .yaml dan .yml valid | Fresh process tiap extension dengan marker namespace; periksa init dan policy | Kedua format diterima, hanya sentry kwargs diteruskan, config override dipakai | NOT RUN |
+| UAT-04 | 02 | Override .json valid | Fresh process dengan config marker terpisah; periksa init/policy | JSON sama semantik YAML, tidak tercampur policy ke SDK | NOT RUN |
+| UAT-05 | 02 | Default valid tetapi override hilang/unreadable; Odoo UID non-root | Jalankan dua proses, buktikan open gagal untuk unreadable, picu success/error | Tidak fallback default, tidak init/capture, warning generik, operasi tetap usable | NOT RUN |
+| UAT-06 | 03 | enabled true, DSN valid, mode error | Success dan failure masing-masing call/dispatch/log.send | Sukses nol capture; gagal satu capture_exception tiap outcome eligible; opt-in tidak memengaruhi | NOT RUN |
+| UAT-07 | 03 | Mode selected; client opt-in true/false/missing dan no-client | Jalankan success/error setiap variasi; audit helper langsung bila digunakan | Hanya client opt-in true mengirim satu event/outcome; no-client tidak. Fallback kw lama dicatat sebagai gap keputusan, bukan dilewatkan | NOT RUN |
+| UAT-08 | 03 | Mode all | Success/error tiap jalur | Pesan sukses fixed level info dan exception failure masing-masing satu, independen opt-in | NOT RUN |
+| UAT-09 | 02 | Fresh config matrix + init spy/SDK nyata untuk unknown kwarg | Malformed YAML/JSON; top-level scalar/list; missing/non-mapping required namespaces; enabled string/int; bad mode/case; unknown policy key; unsupported extension; unknown SDK kwarg | Invalid parser/schema: no init/capture, non-fatal generic warning. Unknown sentry kwarg diteruskan lalu real SDK rejection harus fail-closed; mock accepting unknown kwarg bukan proof. Extra top-level key bukan invalid menurut current loader | NOT RUN |
+| UAT-10 | 07 | Synthetic request/body/header/response/customer markers; SDK capture spy | Real service call sukses/error; inspect explicit capture args/context/tags/extra | Fixed success message; original exception on error; tidak attach body/header/customer/credentials; tanpa custom scrubber. Tidak menjanjikan semua exception text aman | NOT RUN |
+| UAT-11 | 05 | SDK init dibuat gagal termasuk pesan secret marker | Fresh startup, lalu call success/error serta dispatch/log.send | Disabled reporter, startup usable, no capture, original business outcome/exception tetap, warning generik | NOT RUN |
+| UAT-12 | 05 | Capture failure dan transport failure terpisah | Lakukan success/error untuk call/dispatch/log.send; amati bisnis serta queue/timeout transport lokal | Failure telemetry tidak mengganti return/state/exception; tidak retry/block tanpa batas; async transport failure tidak dianggap teruji oleh capture exception mock saja | NOT RUN |
+| UAT-13 | 05 | Endpoint mock, both addon topologies | call success, HTTP error, prepare/auth/connection error; raise_exception true/false; repeat telemetry disabled/failing | Success response sama, true re-raise original. false edge sebelum assignment response dicatat baseline defect jika terjadi; jangan silently PASS kontrak ambigu | NOT RUN |
+| UAT-14 | 05 | ServiceClientSend dan run_action fixtures | dispatch request success/error active_log on/off; call error, handler error, next-action error dengan/tanpa error_handle | Dispatch error business log sesuai existing, no telemetry masking; action call error tidak dilaporkan dua kali; handler/next-action error mengikuti handler/re-raise. Tidak mengasumsikan ack/queue semantics | NOT RUN |
+| UAT-15 | 05 | Business log sink DB terpisah dari Sentry spy | log.send success/HTTP error/auth/parse error; no-client failure; write failure; repeat telemetry fail; dispatch_send wrapper | state done/error dan response sanitizer sesuai baseline; return self; hook hanya sesudah write dan bila client terbentuk. Business write failure bukan telemetry failure; batas coverage dinyatakan | NOT RUN |
+| UAT-16 | 06 | Capture counter per outcome ID | Satu call error melewati action; request success lalu handler failure; dispatch, log.send, wrapper dispatch log | Satu capture untuk outcome sama, action tidak mengulang request failure; request success + handler failure dua outcome berbeda yang dijelaskan; replay request baru bukan dedup requirement | NOT RUN |
+| UAT-17 | 04 | Fresh/upgrade DB; settings metadata/form UI dan restart kontrol | Cari global Sentry fields/view; ubah stale DB params; edit file tanpa restart lalu restart seluruh workers; ubah path | Global settings tidak efektif; per-client opt-in tetap; config tidak hot reload dan berlaku sesudah restart, init sekali tiap proses | NOT RUN |
+| UAT-18 | 01,08 | Keputusan dependency deployment tersedia | Resolver/dry-run approved full constraints, install kedua topologi, pip check, fresh registry dan upgrade smoke dengan SDK nyata | Tidak ada constraint conflict/RequestsDependencyWarning yang tidak diselesaikan; approved Odoo/Python stack install/use terbukti. Existing 2.21.0 vs SDK 2.73.0 conflict tidak bisa di-waive sebagai kompatibel | NOT RUN |
+| UAT-19 | 04 | Backup DB pre-refactor berisi settings dummy | Upgrade core, install optional dengan file baru; amati DB params/UI/init; verifikasi restore plan | Nilai lama tidak dimigrasikan/efektif; file menjadi sumber; registry upgrade berhasil; jangan menuntut stale rows dihapus jika bukan scope | NOT RUN |
+| UAT-20 | 02,07 | Marker synthetic, semua log dari startup/invalid/init/capture failures, UI browser | Scan application logs/tracebacks dan event; periksa metadata/architecture dan rendered Settings UI | Secret/config DSN markers tidak bocor, warning cukup tanpa values. UI browser dicatat subcriterion tersendiri; metadata bukan rendered proof. Tidak memakai waiver lama otomatis | NOT RUN |
+| UAT-21 | 03 | enabled true mode none | Fresh process, success/error semua jalur, init/capture spy | Tidak init atau explicit capture; outcome bisnis tetap | NOT RUN |
+| UAT-22 | 03 | Matrix enabled false/missing; DSN absent/empty; policy defaults | Fresh process tiap kombinasi dengan old SENTRY_DSN/env enabled lama terisi marker | Default disabled/none, missing DSN no init/capture aplikasi; legacy env tidak mengaktifkan reporter; field opt-in sendiri tidak mengaktifkan | NOT RUN |
+| UAT-23 | 04 | Beberapa DB/registry, worker/preload topology sesuai deployment | Discovery/import optional tetapi DB belum install, install satu DB, load registry lain, restart semua workers | Catat scope bootstrap aktual once per process, effective override dan cross-DB behavior. Keputusan explicit diperlukan jika SDK process-global dapat menangkap DB tanpa addon | NOT RUN |
+| UAT-24 | 07,08 | SDK nyata approved + in-memory transport; no egress | Gunakan file minimal lalu explicit SDK privacy/integration options; old env SENTRY_* marker; trigger service dan logging auto integration, unknown kwargs, inspect emitted payload | Buktikan batas application gate vs global SDK automatic events, SDK env fallback/defaults dan privacy; tanpa tambahan custom scrubber. Bila file-only atau no-events requirement terlanggar, FAIL/keputusan produk, bukan silent allow | NOT RUN |
+
+## Evidence historis — bukan actual kandidat baru
+
+Direktori asal `/home/ubuntu/.hermes/profiles/lead/cache/scratch/sentry-amr-task/`; tetap utuh. Hash bukti ada di `EVIDENCE-SNAPSHOT.json`.
+
+1. PRD lama SHA-256 `c879f088ef699d9d02803306509219ad13850667c410bf238f7f04a2aa9c3b9b`; UAT lama `b22b3481b4a6ec56234b278ac8e1011e1cb609407513471cafb0572e4b2e555c`. Header pending pada file diterima lama adalah stale metadata menurut cached issue/execution record; jangan ubah file accepted.
+2. `UAT-Execution-397dc6d.md`: L1 38/38 historical, UAT-01 BLOCKED PS256 baseline, 02–21 NOT RUN. Bukan kondisi akhir.
+3. `UAT-REQUESTED-CASES-RESULT.md`: smoke setup sukses tetapi dedicated requested cases belum dijalankan pada record tersebut; tidak meniadakan laporan eksekusi lanjutan.
+4. `UAT-RESULTS.json` merekam 21 kasus pada feature eaf2c7f dengan komposisi `0ea7a2fb3ed636e011a1a65990c2b452e7b5dba579d7eff3fa132bfa08d22827`, overlay dua dependency path dari commit `21b5a81560acc2efadbfcf423e60523cd01a6b60`, bukan clean rebased tree. Agregasi programmatic: 9 PASS (01,02,03,04,05,09,10,11,12), 11 NOT RUN (06,07,08,13,14,15,16,17,18,19,21), 1 PARTIAL (20). SDK mock tetap membatasi real dependency/privacy claims.
+5. `UAT-20-results-final.json` status PARTIAL; 17 application logs dan 3 mock artifacts dilaporkan tanpa marker hits; field/view metadata diuji, browser tidak. Owner browser-rendering waiver hanya subcriterion itu; seluruh kasus tetap PARTIAL. Tidak ada waiver baru untuk SHA pasca-rebase.
+
+## Result template dan exit criteria
+
+Per kasus catat: ID, candidate/base SHA, spec hashes, config/harness/environment hashes, exact command, process/DB separation, observed outcome dan capture count, stdout/log path redacted, exit/test counts, defect, cleanup readback, reviewer, status. Simpan raw evidence di luar worktree tanpa secrets.
+
+Exit: semua kriteria diselesaikan dengan evidence pada SHA yang sama; dependency gate nyata terpenuhi; tidak ada blocker outcome/privacy/duplicate capture; unresolved baseline defects dibedakan dari regresi serta diputuskan; partial/blocked membutuhkan keputusan scope spesifik. Pengabaian rendered UI saja bukan PASS seluruh kasus. Step 3 tidak dianggap lulus dari L1, source inspection, smoke install, atau waiver kandidat lama. Tidak ada acceptance/PR handoff/release pada draft ini.
+
+
+## Binding kandidat pasca-rebase oleh Lead
+
+Kandidat analisis: `3774c6fda99aab9b5f3d03241a4a876d1cb493b1`, target `ac1bcbd66261b92c10078f2a8744a657a3b6490c`. Rebase Git-only selesai tanpa konflik; Lead mengulang range-diff: 8/8 patch setara, feature clean, target ancestor, diff --check exit 0. Tidak ada runtime/tests yang dijalankan. Dokumen ini tetap DRAFT / NOT ACCEPTED; bukan izin Step 1 atau waiver. Bagian inspeksi pra-rebase di atas dipertahankan sebagai provenance; pernyataan PENDING/rebase belum dijalankan pada versi awal disupersede oleh binding ini.
+
+Lead membaca seluruh 19 komentar live Plane (next_page_results=false), snapshot `PLANE-COMMENTS-SNAPSHOT.json`. Komentar terbaru mengonfirmasi browser-only waiver UAT-20 pada kandidat lama eaf2c7f; UAT-20 tetap PARTIAL. Tidak ditemukan keputusan komentar baru yang menggantikan konfigurasi yang sudah dicatat. Tidak ada perubahan Plane.

@@ -1,0 +1,23 @@
+{
+  "task": "ADDONS13-64",
+  "status": "OWNER_ACCEPTED_STEP0_DONE",
+  "source": "Direct Owner instruction in this conversation: prd dan uat approve; lakukan commit dan push; step 0 done ; lanjutkan step 1-4",
+  "candidate_sha": "3774c6fda99aab9b5f3d03241a4a876d1cb493b1",
+  "target_sha": "ac1bcbd66261b92c10078f2a8744a657a3b6490c",
+  "artifacts": {
+    "PRD-REBASED-DRAFT.md": "15f8e36979fd56dc70542a72b2a28156886da01777aeb31d95b4c09803fd422f",
+    "UAT-REBASED-DRAFT.md": "d68fbc2f07e72a243404897d75c47aeaca50ef6cd7ad79af278e1148aa8cba8f"
+  },
+  "authority_note": "This acceptance overrides DRAFT / NOT ACCEPTED labels of these exact immutable artifacts. Artifact contents preserved byte-for-byte. Approval is not UAT execution or risk waiver.",
+  "authorized": [
+    "commit and push scoped documents and rebased ADDONS13-64",
+    "Steps 1\u20134 serial, subject to their gates"
+  ],
+  "not_authorized": [
+    "PR_ACCEPT on behalf of Owner",
+    "merge",
+    "deployment",
+    "issue closure",
+    "automatic waiver of dependency or product decisions"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "decision": "Owner accepted Step 0 PRD and UAT exact bytes by direct instruction: prd dan uat approve; lakukan commit dan push; step 0 done; lanjutkan step 1-4",
+  "baseline_commit": "202fa566ee07a7ef4ad61902b6390c17f391dde1",
+  "branch": "ADDONS13-64",
+  "accepted": {
+    "PRD-AC-DRAFT.md": "718c7b89fa88fef016eaa0d73e16ab92416d35c0e1aaa56f818c0cac98b010e8",
+    "UAT-SPLIT-DRAFT.md": "d69937a8bb664504b47b2e68a6032f751162952a3d074a9708fb149bf3e3b336"
+  },
+  "reference_only_not_accepted": {
+    "FOLLOWUP-68-DRAFT.md": "68ee0d470d5874728b5f224803a1ed64605f0043d76e5a4f2bc9e4d5c69e5603"
+  },
+  "interpretation": "Acceptance overrides DRAFT status of exact PRD/UAT bytes; moved cases are not gate 64; historical verdicts remain; release and operational risks separate. Follow-up 68 scope not separately approved. No risk acceptance, PR acceptance, merge, deploy or closure implied.",
+  "execution_checkpoint": "This checkpoint authorizes documentation and Plane sync only; no coding or tests."
+}
