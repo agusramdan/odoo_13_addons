@@ -72,6 +72,13 @@ class MigrationUnitTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     self.plan(**kw)
 
+    def test_plan_rejects_non_boolean_allow_missing_azp(self):
+        self.assertTrue(self.plan()['values']['allow_missing_azp'])
+        for invalid in ('false', 1, None):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    self.plan(values=dict(self.values, allow_missing_azp=invalid))
+
     def test_plan_fingerprint_detects_reference_and_binding_revision(self):
         old = self.plan()['digest']
         self.assertNotEqual(old, self.plan(bindings=[dict(sub='subject-b', user_id=42)])['digest'])

@@ -163,6 +163,8 @@ def _legacy_plan(get_param, values, audiences, bindings):
     if (not isinstance(values, dict) or set(values) - allowed or
             values.get('resolver_mode') not in ('get_user_match', 'fixed_user', 'resolver')):
         raise ValidationError('An explicit supported migration plan is required.')
+    if 'allow_missing_azp' in values and type(values['allow_missing_azp']) is not bool:
+        raise ValidationError('Migration azp absence policy must be Boolean.')
     selectors, resolved = [], []
     resolved_keys = {}
     for name in ('issuer', 'audience'):
