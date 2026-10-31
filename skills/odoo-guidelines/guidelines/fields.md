@@ -25,3 +25,11 @@
   fields is fine; reusing one **inverse** is discouraged: while the inverse
   runs, every field sharing it is protected and reads as `False` when not
   cached, so the method sees wrong sibling values.
+
+## Field naming
+- Boolean fields: prefix with `is_` or `has_` (e.g. `is_active`, `has_attachment`).
+- Many2one fields: end with `_id` (e.g. `partner_id`, `project_id`).
+- One2many fields: end with `_ids` (e.g. `line_ids`, `booking_ids`).
+- Many2many fields: end with `_ids` (e.g. `tag_ids`, `user_ids`).
+- Date fields: end with `_date` (e.g. `start_date`, `end_date`).
+- Computed fields: name describes the output (e.g. `total_amount`, `duration_hours`).

@@ -1,5 +1,8 @@
 # Manifest
 
+- `__manifest__.py` keys in this order: `name`, `version`, `category`,
+  `summary`, `description`, `author`, `website`, `license`, `depends`,
+  `data`, `demo`, `assets`, `installable`, `auto_install`, `application`.
 - `name` is required; `version` should follow semantic versioning.
 - `depends` lists every module whose features or resources are used, direct
   dependencies only. Don't list `base`: a manifest without `depends` gets
@@ -15,3 +18,4 @@
 - Declare non-Odoo requirements in `external_dependencies` (`python`/`bin`).
 - `assets` declares how static files load into bundles (don't register assets
   ad-hoc elsewhere).
+

@@ -1,5 +1,16 @@
 # Views, actions and data records
 
+- XML `id` attributes: `module_name.view_model_name_type`
+  (e.g. `my_module.view_project_resource_booking_form`).
+- Always wrap views in `<odoo><data>` tags.
+- Use `<field name="arch" type="xml">` inside `ir.ui.view` records.
+- Form views: `<form string="...">` at root, group fields logically with
+  `<group>` and `<group col="2">`.
+- Tree/list views: include only the key fields needed at-a-glance (5-8 max).
+- Kanban views: use `<templates><t t-name="kanban-card">` structure.
+- Never hardcode record IDs in XML. Always use `ref()` or `%(xml_id)s`.
+- Menu items: follow parent > category > action chain.
+
 - Record format: put `id` before `model`; inside a `field`, `name` first, then
   the value (tag body or `eval`), then other attributes by importance. Group
   records by model.
@@ -20,6 +31,7 @@
   (`o_element_entry`) rather than mirroring the DOM nesting.
 - Inheriting a view: see
   [Anchor view inheritance on names, never on position](#anchor-view-inheritance-on-names-never-on-position).
+
 
 # Anchor view inheritance on names, never on position
 

@@ -14,7 +14,7 @@
   runbot parallelization, and an `HttpCase` must stay `post_install`. Tests
   run only for installed modules.
 - Silent skips: a test file must be named `test_*.py` **and** imported from
-  `tests/__init__.py`; the test class must be *defined* in that file (a class
+  `<addon>/tests/__init__.py`; the test class must be *defined* in that file (a class
   merely imported into it is skipped); and inherited `test_*` methods are not
   collected: a subclass defining no tests of its own runs nothing unless it
   sets `allow_inherited_tests_method = True`.
@@ -27,3 +27,13 @@
 - Tours: a step that triggers a page unload must set `expectUnloadPage: true`,
   and the last step must leave the client in a stable state (no pending edits
   or in-flight requests) to avoid teardown race conditions.
+
+
+## Unit Testing (TDD)
+- Test files live in `<addon>/tests/test_*.py`.
+- Assert using `assertEqual`, `assertTrue`, `assertRaises`. Not raw `assert`.
+
+## Integration Testing
+This covers the main failure modes when Cursor generates Odoo code without guidance: raw SQL where ORM should be used, wrong field naming, missing _description, malformed XML IDs, and security CSV with wrong column order. Save it, open Cursor, and from this point forward every completion in this workspace follows Odoo conventions.
+- Test files live in `<addon>/integration_tests/test_*.py`.
+- Use `self.env['model'].create({...})` to set up test data, not fixtures.
