@@ -3,7 +3,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from test_registry_unit import load_registry, IssuerProbe, ValidationError, AccessError
 
@@ -49,6 +49,12 @@ class MigrationUnitTests(unittest.TestCase):
                 self.params['amr_resource.issuer'] = selector
                 with self.assertRaises(ValidationError):
                     self.plan()
+
+    def test_shared_selector_is_resolved_once(self):
+        self.params['amr_resource.audience'] = 'legacy.issuer'
+        get_param = Mock(side_effect=self.params.get)
+        self.module._legacy_plan(get_param, self.values, ['https://issuer.invalid'], self.bindings)
+        self.assertEqual(get_param.call_args_list.count(call('legacy.issuer')), 1)
 
     def test_conflicting_issuer_audience_and_ambiguous_binding_rejected(self):
         for kw in (

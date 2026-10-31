@@ -164,11 +164,14 @@ def _legacy_plan(get_param, values, audiences, bindings):
             values.get('resolver_mode') not in ('get_user_match', 'fixed_user', 'resolver')):
         raise ValidationError('An explicit supported migration plan is required.')
     selectors, resolved = [], []
+    resolved_keys = {}
     for name in ('issuer', 'audience'):
         selector = get_param('amr_resource.' + name)
         if not isinstance(selector, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', selector):
             raise ValidationError('Legacy configuration must contain an explicit parameter key.')
-        value = get_param(selector)
+        if selector not in resolved_keys:
+            resolved_keys[selector] = get_param(selector)
+        value = resolved_keys[selector]
         if not _exact_string(value):
             raise ValidationError('Legacy configuration reference is missing or invalid.')
         selectors.append(selector)
