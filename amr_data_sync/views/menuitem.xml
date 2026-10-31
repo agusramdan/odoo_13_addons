@@ -1,0 +1,54 @@
+<odoo>
+    <menuitem id="data_sync_parent_menu"
+                  name="External Data Sync"
+                  parent="base.menu_custom"
+                  sequence="10"
+    />
+    <menuitem id="external_server_sync_menu"
+              parent="data_sync_parent_menu"
+              action="external_server_sync_action"
+              sequence="1"
+    />
+    <menuitem id="external_server_company_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_company_action"
+              sequence="1"
+    />
+    <menuitem id="external_data_sync_strategy_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_sync_strategy_action"
+              sequence="2"
+    />
+    <menuitem id="external_data_sync_cron_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_sync_cron_action"
+              sequence="2"
+    />
+    <menuitem id="external_data_lookup_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_lookup_action"
+              sequence="3"
+    />
+    <menuitem id="external_data_sync_exclude_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_sync_exclude_action"
+              sequence="4"
+    />
+    <menuitem id="external_server_related_sync_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_sync_related_action"
+              sequence="9"
+    />
+    <menuitem id="external_data_sync_menu"
+              parent="data_sync_parent_menu"
+              action="external_data_sync_action"
+              sequence="10"
+    />
+    <menuitem id="external_data_update_menu"
+              name="Data Updates"
+              parent="data_sync_parent_menu"
+              action="external_data_update_action"
+              sequence="11"
+    />
+
+</odoo>

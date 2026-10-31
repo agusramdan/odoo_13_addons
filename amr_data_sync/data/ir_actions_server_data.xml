@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="server_action_duplicate_remove" model="ir.actions.server">
+        <field name="name">Eliminate Duplicates</field>
+        <field name="model_id" ref="model_external_data_sync"/>
+        <field name="binding_model_id" ref="model_external_data_sync"/>
+        <field name="state">code</field>
+        <field name="code">records.remove_duplicate_data()</field>
+    </record>
+
+    <record id="server_action_process_sync" model="ir.actions.server">
+        <field name="name">Process Sync</field>
+        <field name="model_id" ref="model_external_data_sync"/>
+        <field name="binding_model_id" ref="model_external_data_sync"/>
+        <field name="state">code</field>
+        <field name="code">records.action_process_with_handel_error()</field>
+    </record>
+
+</odoo>

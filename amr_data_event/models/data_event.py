@@ -1,0 +1,39 @@
+# -*- coding: utf-8 -*-
+
+import logging
+
+from odoo import fields, models
+
+_logger = logging.getLogger(__name__)
+
+
+class InternalDataEvent(models.Model):
+    _name = 'internal.data.event'
+    _description = "Internal data event yang akan assess oleh external app"
+    name = fields.Char("Display Name")
+    res_model = fields.Char(required=True, index=True)
+    res_id = fields.Integer(required=True, index=True)
+    company_id = fields.Many2one('res.company')
+    event_datetime = fields.Datetime(default=fields.Datetime.now)
+    operation = fields.Selection([
+        ('create', 'Create'),
+        ('write', 'Write'),
+        ('unlink', 'Delete'),
+        ('snapshot', 'Snapshot'),
+    ], required=True)
+    changed_fields = fields.Char()
+    state = fields.Selection([
+        ('pending', 'Pending'),
+        ('sent', 'Sent'),
+        ('queue', 'Queue'),
+        ('error', 'Error'),
+    ], default='pending', index=True)
+    error_message = fields.Text()
+
+    def send_events(self):
+        """
+        overide this when using message broker to send external
+        """
+        for rec in self:
+            if rec.state in ['pending','error']:
+                rec.state='sent'
