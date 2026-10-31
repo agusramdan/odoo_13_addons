@@ -7,7 +7,7 @@
     'maintainer': 'Agus Muhammad Ramdan',
     'website': "https://www.agusramdan.web.id",
     'depends': ['base', 'web', 'base_setup', ],
-    'version': '13.0.1.0.0',
+    'version': '13.0.1.1.0',
     'data': [
         'security/res_groups.xml',
         'security/ir.model.access.csv',
