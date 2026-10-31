@@ -420,6 +420,12 @@ class AmrResourceIssuer(models.Model):
         if type(dry_run) is not bool or not self._registry_role('amr_resource.group_oidc_trust_admin'):
             raise AccessError('Registry access denied.')
         self.check_access_rights('create')
+        # sudo: inspect all active and archived rows after the designated admin guard.
+        seen_issuers = set()
+        for row in self.sudo().with_context(active_test=False).search([]):
+            if row.issuer in seen_issuers:
+                raise ValidationError('Migration issuer conflict.')
+            seen_issuers.add(row.issuer)
         # sudo: legacy parameters/marker are read only after the designated admin guard.
         params = self.env['ir.config_parameter'].sudo()
         plan = _legacy_plan(params.get_param, values, audiences, bindings)

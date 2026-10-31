@@ -136,6 +136,113 @@ class MigrationUnitTests(unittest.TestCase):
                          if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)])
 
 
+    def test_global_duplicate_active_archived_blocks_real_adapter(self):
+        from contextlib import contextmanager
+        from copy import deepcopy
+
+        module = self.module
+        args = (self.values, ['resource-a'], self.bindings)
+
+        @contextmanager
+        def savepoint():
+            yield
+
+        class UserRecord(SimpleNamespace):
+            active, share = True, False
+            def __len__(self):
+                return 1
+            def has_group(self, group):
+                return False
+            def exists(self):
+                return self
+
+        class Rows(list):
+            def __getattr__(self, name):
+                return getattr(self[0], name)
+            def __getitem__(self, key):
+                return getattr(list.__getitem__(self, 0), key) if isinstance(key, str) else list.__getitem__(self, key)
+
+        class Environment(dict):
+            uid = 9
+            cr = SimpleNamespace(savepoint=savepoint)
+            def ref(self, xml_id, raise_if_not_found=False):
+                return self.rule
+
+        class Registry(module.AmrResourceIssuer):
+            _registry_role = module.RegistryAccess._registry_role
+            def check_access_rights(self, operation):
+                return True
+            def sudo(self):
+                return self
+            def with_context(self, **kw):
+                clone = object.__new__(type(self))
+                clone.__dict__.update(self.__dict__)
+                clone.context = dict(self.context, **kw)
+                return clone
+            def search(self, domain):
+                found = self.rows
+                if self.context.get('active_test', True):
+                    found = [r for r in found if r.active]
+                for field, operator, value in domain:
+                    if operator != '=':
+                        raise AssertionError('Unsupported fake search operator: %s' % operator)
+                    found = [r for r in found if getattr(r, field) == value]
+                return Rows(found)
+            def new(self, data):
+                return SimpleNamespace(_check_profile=Mock())
+
+        def fixture(issuers, authorized=True):
+            storage = dict(self.params)
+            rows = [SimpleNamespace(issuer=issuer, active=active) for issuer, active in issuers]
+            params = SimpleNamespace(get_param=lambda key: storage.get(key),
+                set_param=Mock(side_effect=lambda key, value: storage.update({key: value})))
+            params.sudo = lambda: params
+            rule = SimpleNamespace(unlink=Mock())
+            rule.sudo = lambda: rule
+            env = Environment({'ir.config_parameter': params,
+                'res.users': SimpleNamespace(browse=lambda uid: UserRecord(id=uid))})
+            env.user = SimpleNamespace(share=False, has_group=lambda group: authorized)
+            env.rule = rule
+            registry = Registry()
+            registry.env, registry.rows, registry.context = env, rows, {}
+            registry.create = Mock(side_effect=lambda data: rows.append(SimpleNamespace(**data)))
+            return registry, storage, params, rule
+
+        # A successful adapter run proves that the plan, role and user fixture are valid.
+        for issuers in ([], [('https://other.invalid', True), ('https://OTHER.invalid', False)]):
+            with self.subTest(control='distinct', issuers_count=len(issuers)):
+                registry, storage, params, rule = fixture(issuers)
+                self.assertTrue(registry._migrate_legacy_v2(*args)['dry_run'])
+                self.assertFalse(registry._migrate_legacy_v2(*args, dry_run=False)['already_applied'])
+                registry.create.assert_called_once()
+                params.set_param.assert_called_once()
+
+        registry, storage, params, rule = fixture([], authorized=False)
+        with self.assertRaises(AccessError):
+            registry._migrate_legacy_v2(*args, dry_run=False)
+        registry.create.assert_not_called()
+        params.set_param.assert_not_called()
+        rule.unlink.assert_not_called()
+
+        # Pre-constraint state: issuer B duplicates exactly, while plan targets A.
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                registry, storage, params, rule = fixture([
+                    ('https://other.invalid', True), ('https://other.invalid', False)])
+                before_rows = deepcopy([vars(row) for row in registry.rows])
+                before_storage = deepcopy(storage)
+                with self.assertRaises(ValidationError) as caught:
+                    registry._migrate_legacy_v2(*args, dry_run=dry_run)
+                message = str(caught.exception)
+                for sensitive in ('https://other.invalid', self.values['issuer'],
+                                  self.bindings[0]['sub'], self.values['client_id']):
+                    self.assertNotIn(sensitive, message)
+                self.assertEqual([vars(row) for row in registry.rows], before_rows)
+                self.assertEqual(storage, before_storage)
+                registry.create.assert_not_called()
+                params.set_param.assert_not_called()
+                rule.unlink.assert_not_called()
+
     def test_actual_migration_dry_run_apply_repeat_and_conflicts(self):
         from contextlib import contextmanager
         from unittest.mock import Mock
