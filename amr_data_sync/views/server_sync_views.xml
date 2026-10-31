@@ -1,0 +1,113 @@
+<odoo>
+    <data>
+        <record id="external_server_sync_form" model="ir.ui.view">
+            <field name="name">external.server.sync.form</field>
+            <field name="model">external.server.sync</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <form string="Service Endpoint">
+                    <header>
+                        <button name="action_test_connection" type="object" string="Test Connection" class="oe_highlight" />
+                        <field name="active" invisible="1"/>
+                    </header>
+                    <sheet>
+                        <div class="oe_title">
+                            <label for="name"/>
+                            <h1>
+                                <field name="name"/>
+                            </h1>
+                        </div>
+
+                        <group>
+                            <group>
+                                <field name="app_name" />
+                                <field name="audience"/>
+                                <field name="authorized_party"/>
+                            </group>
+                            <group>
+                                <field name="credential_id" options="{'no_create_edit': False}" />
+                                <field name="timeout"/>
+                            </group>
+                        </group>
+
+                        <notebook>
+                            <page string="Endpoint">
+                                <group>
+                                    <field name="source" string="Source Value" />
+                                    <label for="config_param_name"/>
+                                    <div class="d-flex w-100 align-items-center">
+                                        <field name="config_param_name" attrs="{'invisible':[('source','=','value')]}" />
+                                        <button string="Edit" type="object" name="open_config_parameter"
+                                            attrs="{'invisible':['|',('config_param_name','in',['',False]),('source','!=','config_parameter'),]}"
+                                            class="btn btn-primary ms-2"
+                                        />
+                                    </div>
+
+                                    <field name="base_url" string="Base Url" attrs="{'invisible':[('source','=','value')]}"/>
+                                    <field name="base_url_value" string="Base Url"
+                                           attrs="{'invisible':[('source','!=','value')]}"
+                                           placeholder="https://employee.company.com"/>
+                                </group>
+                            </page>
+
+                            <page string="Help">
+                                <group string="Application Name">
+                                    <div>
+                                        identifier used by service.client.
+                                    </div>
+                                </group>
+                                 <group string="Config Param">
+                                    <div>
+                                        Will get data endpoint resource server using config param
+                                        https://employee.company.com
+                                    </div>
+                                </group>
+                                <group string="Base URL">
+                                    <div>
+                                        if not using get data endpoint resource server using config param
+                                        Example:
+                                        https://employee.company.com
+                                    </div>
+                                </group>
+
+                                <group string="Credential">
+                                    <div>
+                                        Authentication configuration
+                                        used when accessing this
+                                        service.
+                                    </div>
+                                </group>
+                                <group string="Timeout">
+                                    <div>
+                                        Request timeout in seconds.
+                                    </div>
+                                </group>
+                            </page>
+                        </notebook>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="external_server_sync_tree" model="ir.ui.view">
+            <field name="name">external.server.sync.tree</field>
+            <field name="model">external.server.sync</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <tree >
+                    <field name="name"/>
+                    <field name="app_name"/>
+                    <field name="base_url"/>
+                </tree>
+            </field>
+        </record>
+
+        <record model="ir.actions.act_window" id="external_server_sync_action">
+            <field name="name">External Server Sync</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">external.server.sync</field>
+            <field name="view_mode">tree,form</field>
+            <field name="domain">[]</field>
+        </record>
+    </data>
+</odoo>

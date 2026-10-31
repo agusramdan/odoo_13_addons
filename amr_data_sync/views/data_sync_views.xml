@@ -1,0 +1,151 @@
+<odoo>
+    <data>
+
+        <record id="external_data_sync_filter" model="ir.ui.view">
+            <field name="name">external.data.sync.search</field>
+            <field name="model">external.data.sync</field>
+            <field name="arch" type="xml">
+                <search string="External Data">
+                    <field name="display_name"/>
+                    <filter name="filter_draft" string="Draft" domain="[('state', '=', 'draft')]"/>
+                    <filter name="filter_need_resolve" string="Need Resolve" domain="[('state', '=', 'need_resolve')]"/>
+                    <filter name="filter_error" string="Error" domain="[('state', '=', 'error')]"/>
+                    <filter name="filter_progress" string="Progres" domain="[('state', 'in', ['progress','process'])]"/>
+                    <filter name="filter_done" string="Done" domain="[('state', '=', 'done')]"/>
+                    <filter name="filter_deleted" string="External Deleted" domain="[('external_deleted', '=', True)]"/>
+                    <filter name="filter_archived" string="External Archived" domain="[('external_archived', '=', True)]"/>
+                    <separator/>
+                    <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                    <group expand="0" string="Group By">
+                        <filter name="group_model" string="Model" domain="[]" context="{'group_by': 'internal_model'}"/>
+                        <filter name="group_company" string="Company" domain="[]" context="{'group_by': 'company_id'}"/>
+                        <filter name="group_state" string="State" domain="[]" context="{'group_by': 'state'}"/>
+                        <filter name="group_application_name" string="Application Name" domain="[]" context="{'group_by': 'external_app_name'}"/>
+                        <filter name="group_deleted" string="External Deleted" domain="[]" context="{'group_by': 'external_deleted'}"/>
+                        <filter name="group_archived" string="External Archived" domain="[]" context="{'group_by': 'external_archived'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="external_data_sync_form" model="ir.ui.view">
+            <field name="name">external.data.sync.form</field>
+            <field name="model">external.data.sync</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <form string="sync">
+                    <header>
+                        <button name="action_get_json_data_for_create" type="object" string="Get External Data" class="oe_highlight" />
+                        <button name="action_reset_related" type="object" string="Reset Related" class="oe_highlight"  />
+                        <button name="action_process_data" type="object" string="Process Data" class="oe_highlight"  />
+                        <button name="action_process_field_after_create" type="object" string="Process After Create" class="oe_highlight"  />
+                        <button name="action_open_internal" type="object" string="Open Data" class="oe_highlight" attrs="{'invisible':[('internal_odoo_id','=',0)]}" />
+                        <button name="action_build_payload" type="object" string="Build Payload" class="oe_highlight"  />
+                        <field name="state" readonly="1" widget="statusbar" statusbar_visible="progress,done"/>
+                    </header>
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="sync_strategy_id"/>
+                                <field name="external_odoo_id" />
+                                <field name="external_model"/>
+                                <field name="external_app_name"/>
+                                <field name="external_last_update"/>
+                                <field name="external_deleted"/>
+                                <field name="external_archived"/>
+                                <field name="display_name"/>
+                                <field name="need_get_data_json"/>
+                            </group>
+                            <group>
+                                <field name="internal_odoo_id" />
+                                <field name="internal_model"/>
+                                <field name="company_id"/>
+                                <field name="archived_datetime" />
+                                <field name="deleted_datetime" />
+                                <field name="request_datetime" />
+                                <field name="last_success" />
+                                <field name="last_error"/>
+                                <field name="next_processing_datetime" attrs="{'invisible':[('state','=','done')]}"/>
+                            </group>
+                        </group>
+                        <notebook>
+
+                            <page string="Dependency Data">
+<!--                                <field name="issue_field_ids" widget="many2many_tags"/>-->
+                                <field name="related_ids" readonly="1">
+                                    <tree>
+                                        <field name="name"/>
+                                        <field name="field_type" />
+                                        <field name="sync_strategy_id"/>
+                                        <field name="related_external_data_sync_id"  string="Related" optional="hide"/>
+                                        <field name="mandatory_before_create" optional="hide"/>
+                                        <field name="next_processing_datetime"  string="Related" optional="hide"/>
+                                        <field name="internal_model"  string="Related" optional="hide"/>
+                                        <field name="inverse_field"  string="Related" optional="hide"/>
+                                        <field name="state" />
+                                    </tree>
+                                </field>
+                            </page>
+                            <page string="External Data">
+                                <field name="data_json"/>
+                            </page>
+                            <page string="Payload Data">
+                                <field name="payload_json"/>
+                            </page>
+                            <page string="Error Log">
+                                <field name="error_info" readonly="1"/>
+                            </page>
+                            <page string="History Data Update">
+                                <field name="history_data_update_ids" readonly="1"/>
+                            </page>
+                        </notebook>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="external_data_sync_tree" model="ir.ui.view">
+            <field name="name">external.data.sync.tree</field>
+            <field name="model">external.data.sync</field>
+            <field name="priority" eval="99" />
+            <field name="arch" type="xml">
+                <tree decoration-danger="state=='error'" decoration-success="state=='done'">
+                    <!-- Buttons in the tree view header are not supported in Odoo 13, so these lines are commented out -->
+<!--                    <header>-->
+<!--                        <button name="action_reset_related" type="object" string="Reset Related" class="oe_highlight"  />-->
+<!--                        <button name="action_process_data" type="object" string="Process Data" class="oe_highlight"  />-->
+<!--                    </header>-->
+                    <field name="display_name"/>
+<!--                    <field name="sync_type" />-->
+<!--                    <field name="model_id" />-->
+                    <field name="external_odoo_id"/>
+                    <field name="external_model"/>
+                    <field name="external_app_name"/>
+                    <field name="external_last_update" />
+
+                    <field name="internal_odoo_id"/>
+                    <field name="internal_model"/>
+                    <field name="last_processing_datetime" optional="hide"/>
+                    <field name="next_processing_datetime" optional="hide"/>
+                    <field name="last_success"/>
+                    <field name="last_error"/>
+                    <field name="state" />
+                    <button name="action_open_internal" type="object"
+                            string="Open Internal Data" class="oe_highlight"
+                            attrs="{'invisible':[('internal_odoo_id','=',0)]}"
+                    />
+                </tree>
+            </field>
+        </record>
+
+        <record model="ir.actions.act_window" id="external_data_sync_action">
+            <field name="name">Data Sync Metadata</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">external.data.sync</field>
+            <field name="view_mode">tree,form</field>
+            <field name="domain">[]</field>
+            <field name="context">{'update': False}</field>
+        </record>
+
+    </data>
+</odoo>

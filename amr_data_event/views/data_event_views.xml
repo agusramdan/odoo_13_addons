@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_internal_data_event_tree" model="ir.ui.view">
+        <field name="name">internal.data.event.tree</field>
+        <field name="model">internal.data.event</field>
+        <field name="arch" type="xml">
+            <tree string="Internal Data Events"
+                  default_order="event_datetime desc">
+                <field name="event_datetime"/>
+                <field name="res_model"/>
+                <field name="res_id"/>
+                <field name="company_id"/>
+                <field name="operation"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_internal_data_event_search" model="ir.ui.view">
+        <field name="name">internal.data.event.search</field>
+        <field name="model">internal.data.event</field>
+        <field name="arch" type="xml">
+            <search string="Search Internal Data Events">
+
+                <!-- Search Fields -->
+                <field name="res_model"/>
+                <field name="res_id"/>
+                <field name="company_id"/>
+
+                <!-- Filters -->
+                <filter name="filter_pending" string="Pending" domain="[('state','=','pending')]"/>
+                <filter name="filter_processing" string="Processing" domain="[('state','=','processing')]"/>
+                <filter name="filter_done" string="Done" domain="[('state','=','done')]"/>
+                <filter name="filter_failed" string="Failed" domain="[('state','=','failed')]"/>
+
+                <separator/>
+                <filter name="filter_create" string="Create" domain="[('operation','=','create')]"/>
+                <filter name="filter_write" string="Write" domain="[('operation','=','write')]"/>
+                <filter name="filter_unlink" string="Delete" domain="[('operation','=','unlink')]"/>
+
+                <!-- Group By -->
+                <group expand="0" string="Group By">
+                    <filter name="group_res_model" string="Model" context="{'group_by': 'res_model'}"/>
+                    <filter name="group_company" string="Company" context="{'group_by': 'company_id'}"/>
+                    <filter name="group_operation" string="Operation" context="{'group_by': 'operation'}"/>
+                    <filter name="group_state" string="State" context="{'group_by': 'state'}"/>
+                    <filter name="group_date" string="Date" context="{'group_by': 'event_datetime:day'}"/>
+                </group>
+
+            </search>
+        </field>
+    </record>
+
+    <record id="view_internal_data_event_form" model="ir.ui.view">
+        <field name="name">internal.data.event.form</field>
+        <field name="model">internal.data.event</field>
+        <field name="arch" type="xml">
+            <form string="Internal Data Event">
+                <!-- STATUS BAR -->
+                <header>
+                    <button name="send_events" type="object" string="Send Event" class="btn-primary" states="pending,error"/>
+                    <field name="state" widget="statusbar" statusbar_visible="pending,sent,error"/>
+                </header>
+                <sheet>
+                    <!-- BASIC INFO -->
+                    <group>
+                        <group string="Resource">
+                            <field name="res_model" readonly="1"/>
+                            <field name="res_id" readonly="1"/>
+                            <field name="company_id"/>
+                        </group>
+
+                        <group string="Event Info">
+                            <field name="operation" readonly="1"/>
+                            <field name="event_datetime" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <!-- DETAIL -->
+                    <notebook>
+                        <page string="Change Field">
+                            <field name="changed_fields"
+                                   placeholder="field1,field2"
+                                   readonly="1"/>
+                        </page>
+                        <page string="Error"
+
+                               attrs="{'invisible': [('state','!=','error')]}">
+                            <field name="error_message"
+                                   readonly="1"
+                                   nolabel="1"/>
+                        </page>
+                    </notebook>
+                    <!-- ERROR -->
+
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_internal_data_event" model="ir.actions.act_window">
+        <field name="name">Internal Data Events</field>
+        <field name="res_model">internal.data.event</field>
+        <field name="view_mode">tree,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Internal data events for external synchronization
+            </p>
+        </field>
+    </record>
+
+
+
+</odoo>
