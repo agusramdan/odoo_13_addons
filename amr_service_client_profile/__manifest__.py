@@ -1,0 +1,15 @@
+{
+    'name': 'Service Client Issuer Profile',
+    'version': '13.0.1.0.0',
+    'category': 'Tools',
+    'summary': 'Optional issuer profile integration for service credentials',
+    'description': 'Adds issuer profile selection to the service credential wizard.',
+    'author': 'Agus Muhammad Ramdan',
+    'website': 'https://www.agusramdan.web.id',
+    'license': 'LGPL-3',
+    'depends': ['amr_service_client', 'amr_resource'],
+    'data': ['views/service_credential.xml'],
+    'installable': True,
+    'auto_install': False,
+    'application': False,
+}

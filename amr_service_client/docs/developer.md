@@ -10,7 +10,7 @@ Lihat [panduan user](user.md) dan [metadata demo](examples/service-client-demo.j
 
 ## Fungsi addon dan manifest
 
-Addon ini client HTTP/JSON-RPC Odoo 13 ke amr_resource, bukan IdP, bukan resource server, bukan validator ID-token. Manifest mendeklarasikan nama Service Client, kategori Tools, versi 13.0.0.1.0, LGPL-3; depends base, web, base_setup, amr_resource; external_dependencies python berisi pyjwt. Ejaan dependency tersebut adalah deklarasi manifest, bukan bukti paket berhasil tersedia. Sumber juga mengimpor requests dan jwt; dukungan backend kriptografi/library belum dibuktikan. Referensi: `__manifest__.py:2`, `__manifest__.py:6`, `__manifest__.py:9`, `services/providers.py:3`.
+Addon ini client HTTP/JSON-RPC Odoo 13 ke layanan; bukan IdP, bukan resource server, bukan validator ID-token. Manifest mendeklarasikan nama Service Client, kategori Tools, versi 13.0.0.1.0, LGPL-3; depends base, web, base_setup tanpa `amr_resource`; external_dependencies python berisi pyjwt. Issuer-profile integration tersedia terpisah melalui `amr_service_client_profile`, yang bergantung pada core dan Resource. Core OAuth tetap mendukung `token_uri` manual. Ejaan dependency tersebut adalah deklarasi manifest, bukan bukti paket berhasil tersedia. Sumber juga mengimpor requests dan jwt; dukungan backend kriptografi/library belum dibuktikan. Referensi: `__manifest__.py:6-10`.
 
 Data manifest: ACL CSV, view server action, endpoint, credential, client, log, menu, serta dua view wizard. Tidak ada demo, scheduler, cron, hook atau fixture JSON dokumentasi dalam manifest. Lihat `__manifest__.py:12`. amr_resource adalah dependency Resource Server terpisah.
 

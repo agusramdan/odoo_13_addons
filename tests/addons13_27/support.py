@@ -46,6 +46,7 @@ install_external_stubs()
 
 class _API:
     def model(self, fn): return fn
+    def model_create_multi(self, fn): return fn
     def constrains(self, *a): return lambda fn: fn
     def depends(self, *a): return lambda fn: fn
     def onchange(self, *a): return lambda fn: fn

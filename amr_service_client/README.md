@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Versi manifest | 13.0.0.1.0 |
-| Depends | `base`, `web`, `base_setup`, `amr_resource` |
+| Depends | `base`, `web`, `base_setup` |
 | Python eksternal (manifest) | `pyjwt` — deklarasi dependensi, bukan bukti paket tersedia |
 | Status migrasi Odoo 20 | Tidak diklaim (di luar cakupan); kompatibilitas belum diverifikasi |
 | Cakupan | Dokumentasi berbasis sumber untuk development/demo; runtime Odoo 13 belum diverifikasi; bukan untuk produksi |

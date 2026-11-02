@@ -10,6 +10,7 @@ Project `addons_odoo_13` is for development of Odoo 13 Addons. It does not have 
 ## Addon documentation
 
 - [amr_service_client](amr_service_client/README.md) — Client HTTP/JSON-RPC; lihat indeks dan panduan developer/user di dalam addon.
+- [amr_service_client_profile](amr_service_client_profile/README.md) — optional issuer-profile integration; requires core and Resource, with [user](amr_service_client_profile/docs/user.md) and [developer](amr_service_client_profile/docs/developer.md) guides.
 - [amr_sentry](amr_sentry/README.md) — optional Sentry reporting for service-client outcomes.
 - [amr_resource](amr_resource/README.md) — Resource Server addon; see its linked Developer and User guides.
 
@@ -19,6 +20,7 @@ Target dokumentasi ini adalah Odoo 13 untuk development/demo; migrasi ke Odoo 20
 
 | Addon / peran                                                             | Versi manifest | Depends | Python eksternal (manifest) | Status penggunaan |
 |---------------------------------------------------------------------------|---|---|---|---|
-| [amr_service_client](amr_service_client/README.md) — Client HTTP/JSON-RPC | 13.0.0.1.0 | base, web, base_setup, amr_resource | pyjwt | Development/demo-only; bukan produksi |
+| [amr_service_client](amr_service_client/README.md) — Client HTTP/JSON-RPC | 13.0.0.1.0 | base, web, base_setup | pyjwt | Development/demo-only; bukan produksi |
+| [amr_service_client_profile](amr_service_client_profile/README.md) — optional issuer-profile integration | 13.0.1.0.0 | amr_service_client, amr_resource | Tidak dideklarasikan | Development/demo-only; bukan produksi |
 | [amr_resource](amr_resource/README.md) — Resource Server                  | 13.0.0.0.8 | base, web, base_setup | Tidak dideklarasikan | Development/demo-only; bukan produksi |
 | [amr_sentry](amr_sentry/README.md)                                        | 13.0.1.0.0 | amr_service_client | sentry_sdk, yaml | Development/demo-only; not production |
