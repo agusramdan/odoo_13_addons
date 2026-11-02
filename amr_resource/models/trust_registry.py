@@ -453,6 +453,8 @@ class AmrResourceIssuer(models.Model):
         if rows:
             if rows.with_context(active_test=False).user_mapping_ids:
                 raise ValidationError('Existing issuer configuration conflicts with migration.')
+            if rows.algorithm_policy_ids:
+                raise ValidationError('Existing issuer configuration conflicts with migration.')
             if not rows.active or any(rows[field] != value if field != 'fixed_user_id'
                                       else rows[field].id != value
                                       for field, value in data.items()):

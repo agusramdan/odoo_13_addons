@@ -354,6 +354,7 @@ class MigrationUnitTests(unittest.TestCase):
                 fields['active'] = True
                 fields['id'] = 123
                 fields['user_mapping_ids'] = Children([])
+                fields['algorithm_policy_ids'] = Children([])
                 fields['audience_ids'] = Children([SimpleNamespace(**c[2]) for c in data['audience_ids']])
                 fields['binding_ids'] = Children([SimpleNamespace(sub=c[2]['sub'],
                     user_id=SimpleNamespace(id=c[2]['user_id'])) for c in data['binding_ids']])
@@ -440,6 +441,49 @@ class MigrationUnitTests(unittest.TestCase):
                 self.assertEqual(candidate.user_mapping_ids[0].jwt_key, 'sub')
                 params.set_param.assert_not_called()
                 rule.unlink.assert_not_called()
+
+        # Algorithm policies are not represented in the legacy plan, even when
+        # the synthetic RS256 policy is disabled or the plan marker matches.
+        from copy import deepcopy
+        candidate.user_mapping_ids = Children([])
+        candidate.write = Mock()
+        for enabled in (True, False):
+            for scenario in ('dry_run', 'apply', 'repeat'):
+                with self.subTest(policy_enabled=enabled, scenario=scenario):
+                    storage.pop('amr_resource.migration.v2.global', None)
+                    if scenario == 'repeat':
+                        storage['amr_resource.migration.v2.global'] = plan['digest']
+                    params.set_param.reset_mock()
+                    rule.unlink.reset_mock()
+                    candidate.write.reset_mock()
+                    policy = SimpleNamespace(algorithm_id=SimpleNamespace(name='RS256'),
+                                             enabled=enabled, write=Mock(), unlink=Mock())
+                    candidate.algorithm_policy_ids = Children([policy])
+                    before_candidate = deepcopy({k: v for k, v in vars(candidate).items()
+                                                 if k not in ('write', 'algorithm_policy_ids')})
+                    before_storage = dict(storage)
+                    error = None
+                    try:
+                        registry._migrate_legacy_v2(*args, dry_run=scenario == 'dry_run')
+                    except ValidationError as exc:
+                        error = exc
+                    self.assertEqual({k: v for k, v in vars(candidate).items()
+                                      if k not in ('write', 'algorithm_policy_ids')}, before_candidate)
+                    self.assertEqual(candidate.algorithm_policy_ids, [policy])
+                    self.assertEqual(policy.algorithm_id.name, 'RS256')
+                    self.assertIs(policy.enabled, enabled)
+                    self.assertEqual(storage, before_storage)
+                    self.assertEqual(registry.created, created_before)
+                    self.assertEqual(rows, [candidate])
+                    candidate.write.assert_not_called()
+                    policy.write.assert_not_called()
+                    policy.unlink.assert_not_called()
+                    params.set_param.assert_not_called()
+                    rule.unlink.assert_not_called()
+                    self.assertIsNotNone(error, 'Unsupported algorithm policy must be rejected')
+                    for sensitive in (self.values['issuer'], self.values['client_id'],
+                                      self.bindings[0]['sub'], 'RS256'):
+                        self.assertNotIn(sensitive, str(error))
 
         env.user = SimpleNamespace(share=False, has_group=lambda group: False)
         with self.assertRaises(AccessError):
