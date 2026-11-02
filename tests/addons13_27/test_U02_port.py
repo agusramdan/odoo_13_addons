@@ -28,7 +28,8 @@ class Port(OfflineCase):
     def test_manifest_dependencies_and_all_declared_files_are_local(self):
         manifest = ast.literal_eval((ADDON / '__manifest__.py').read_text())
         self.assertEqual(manifest['version'], '13.0.0.1.0')
-        self.assertTrue({'base', 'web', 'base_setup', 'amr_resource'} <= set(manifest['depends']))
+        self.assertTrue({'base', 'web', 'base_setup'} <= set(manifest['depends']))
+        self.assertNotIn('amr_resource', manifest['depends'])
         self.assertIn('pyjwt', manifest['external_dependencies']['python'])
         self.assertTrue(manifest['data'])
         for relative in manifest['data']:

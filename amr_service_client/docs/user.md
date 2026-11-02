@@ -23,7 +23,7 @@ Referensi: `security/ir.model.access.csv:2`, `security/ir.model.access.csv:17`. 
 
 ## Persiapan sebelum konfigurasi
 
-Manifest mendeklarasikan versi 13.0.0.1.0, dependency base/web/base_setup/amr_resource dan Python pyjwt; ini bukan hasil instalasi sukses (`__manifest__.py:6`). Administrator harus memperoleh izin lingkungan dan rencana keamanan sebelum instalasi atau konfigurasi nyata. Panduan ini bukan instruksi instalasi atau izin mengubah DB maupun membuka layanan.
+Manifest mendeklarasikan versi 13.0.0.1.0, dependency base/web/base_setup (tanpa `amr_resource`) dan Python pyjwt; ini bukan hasil instalasi sukses (`__manifest__.py:6`). Issuer-profile picker terpisah pada addon opsional `amr_service_client_profile`; core menyediakan URI token manual untuk OAuth. Administrator harus memperoleh izin lingkungan dan rencana keamanan sebelum instalasi atau konfigurasi nyata. Panduan ini bukan instruksi instalasi atau izin mengubah DB maupun membuka layanan.
 
 Siapkan rencana endpoint yang diotorisasi, kontrak HTTP/JSON-RPC, model yang sesuai, siapa penulis action tepercaya, dan cara menangani data sensitif. HTTPS, allowlist host, validasi scope, sandbox kode dan isolasi tenant tidak boleh diasumsikan tersedia. Jangan mengisi credential riil untuk mencoba panduan ini.
 

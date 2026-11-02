@@ -1,7 +1,7 @@
 import json
 import base64
 from odoo import models, fields
-from odoo.exceptions import ValidationError, AccessError
+from odoo.exceptions import ValidationError
 
 
 class ServiceCredentialWizard(models.TransientModel):
@@ -31,7 +31,6 @@ class ServiceCredentialWizard(models.TransientModel):
     private_key = fields.Text()
     private_key_file = fields.Char()
     token_uri = fields.Char()
-    issuer_profile_id = fields.Many2one("oidc.issuer.register", string="Issuer Profile", groups="amr_resource.group_oidc_trust_admin")
     client_secret = fields.Char()
     header = fields.Char(default="X-API-Key")
     value = fields.Char()
@@ -51,16 +50,8 @@ class ServiceCredentialWizard(models.TransientModel):
         self.ensure_one()
         if self.credential_type not in ("client_secret", "service_account"):
             return self.token_uri
-        profile = self.issuer_profile_id
-        if not profile:
-            return self.token_uri
-        if not self.env.user.has_group("amr_resource.group_oidc_trust_admin"):
-            raise AccessError("You are not allowed to use issuer profiles.")
-        if self.token_uri:
-            raise ValidationError("Choose an issuer profile or enter a token URI, not both.")
-        if not profile.active or not profile.token_endpoint or profile.client_id != self.client_id:
-            raise ValidationError("The issuer profile is inactive or does not match this client.")
-        return profile.token_endpoint
+        return self.token_uri
+
 
     def action_generate(self):
         self.ensure_one()
