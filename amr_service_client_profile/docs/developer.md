@@ -13,12 +13,28 @@ The field is group-restricted in ORM metadata and in the inherited view. The ext
 
 ## Verification
 
-Offline focused contract tests:
+Offline focused contract tests (using repository doubles; not Odoo ORM integration):
 
 ```sh
-python3 -B -m unittest discover -s tests/addons13_27 -p 'test_U15_issuer_wizard.py' -v
+PYTHONPATH=tests/addons13_27 python3 -B -m unittest discover -s amr_service_client_profile/tests -p 'test_*_unit.py' -v
 ```
 
-The offline harness uses doubles; it does not prove Odoo registry or access behavior. The candidate was also installed and exercised on Odoo 13.0-20221005 / Python 3.7.3 in a disposable PostgreSQL database with no public ports or external network. The observed checks included core-only installation with Resource absent from the addons path, optional dependency resolution, combined-view/field metadata, authorized and unauthorized ORM paths, manual and profile generation, fail-closed saves, and upgrade/uninstall/source-rollback data readback. These checks are not browser UI acceptance, production validation, or proof that every test in the repository-wide offline suite passes.
+This is an offline unit/contract oracle, not an Odoo addon test. It imports shared doubles via `PYTHONPATH`; keep it out of Odoo's loader. The Odoo-native `SavepointCase` tests live in `integration_tests/` and are registered through `tests/__init__.py` only. They exercise profile-backed wizard generation and ORM authorization/validation with the real registry.
+
+Integration runner (Odoo 13 only; use a fresh disposable PostgreSQL database on an isolated internal-only network, with no published ports and candidate source mounted read-only):
+
+```sh
+# Run inside the pinned Odoo 13.0 / Python 3.7.3 test runtime.
+/usr/bin/odoo -d "$DB_NAME" \\
+  --db_host="$DB_HOST" --db_port=5432 \\
+  --db_user="$DB_USER" --db_password="$DB_PASSWORD" \\
+  --addons-path=/usr/lib/python3/dist-packages/odoo/addons,"$ADDONS_ROOT" \\
+  --init=amr_service_client_profile --test-enable --stop-after-init \\
+  --log-level=test --test-tags=/amr_service_client_profile --no-http
+```
+
+Require logs showing the intended test methods and a nonzero test count; installation or zero-test success is not test evidence. Verify the database is absent before the run; destroy the database, test container(s), and isolated network afterward and verify they are absent.
+
+The new integration suite was exercised on Odoo 13.0-20221005 / Python 3.7.3 with a fresh PostgreSQL 13 database on a dedicated internal-only Docker network; all five test methods passed. This scoped result is not a substitute for full UAT, browser UI acceptance, or production validation.
 
 The repository-wide offline suite has existing failures/errors on both the approved baseline and the feature candidate; compare exact test names before attributing them to this addon. Never use a live database, provider, or real credential to run these checks.
