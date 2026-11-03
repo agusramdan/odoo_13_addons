@@ -206,6 +206,7 @@ class ServiceClient:
                        method=method)
 
     def call(self, method=None, path=None, params=None, payload=None, headers=None, raise_exception=True, **kw):
+        response = None
         try:
             request_context = self.prepare_request_context(
                 path, method, params=params, payload=payload, headers=headers

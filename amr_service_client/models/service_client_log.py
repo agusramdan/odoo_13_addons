@@ -113,7 +113,7 @@ class ServiceClientLog(models.Model):
 
         return self.sudo().create({
             'state': state,
-            'client_id': client_id.id if client_id else None,
+            'client_id': (client_id if isinstance(client_id, int) else client_id.id) if client_id else None,
             'endpoint_id': endpoint_id.id if endpoint_id else None,
             'credential_id': credential_id.id if credential_id else None,
             'request_context': json.dumps(request_context, indent=4) if request_context else None,

@@ -18,7 +18,10 @@ def load_tests(loader, tests, pattern):
                 sys.path.insert(0, directory)
         suite = unittest.TestSuite()
         for directory in (sentry, core):
-            suite.addTests(unittest.TestLoader().discover(directory, pattern='test_U11_sentry_*.py'))
+            # Enumerate only the legacy selector's top-level files. Generic
+            # discovery imports every package, including Odoo integration tests.
+            for path in sorted(Path(directory).glob('test_U11_sentry_*.py')):
+                suite.addTests(unittest.TestLoader().loadTestsFromName(path.stem))
         return suite
     finally:
         sys.path[:] = paths
