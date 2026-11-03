@@ -37,9 +37,15 @@ Existing canonical and native test commands remain necessary.
 | 04 | policy, model | 15 |
 | 05 | real SDK isolation/outside telemetry | NOT RUN |
 | 06 | bootstrap warning, reporter failure diagnostic | 2 |
-| 07 | service-client behavior and N1–N3 component regressions | 10 |
+| 07 | service-client behavior, N1–N3 and L2 component regressions | 11 |
 | 08 | action exception reporting | 2 |
 | 09 | bootstrap initialization | 1 |
 | 10 | packaging | 2 |
 | 11 | documentation | 7 |
 | 12 | monitoring controls and restore/disable/restart | NOT RUN |
+
+The L2 case checks the extracted `dispatch_send` method with a synthetic HTTP
+response and fake log and reporting hooks: one request, one success hook, and
+no log creation with `active_log=False`. It does not exercise a configured
+policy, real SDK, persisted records, fresh-cursor counts, or Odoo ORM; it does
+not assert that error logging is disabled. Full L2 remains a separate ORM gate.

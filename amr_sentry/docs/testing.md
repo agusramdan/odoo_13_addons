@@ -12,7 +12,7 @@ python3 -B -m unittest discover -s tests/addons13_27 -p test_sentry_test_layout.
 ```
 
 The historical selector remains supported via a test-only discovery shim; it
-runs the same 51 addon-owned contracts once, without importing them in Odoo:
+runs the same addon-owned contracts once, without importing them in Odoo:
 
 ```sh
 python3 -B -m unittest discover -s tests/addons13_27 -p 'test_U11_sentry_*.py' -v
