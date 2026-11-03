@@ -37,7 +37,7 @@ Existing canonical and native test commands remain necessary.
 | 04 | policy, model | 15 |
 | 05 | real SDK isolation/outside telemetry | NOT RUN |
 | 06 | bootstrap warning, reporter failure diagnostic | 2 |
-| 07 | service-client behavior, N1–N3 and L2 component regressions | 11 |
+| 07 | service-client behavior, N1–N3, L2 and L3 component regressions | 12 |
 | 08 | action exception reporting | 2 |
 | 09 | bootstrap initialization | 1 |
 | 10 | packaging | 2 |
@@ -49,3 +49,10 @@ response and fake log and reporting hooks: one request, one success hook, and
 no log creation with `active_log=False`. It does not exercise a configured
 policy, real SDK, persisted records, fresh-cursor counts, or Odoo ORM; it does
 not assert that error logging is disabled. Full L2 remains a separate ORM gate.
+
+The L3 matrix invokes extracted `dispatch_send` for preparation, transport and
+HTTP failures with both `active_log` settings. It checks exact fake request,
+failure-hook and error-log calls, exception identity, response availability,
+and fake log arguments. The hook and log sink are fakes: no configured policy,
+SDK capture, persistence, fresh cursor, rollback, or error-log-write failure is
+tested. Full L3 remains an ORM gate; C1 and L5 remain blocked.

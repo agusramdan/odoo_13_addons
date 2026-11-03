@@ -313,6 +313,71 @@ class SentryReporting(unittest.TestCase):
             status, error = dispatch_errors[0]
             self.fail('dispatch_send failed to preserve outcome after reporter failure (HTTP %s): %r' % (status, error))
 
+    def test_dispatch_error_logging_matrix_component(self):
+        # L3 component only: fake log sink, no ORM or transaction assertions.
+        for stage in ('preparation', 'transport', 'http'):
+            for active_log in (True, False):
+                with self.subTest(stage=stage, active_log=active_log):
+                    error = RuntimeError('synthetic ' + stage)
+                    requests_seen, reports, errors, successes = [], [], [], []
+                    payload = {'sample': 'value'}
+                    context = {'method': 'POST', 'url': 'https://example.invalid'}
+                    client_id, endpoint_id, credential_id = object(), object(), object()
+
+                    class Response:
+                        def raise_for_status(self):
+                            raise error
+                    response = Response()
+
+                    class Client:
+                        def prepare_request_context(self, **kwargs):
+                            if stage == 'preparation':
+                                raise error
+                            return context
+                        def _report_sentry(self, response=None, exception=None, method=None):
+                            reports.append((response, exception, method))
+
+                    def request(**kwargs):
+                        requests_seen.append(kwargs)
+                        if stage == 'transport':
+                            raise error
+                        return response
+
+                    def create_error(*args, **kwargs):
+                        errors.append((args, kwargs))
+
+                    sender = types.SimpleNamespace(
+                        active_log=active_log, payload=payload, service_client=Client(),
+                        client_id=client_id, endpoint_id=endpoint_id, credential_id=credential_id,
+                        env={'service.client.log': types.SimpleNamespace(
+                            create_log=lambda *a, **kw: successes.append((a, kw)),
+                            create_error=create_error)})
+                    dispatch = extracted_method(
+                        ROOT / 'amr_service_client/models/service_client.py',
+                        'ServiceClientSend', 'dispatch_send', {
+                            'requests': types.SimpleNamespace(request=request),
+                            '_logger': types.SimpleNamespace(exception=lambda *a: None)})
+
+                    self.assertIsNone(dispatch(sender))
+                    self.assertEqual(requests_seen, [] if stage == 'preparation' else [context])
+                    self.assertEqual(len(reports), 1)
+                    self.assertIs(reports[0][0], response if stage == 'http' else None)
+                    self.assertIs(reports[0][1], error)
+                    self.assertEqual(reports[0][2], None if stage == 'preparation' else 'POST')
+                    self.assertEqual(len(successes), 0)
+                    self.assertEqual(len(errors), 1)
+                    args, kwargs = errors[0]
+                    self.assertEqual(len(args), 1)
+                    self.assertIs(args[0], error)
+                    self.assertEqual(set(kwargs), {'client_id', 'endpoint_id', 'credential_id', 'request_context'})
+                    self.assertIs(kwargs['client_id'], client_id)
+                    self.assertIs(kwargs['endpoint_id'], endpoint_id)
+                    self.assertIs(kwargs['credential_id'], credential_id)
+                    if stage == 'preparation':
+                        self.assertEqual(kwargs['request_context'], {'payload': payload})
+                    else:
+                        self.assertIs(kwargs['request_context'], context)
+
     def test_dispatch_success_without_active_log_reports_one_outcome(self):
         # ADDONS13-68 addendum L2: one successful request and eligible success
         # hook, with no success log when active_log is False. Component only.
