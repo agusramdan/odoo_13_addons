@@ -313,6 +313,35 @@ class SentryReporting(unittest.TestCase):
             status, error = dispatch_errors[0]
             self.fail('dispatch_send failed to preserve outcome after reporter failure (HTTP %s): %r' % (status, error))
 
+    def test_dispatch_success_without_active_log_reports_one_outcome(self):
+        # ADDONS13-68 addendum L2: one successful request and eligible success
+        # hook, with no success log when active_log is False. Component only.
+        response = types.SimpleNamespace(text='ok', raise_for_status=lambda: None)
+        requests_seen, reports, logs = [], [], []
+        class Client:
+            def prepare_request_context(self, **kwargs):
+                return {'method': 'POST'}
+            def _report_sentry(self, response=None, exception=None, method=None):
+                reports.append((response, exception, method))
+        def request(**kwargs):
+            requests_seen.append(kwargs)
+            return response
+        sender = types.SimpleNamespace(active_log=False, payload={}, service_client=Client(),
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': types.SimpleNamespace(
+                create_log=lambda *a, **kw: logs.append(('success', a, kw)),
+                create_error=lambda *a, **kw: logs.append(('error', a, kw)))})
+        dispatch = extracted_method(ROOT / 'amr_service_client/models/service_client.py',
+            'ServiceClientSend', 'dispatch_send', {
+                'requests': types.SimpleNamespace(request=request),
+                '_logger': types.SimpleNamespace(exception=lambda *a: None),
+            })
+        before = len(logs)
+        self.assertIsNone(dispatch(sender))
+        self.assertEqual(requests_seen, [{'method': 'POST'}])
+        self.assertEqual(reports, [(response, None, 'POST')])
+        self.assertEqual(len(logs), before)
+
     def test_dispatch_success_log_failure_uses_baseline_error_log_path(self):
         path = ROOT / 'amr_service_client/models/service_client.py'
         business_error = RuntimeError('done log failed')
