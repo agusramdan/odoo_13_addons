@@ -80,7 +80,8 @@ def install_odoo_stubs():
 
 def load(rel, name=None):
     install_odoo_stubs()
-    path=ADDON/rel; modname=name or ('amr_service_client.'+rel.replace('/','.').removesuffix('.py'))
+    path=ADDON/rel; dotted=rel.replace('/','.')
+    modname=name or ('amr_service_client.'+(dotted[:-3] if dotted.endswith('.py') else dotted))
     spec=importlib.util.spec_from_file_location(modname,path); module=importlib.util.module_from_spec(spec); sys.modules[modname]=module; spec.loader.exec_module(module); return module
 
 class OfflineCase(unittest.TestCase):
