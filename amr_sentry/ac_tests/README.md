@@ -37,7 +37,7 @@ Existing canonical and native test commands remain necessary.
 | 04 | policy, model | 15 |
 | 05 | real SDK isolation/outside telemetry | NOT RUN |
 | 06 | bootstrap warning, reporter failure diagnostic | 2 |
-| 07 | service-client behavior and N3 synthetic HTTP | 9 |
+| 07 | service-client behavior and N1–N3 component regressions | 10 |
 | 08 | action exception reporting | 2 |
 | 09 | bootstrap initialization | 1 |
 | 10 | packaging | 2 |
