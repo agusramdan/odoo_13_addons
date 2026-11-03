@@ -388,6 +388,7 @@ class ServiceClientFactory(models.Model):
             'ctx': self.env.context,
             'env': self.env,
             'user': self.env.user,
+            'service_client': self,
         }
 
     @api.constrains('iteration')

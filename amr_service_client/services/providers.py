@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import jwt
+import json
 import base64
 import logging
 import requests
@@ -126,16 +127,18 @@ class GetJWTTokenProvider(AuthenticationProvider):
             "password": self.credential.get("password"),
         }
 
-        headers = {"Accept": "application/json", }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
         connect_timeout = self.credential.get("connect_timeout", 10, )
         read_timeout = self.credential.get("read_timeout", 30, )
         _logger.info("Requesting token username=%s , token_uri=%s", self.credential.get("username"), token_uri)
 
         try:
             response = requests.post(
-                token_uri, headers=headers, data=payload, timeout=(connect_timeout, read_timeout,),
+                token_uri, headers=headers, data=json.dumps(payload), timeout=(connect_timeout, read_timeout,),
             )
-
         except Timeout:
             raise ValueError("Token endpoint timeout")
         except ConnectionError:
@@ -153,7 +156,8 @@ class GetJWTTokenProvider(AuthenticationProvider):
         try:
             token_response = response.json()
         except Exception:
-            raise ValueError("Invalid token response")
+            error_data = response.text
+            raise ValueError("Invalid token response: %s" % error_data)
 
         access_token = token_response.get("token") or token_response.get("access_token")
 

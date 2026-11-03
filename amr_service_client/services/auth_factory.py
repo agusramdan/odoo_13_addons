@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from odoo import api, models, tools
-from odoo.tools import config
+from odoo import models
 from .providers import (
     NoneAuthProvider,
     ApiKeyProvider,
@@ -35,3 +34,6 @@ class ServiceAuthFactory(models.AbstractModel):
         if not provider_class:
             raise ValueError("Unsupported authentication type: %s ." % auth_type)
         return provider_class(self.env, credential)
+
+    def is_supported(self, _type):
+        return _type in self.PROVIDERS

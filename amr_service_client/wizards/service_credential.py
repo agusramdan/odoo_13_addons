@@ -12,6 +12,7 @@ class ServiceCredentialWizard(models.TransientModel):
         [
             ("service_account", "Service Account"),
             ("client_secret", "Client Secret"),
+            ("get_jwt","Get JWT"),
             ("api_key", "API Key"),
             ("bearer", "Bearer Token"),
             ("basic", "Basic Auth"),
@@ -92,6 +93,12 @@ class ServiceCredentialWizard(models.TransientModel):
             data.update({
                 "username": self.username,
                 "password": self.password,
+            })
+        elif self.credential_type == 'get_jwt':
+            data.update({
+                "username": self.username,
+                "password": self.password,
+                "token_uri": self._oauth_token_uri(),
             })
 
         self.json_content = json.dumps(data, indent=4)
