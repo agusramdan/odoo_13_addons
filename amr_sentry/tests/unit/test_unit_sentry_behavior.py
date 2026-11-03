@@ -161,6 +161,99 @@ class SentryReporting(unittest.TestCase):
                 call(Client(), method='POST', raise_exception=True)
             self.assertIs(caught.exception, error)
 
+    def _exercise_call_outcome(self, stage, raise_exception, sdk_fails):
+        # Source-extracted call plus the real bridge and policy; not ORM execution.
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        original = RuntimeError('synthetic ' + stage)
+        requests_made, hooks, delegated, captures = [], [], [], []
+
+        class SDK:
+            def init(self, **kwargs):
+                pass
+            def capture_message(self, *args, **kwargs):
+                captures.append(('success', args, kwargs))
+                if sdk_fails:
+                    raise RuntimeError('SDK offline')
+            def capture_exception(self, error):
+                captures.append(('failure', error))
+                if sdk_fails:
+                    raise RuntimeError('SDK offline')
+
+        sdk_reporter = policy.build_reporter(
+            {'dsn': 'https://example.invalid/1'},
+            {'enabled': True, 'mode': 'all'}, SDK())
+
+        def report(**kwargs):
+            delegated.append(kwargs)
+            sdk_reporter.report(success=kwargs['exception'] is None,
+                                exception=kwargs['exception'])
+
+        class Client:
+            def prepare_request_context(self, *args, **kwargs):
+                if stage == 'preparation':
+                    raise original
+                return {'method': 'POST'}
+            def _report_sentry(self, response=None, exception=None, method=None):
+                kwargs = {'response': response, 'exception': exception, 'method': method}
+                hooks.append(kwargs)
+                reporter.report_outcome({'service.client': types.SimpleNamespace(
+                    _report_sentry=report)}, **kwargs)
+
+        class Response:
+            def raise_for_status(self):
+                if stage == 'http_error':
+                    raise original
+
+        response = Response()
+        def request(**kwargs):
+            requests_made.append(kwargs)
+            if stage == 'transport':
+                raise original
+            return response
+
+        call = extracted_method(path, 'ServiceClient', 'call', {
+            'requests': types.SimpleNamespace(request=request)})
+        if stage != 'success' and raise_exception:
+            with self.assertRaises(RuntimeError) as caught:
+                call(Client(), method='POST', raise_exception=True)
+            self.assertIs(caught.exception, original)
+        else:
+            result = call(Client(), method='POST', raise_exception=raise_exception)
+            if stage in ('preparation', 'transport'):
+                self.assertIsNone(result)
+            else:
+                self.assertIs(result, response)
+
+        self.assertEqual(len(requests_made), int(stage != 'preparation'))
+        self.assertEqual(len(hooks), 1, 'call boundary hook count')
+        self.assertEqual(len(delegated), 1, 'bridge delegation count')
+        for event in (hooks[0], delegated[0]):
+            self.assertIs(event['exception'], None if stage == 'success' else original)
+            self.assertIs(event['response'], response if stage == 'success' else None)
+            self.assertEqual(event['method'], 'POST')
+        self.assertEqual(len(captures), 1, 'total success and failure captures')
+        if stage == 'success':
+            self.assertEqual(captures[0][0], 'success')
+        else:
+            self.assertEqual(captures[0][0], 'failure')
+            self.assertIs(captures[0][1], original)
+
+    def test_call_failure_counts_and_sdk_failure_preserve_original_outcomes(self):
+        for stage in ('preparation', 'transport'):
+            for raise_exception in (False, True):
+                for sdk_fails in (False, True):
+                    with self.subTest(stage=stage, raise_exception=raise_exception,
+                                      sdk_fails=sdk_fails):
+                        self._exercise_call_outcome(stage, raise_exception, sdk_fails)
+
+    def test_call_http_counts_and_sdk_failure_preserve_original_outcomes(self):
+        for stage in ('success', 'http_error'):
+            for raise_exception in (False, True):
+                for sdk_fails in (False, True):
+                    with self.subTest(stage=stage, raise_exception=raise_exception,
+                                      sdk_fails=sdk_fails):
+                        self._exercise_call_outcome(stage, raise_exception, sdk_fails)
+
     def test_real_dispatch_send_success_and_failure_reporting_are_best_effort(self):
         path = ROOT / 'amr_service_client/models/service_client.py'
         dispatch_errors = []
