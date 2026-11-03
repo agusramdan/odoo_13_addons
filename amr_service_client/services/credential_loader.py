@@ -96,14 +96,6 @@ class ServiceCredentialLoaderParameterPath(models.AbstractModel):
             return json.load(fp)
 
 
-supported = [
-    "service_account",
-    "client_secret",
-    "api_key",
-    "bearer",
-    "basic",
-]
-
 
 class ServiceCredentialLoader(models.AbstractModel):
     _name = "service.credential.loader"
@@ -142,7 +134,7 @@ class ServiceCredentialLoader(models.AbstractModel):
     def _validate(self, credential, ):
         if "type" not in credential:
             raise ValueError("Missing credential type")
-        if credential["type"] not in supported:
+        if not self.env["service.auth.factory"].is_supported(credential["type"]):
             raise ValueError("Unsupported credential type")
 
     def get_credential_provider(self,credential):
