@@ -38,7 +38,7 @@ Existing canonical and native test commands remain necessary.
 | 05 | real SDK isolation/outside telemetry | NOT RUN |
 | 06 | bootstrap warning, reporter failure diagnostic | 2 |
 | 07 | service-client behavior, N1–N3, L2 and L3 component regressions | 12 |
-| 08 | action exception reporting | 2 |
+| 08 | action exception reporting, A1 next-action component regression | 3 |
 | 09 | bootstrap initialization | 1 |
 | 10 | packaging | 2 |
 | 11 | documentation | 7 |
@@ -56,3 +56,9 @@ failure-hook and error-log calls, exception identity, response availability,
 and fake log arguments. The hook and log sink are fakes: no configured policy,
 SDK capture, persistence, fresh cursor, rollback, or error-log-write failure is
 tested. Full L3 remains an ORM gate; C1 and L5 remain blocked.
+
+The A1 next-action case joins extracted request and action methods with a fake
+HTTP response and reporter, including a failing action-error reporter. It checks
+one request, two ordered hook outcomes, response and exception identities, and
+the error handler. It is not evidence of real SDK delivery, configured policy,
+persisted actions, or ORM behavior; the full A1 persisted-action oracle remains.

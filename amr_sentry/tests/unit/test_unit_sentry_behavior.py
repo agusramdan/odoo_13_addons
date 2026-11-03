@@ -643,6 +643,60 @@ class SentryReporting(unittest.TestCase):
         self.assertEqual(report, ('reported', response, sentinel, 'POST'))
         self.assertEqual(events[-1], ('handled', sentinel))
 
+    def test_run_action_success_then_next_action_failure_are_distinct(self):
+        # Extracted methods and fake request/reporter: not SDK or ORM evidence.
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        for reporter_fails in (False, True):
+            with self.subTest(reporter_fails=reporter_fails):
+                requests_made, outcomes, next_contexts = [], [], []
+                response = types.SimpleNamespace(status_code=200, raise_for_status=lambda: None)
+                error = RuntimeError('next action failure')
+                run, action, records, _, events = self._run_action_service_client_fixture(
+                    lambda client, kwargs: None)
+
+                def request(**kwargs):
+                    requests_made.append(kwargs)
+                    return response
+
+                call = extracted_method(path, 'ServiceClient', 'call', {
+                    'requests': types.SimpleNamespace(request=request)})
+
+                class Client:
+                    def prepare_request_context(self, *args, **kwargs):
+                        return {'method': 'POST'}
+                    def call(self, **kwargs):
+                        return call(self, **kwargs)
+                    def _report_sentry(self, response=None, exception=None, method=None):
+                        outcomes.append((response, exception, method))
+                        if reporter_fails and exception is not None:
+                            raise RuntimeError('reporter failure')
+
+                class NextAction:
+                    def with_context(self, context):
+                        next_contexts.append(dict(context))
+                        return self
+                    def run(self):
+                        raise error
+
+                action.get_service_client = lambda *args, **kwargs: Client()
+                action.action_next_id = NextAction()
+                result = run(action, {'records': records})
+
+                self.assertIsNone(result)
+                self.assertEqual(requests_made, [{'method': 'POST'}])
+                self.assertEqual(len(next_contexts), 1)
+                self.assertIs(next_contexts[0]['response'], response)
+                self.assertEqual(len(outcomes), 2)
+                self.assertIs(outcomes[0][0], response)
+                self.assertIsNone(outcomes[0][1])
+                self.assertEqual(outcomes[0][2], 'POST')
+                self.assertIs(outcomes[1][0], response)
+                self.assertIs(outcomes[1][1], error)
+                self.assertEqual(outcomes[1][2], 'POST')
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0][0], 'handled')
+                self.assertIs(events[0][1], error)
+
     def test_run_action_reporter_failure_logs_only_safe_diagnostics(self):
         response = types.SimpleNamespace(status_code=200)
         business_error = RuntimeError('business failure with private details')
