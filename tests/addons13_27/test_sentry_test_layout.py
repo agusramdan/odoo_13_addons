@@ -77,7 +77,7 @@ class SentryTestLayout(unittest.TestCase):
         # Every addon-owned legacy class must contain its actual test bodies here,
         # not merely import them from an old adapter.
         inventory = {
-            'behavior': {'SentryReporting': 17},
+            'behavior': {'SentryReporting': 18},
             'bootstrap': {'SentryBootstrapContractTest': 3, 'SentryPackagingContractTest': 2},
             'config': {'TestSentryConfig': 4},
             'docs': {'SentryDocs': 6, 'ActivatedOperatorExamples': 1},
