@@ -103,16 +103,7 @@ class GetJWTTokenProvider(AuthenticationProvider):
         return "GetJWT|%s|%s|%s" % (self.credential["username"], audience or "",token_uri)
 
     def _get_token(self, audience=None):
-        cache_key = self._get_cache_key(audience or "", )
-        token = self.env["service.token.cache"].get_cache(cache_key)
-        if token and not self.is_token_expired(token):
-            return token
-
         token_response = self._request_token(audience=audience, )
-
-        self.env["service.token.cache"].set_cache(
-            cache_key, token_response["access_token"], token_response["cache_ttl"],
-        )
         return token_response["access_token"]
 
     def _request_token(self, audience=None):
@@ -120,7 +111,7 @@ class GetJWTTokenProvider(AuthenticationProvider):
         token_uri = self.credential.get("token_uri")
 
         if not token_uri:
-            raise ValueError("token_uri is required")
+            raise ValueError("token_uri is required") from None
 
         payload = {
             "username": self.credential.get("username"),
@@ -140,29 +131,40 @@ class GetJWTTokenProvider(AuthenticationProvider):
                 token_uri, headers=headers, data=json.dumps(payload), timeout=(connect_timeout, read_timeout,),
             )
         except Timeout:
-            raise ValueError("Token endpoint timeout")
+            raise ValueError("Token endpoint timeout") from None
         except ConnectionError:
-            raise ValueError("Token to connect to token endpoint")
+            raise ValueError("Token to connect to token endpoint") from None
 
+        http_error = False
         try:
             response.raise_for_status()
         except HTTPError:
-            try:
-                error_data = response.json()
-            except Exception:
-                error_data = response.text
-            raise ValueError("Token request failed: %s" % error_data)
+            http_error = True
+        if http_error:
+            del response
+            raise ValueError("Token request failed") from None
 
+        invalid_response = False
         try:
             token_response = response.json()
         except Exception:
-            error_data = response.text
-            raise ValueError("Invalid token response: %s" % error_data)
+            invalid_response = True
+        if invalid_response:
+            del response
+            raise ValueError("Invalid token response") from None
 
-        access_token = token_response.get("token") or token_response.get("access_token")
+        invalid_token_response = False
+        try:
+            access_token = token_response.get("token") or token_response.get("access_token")
+        except AttributeError:
+            invalid_token_response = True
+        if invalid_token_response:
+            del response, token_response
+            raise AttributeError("Invalid token response") from None
 
         if not access_token:
-            raise ValueError("access_token not found")
+            del response, token_response, access_token
+            raise ValueError("access_token not found") from None
 
         token_type = token_response.get("token_type", "JWT", )
 
@@ -191,17 +193,7 @@ class ClientSecretProvider(AuthenticationProvider):
         return "ClientSecret|%s|%s|%s" % (self.credential["client_id"], audience or "-", token_uri or "-")
 
     def _get_token(self, audience=None):
-        cache_key = self._get_cache_key(audience or "", )
-        token = self.env["service.token.cache"].get_cache(cache_key)
-        if token:
-            return token
-
         token_response = self._request_token(audience=audience, )
-
-        self.env["service.token.cache"].set_cache(
-            cache_key, token_response["access_token"], token_response["cache_ttl"],
-        )
-
         return token_response["access_token"]
 
     def _request_token(self, audience=None):
@@ -209,7 +201,7 @@ class ClientSecretProvider(AuthenticationProvider):
         token_uri = self.credential.get("token_uri")
 
         if not token_uri:
-            raise ValueError("token_uri is required")
+            raise ValueError("token_uri is required") from None
 
         payload = {
             "grant_type": "client_credentials",
@@ -242,31 +234,50 @@ class ClientSecretProvider(AuthenticationProvider):
             )
 
         except Timeout:
-            raise ValueError("OIDC token endpoint timeout")
+            raise ValueError("OIDC token endpoint timeout") from None
         except ConnectionError:
-            raise ValueError("Unable to connect to token endpoint")
+            raise ValueError("Unable to connect to token endpoint") from None
 
+        http_error = False
         try:
             response.raise_for_status()
         except HTTPError:
-            try:
-                error_data = response.json()
-            except Exception:
-                error_data = response.text
-            raise ValueError("Token request failed: %s" % error_data)
+            http_error = True
+        if http_error:
+            del response
+            raise ValueError("Token request failed") from None
 
+        invalid_response = False
         try:
             token_response = response.json()
         except Exception:
-            raise ValueError("Invalid token response")
+            invalid_response = True
+        if invalid_response:
+            del response
+            raise ValueError("Invalid token response") from None
 
-        access_token = token_response.get("access_token")
+        invalid_token_response = False
+        try:
+            access_token = token_response.get("access_token")
+        except AttributeError:
+            invalid_token_response = True
+        if invalid_token_response:
+            del response, token_response
+            raise AttributeError("Invalid token response") from None
 
         if not access_token:
-            raise ValueError("access_token not found")
+            del response, token_response, access_token
+            raise ValueError("access_token not found") from None
 
         token_type = token_response.get("token_type", "Bearer", )
-        expires_in = int(token_response.get("expires_in", 3600, ))
+        invalid_expiry = None
+        try:
+            expires_in = int(token_response.get("expires_in", 3600, ))
+        except (ValueError, TypeError, OverflowError) as exc:
+            invalid_expiry = type(exc)
+        if invalid_expiry:
+            del response, token_response, access_token, token_type
+            raise invalid_expiry("Invalid token expiry") from None
         cache_ttl = max(expires_in - 60, 60, )
 
         return {
@@ -324,7 +335,7 @@ class ServiceAccountProvider(ClientSecretProvider):
         token_uri = self.credential.get("token_uri")
 
         if not token_uri:
-            raise ValueError("token_uri is required")
+            raise ValueError("token_uri is required") from None
 
         assertion = self._create_jwt_assertion(audience=audience, )
 
@@ -358,31 +369,50 @@ class ServiceAccountProvider(ClientSecretProvider):
             )
 
         except Timeout:
-            raise ValueError("OIDC token endpoint timeout")
+            raise ValueError("OIDC token endpoint timeout") from None
         except ConnectionError:
-            raise ValueError("Unable to connect to token endpoint")
+            raise ValueError("Unable to connect to token endpoint") from None
 
+        http_error = False
         try:
             response.raise_for_status()
         except HTTPError:
-            try:
-                error_data = response.json()
-            except Exception:
-                error_data = response.text
-            raise ValueError("Token request failed: %s" % error_data)
+            http_error = True
+        if http_error:
+            del response
+            raise ValueError("Token request failed") from None
 
+        invalid_response = False
         try:
             token_response = response.json()
         except Exception:
-            raise ValueError("Invalid token response")
+            invalid_response = True
+        if invalid_response:
+            del response
+            raise ValueError("Invalid token response") from None
 
-        access_token = token_response.get("access_token")
+        invalid_token_response = False
+        try:
+            access_token = token_response.get("access_token")
+        except AttributeError:
+            invalid_token_response = True
+        if invalid_token_response:
+            del response, token_response
+            raise AttributeError("Invalid token response") from None
 
         if not access_token:
-            raise ValueError("access_token not found")
+            del response, token_response, access_token
+            raise ValueError("access_token not found") from None
 
         token_type = token_response.get("token_type", "Bearer", )
-        expires_in = int(token_response.get("expires_in", 3600, ))
+        invalid_expiry = None
+        try:
+            expires_in = int(token_response.get("expires_in", 3600, ))
+        except (ValueError, TypeError, OverflowError) as exc:
+            invalid_expiry = type(exc)
+        if invalid_expiry:
+            del response, token_response, access_token, token_type
+            raise invalid_expiry("Invalid token expiry") from None
         cache_ttl = max(expires_in - 60, 60, )
 
         return {

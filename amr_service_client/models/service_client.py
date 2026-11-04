@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 from odoo import api, fields, models, tools
-from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tools import config
 from odoo.fields import Datetime, Date
 from odoo.tools.safe_eval import safe_eval, test_python_expr
@@ -432,6 +432,8 @@ class ServiceClientFactory(models.Model):
 
     def run_action_service_client(self, eval_context=None):
         self.ensure_one()
+        if not self.active:
+            raise UserError("Service client is inactive.")
         action = None
         _logger.debug("run_action_service_client: %s", self)
 
