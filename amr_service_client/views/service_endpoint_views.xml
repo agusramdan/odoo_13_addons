@@ -66,6 +66,7 @@
                                 <field name="base_path" placeholder="/api/v1" />
                                 <field name="audience" placeholder="employee-service" />
                                 <field name="content_type_default" />
+                                <field name="django" />
                             </group>
                         </page>
 

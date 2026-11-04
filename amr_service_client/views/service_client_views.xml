@@ -10,6 +10,25 @@
                         <field name="active" invisible="1" />
                     </header>
                     <sheet>
+                        <div class="oe_button_box" name="button_box">
+<!--                            <field name="ref_ir_act_window" invisible="1"/>-->
+<!--                            <button class="oe_stat_button" groups="base.group_system" name="create_action" type="object" attrs="{'invisible':[('ref_ir_act_window','!=',False)]}" icon="fa-plus" help="Display an option on related documents to open a composition wizard with this template">-->
+<!--                                <div class="o_field_widget o_stat_info">-->
+<!--                                    <span class="o_stat_text">Add</span>-->
+<!--                                    <span class="o_stat_text">Context Action</span>-->
+<!--                                </div>-->
+<!--                            </button>-->
+<!--                            <button name="unlink_action" type="object" groups="base.group_system" class="oe_stat_button" icon="fa-minus" attrs="{'invisible':[('ref_ir_act_window','=',False)]}" help="Remove the contextual action to use this template on related documents" widget="statinfo">-->
+<!--                                <div class="o_field_widget o_stat_info">-->
+<!--                                    <span class="o_stat_text">Remove</span>-->
+<!--                                    <span class="o_stat_text">Context Action</span>-->
+<!--                                </div>-->
+<!--                            </button>-->
+                            <!-- wizard_email_template_preview -->
+                            <button class="oe_stat_button" name="%(wizard_service_client_preview)d" icon="fa-search-plus" string="Preview"
+                                    type="action" target="new"
+                                    context="{'service_client_id':active_id}"/>
+                        </div>
                         <group>
                             <group>
                                 <field name="name" />
