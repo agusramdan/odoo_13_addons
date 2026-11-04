@@ -40,6 +40,7 @@ class ServiceEndpointMixin(models.AbstractModel):
     timeout = fields.Integer(default=30, )
     active = fields.Boolean(default=True, )
     active_log = fields.Boolean()
+    django = fields.Boolean()
 
     def open_config_parameter(self):
         param = self.env['ir.config_parameter'].sudo().search(
@@ -119,11 +120,15 @@ class ServiceEndpointMixin(models.AbstractModel):
             elif not path:
                 path = base_path
 
-        _logger.info("path %s .", path)
         if path.startswith('/'):
-            return f"{base_url}{path}"
+            url = f"{base_url}{path}"
         else:
-            return f"{base_url}/{path}"
+            url = f"{base_url}/{path}"
+
+        if self.django:
+            url = f"{url}/"
+        _logger.info("url %s .", url)
+        return url
 
     def request_headers_default(self, headers=None):
         request_headers = {}

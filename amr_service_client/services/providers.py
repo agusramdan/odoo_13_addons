@@ -103,7 +103,15 @@ class GetJWTTokenProvider(AuthenticationProvider):
         return "GetJWT|%s|%s|%s" % (self.credential["username"], audience or "",token_uri)
 
     def _get_token(self, audience=None):
+        cache_key = self._get_cache_key(audience or "", )
+        token = self.env["service.token.cache"].get_cache(cache_key)
+        if token and not self.is_token_expired(token):
+            return token
+
         token_response = self._request_token(audience=audience, )
+        self.env["service.token.cache"].set_cache(
+            cache_key, token_response["access_token"], token_response["cache_ttl"],
+        )
         return token_response["access_token"]
 
     def _request_token(self, audience=None):
@@ -167,11 +175,13 @@ class GetJWTTokenProvider(AuthenticationProvider):
             raise ValueError("access_token not found") from None
 
         token_type = token_response.get("token_type", "JWT", )
-
+        expires_in = int(token_response.get("expires_in", 3600, ))
+        cache_ttl = max(expires_in - 60, 60)
         return {
             "access_token": access_token,
             "token_type": token_type,
             "raw_response": token_response,
+            "cache_ttl": cache_ttl
         }
 
     def authenticate(self, request_context, audience=None):
@@ -193,7 +203,17 @@ class ClientSecretProvider(AuthenticationProvider):
         return "ClientSecret|%s|%s|%s" % (self.credential["client_id"], audience or "-", token_uri or "-")
 
     def _get_token(self, audience=None):
+        cache_key = self._get_cache_key(audience or "", )
+        token = self.env["service.token.cache"].get_cache(cache_key)
+        if token:
+            return token
+
         token_response = self._request_token(audience=audience, )
+
+        self.env["service.token.cache"].set_cache(
+            cache_key, token_response["access_token"], token_response["cache_ttl"],
+        )
+
         return token_response["access_token"]
 
     def _request_token(self, audience=None):

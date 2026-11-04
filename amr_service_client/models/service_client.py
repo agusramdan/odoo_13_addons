@@ -13,7 +13,7 @@ from ..services.sentry_reporting import report_outcome, report_sentry
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
-from odoo import api, fields, models, tools
+from odoo import _, api, fields, models, tools
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools import config
 from odoo.fields import Datetime, Date
@@ -182,7 +182,7 @@ class ServiceClient:
     def __exit__(self, *args):
         pass
 
-    def prepare_request_context(self, path=None, method=None, params=None, payload=None, headers=None, audience=None):
+    def prepare_request_context(self, path=None, method=None, params=None, payload=None, headers=None, **kw):
         url = self.endpoint.get_url(path or self.path)
         request_context = {
             "url": url,
@@ -190,6 +190,7 @@ class ServiceClient:
             "params": params,
             "timeout": self.endpoint.timeout,
         }
+        audience = kw.get('audience', None) or self.endpoint.audience
         if method:
             request_context['method'] = method
         elif self.method:
@@ -198,18 +199,17 @@ class ServiceClient:
             request_context["json"] = normalize_json(payload)
         else:
             _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
-        request_context = self.provider.authenticate(request_context, audience=audience or self.endpoint.audience)
-        return request_context
+        return self.provider.authenticate(request_context, audience=audience)
 
     def _report_sentry(self, response=None, exception=None, method=None):
         report_outcome(self.env, service_client=self.service_client, response=response, exception=exception,
                        method=method)
 
-    def call(self, method=None, path=None, params=None, payload=None, headers=None, audience=None, active_log=False,
-             raise_exception=True):
+    def call(self, method=None, path=None, params=None, payload=None, headers=None, raise_exception=True, **kw):
         try:
-            request_context = self.prepare_request_context(path, method, params=params, payload=payload,
-                                                           headers=headers)
+            request_context = self.prepare_request_context(
+                path, method, params=params, payload=payload, headers=headers
+            )
             response = requests.request(**request_context)
             response.raise_for_status()
             self._report_sentry(response=response, method=method)
@@ -376,6 +376,45 @@ class ServiceClientFactory(models.Model):
     action_next_id = fields.Many2one('ir.actions.server')
     payload_ids = fields.One2many('service.client.payload', 'service_client_id')
     error_handle_id = fields.Many2one('ir.actions.server')
+    ref_ir_act_window = fields.Many2one('ir.actions.act_window', 'Sidebar action', readonly=True, copy=False,
+                                        help="Sidebar action to make this template available on records "
+                                             "of the related document model")
+    def unlink(self):
+        self.unlink_action_window()
+        return super(ServiceClientFactory, self).unlink()
+
+    @api.returns('self', lambda value: value.id)
+    def copy(self, default=None):
+        default = dict(default or {},
+                       name=_("%s (copy)") % self.name)
+        return super(ServiceClientFactory, self).copy(default=default)
+
+    def unlink_action_window(self):
+        for template in self:
+            if template.ref_ir_act_window:
+                template.ref_ir_act_window.unlink()
+        return True
+
+    def create_action_window(self):
+        ActWindow = self.env['ir.actions.act_window']
+        view = self.env.ref('amr_service_client.compose_request_wizard_form')
+
+        for service_client in self:
+            button_name = _('Send (%s)') % service_client.name
+            action = ActWindow.create({
+                'name': button_name,
+                'type': 'ir.actions.act_window',
+                'res_model': 'service_client.compose.request',
+                'context': "{'default_composition_mode': 'mass_mail', 'default_service_client_id' : %d, 'default_use_service_client': True}" % (service_client.id),
+                'view_mode': 'form,tree',
+                'view_id': view.id,
+                'target': 'new',
+                'binding_model_id': service_client.model_id.id,
+            })
+            service_client.write({'ref_ir_act_window': action.id})
+
+        return True
+
 
     def _report_sentry(self, service_client=None, response=None, exception=None, method=None, **kw):
         """No-op hook overridden by the optional Sentry addon."""
@@ -430,6 +469,18 @@ class ServiceClientFactory(models.Model):
         eval_context['records'] = records
         self.run_action_service_client(eval_context=eval_context)
 
+    def prepare_request(self,records,ctx,eval_context):
+        self.ensure_one()
+        eval_context_local = dict(eval_context or {})
+        eval_context_local['ctx'] = ctx
+        record = eval_context_local.get('record')
+        eval_context_local['records'] = records.with_context(ctx)
+        if record and record != records:
+                eval_context_local['record'] = record.with_context(ctx)
+        eval_context_local['payload'] = self.payload_ids.get_payload(eval_context_local)
+        eval_context_local.update(self._run_action_code(eval_context_local))
+        return eval_context_local
+
     def run_action_service_client(self, eval_context=None):
         self.ensure_one()
         if not self.active:
@@ -446,14 +497,7 @@ class ServiceClientFactory(models.Model):
                 ctx = eval_interation_context.get('ctx', {})
                 int_ctx = int_ctx or {}
                 ctx.update(int_ctx)
-                eval_context_local = dict(eval_context or {})
-                eval_context_local['ctx'] = ctx
-                record = eval_context_local.get('record')
-                if record and record != records:
-                    eval_context_local['record'] = record.with_context(ctx)
-                eval_context_local['records'] = records.with_context(ctx)
-                eval_context_local['payload'] = self.payload_ids.get_payload(eval_context_local)
-                eval_context_local.update(self._run_action_code(eval_context_local))
+                eval_context_local = self.prepare_request(records, ctx, eval_context)
                 path = eval_context_local.get('path') or None
                 method = eval_context_local.get('method') or "POST"
                 params = eval_context_local.get('params') or {}

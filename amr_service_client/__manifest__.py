@@ -12,6 +12,8 @@
     'data': [
         'security/ir.model.access.csv',
 
+        'wizards/service_client_preview_view.xml',
+
         'views/ir_actions_views.xml',
         'views/service_endpoint_views.xml',
         'views/service_credential_views.xml',

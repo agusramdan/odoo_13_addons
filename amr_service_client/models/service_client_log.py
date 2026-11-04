@@ -105,14 +105,19 @@ class ServiceClientLog(models.Model):
 
     def create_log(self, state, client_id=None, endpoint_id=None, credential_id=None, request_context=None, **kwargs):
 
-        # Do not persist replayable request or response data in new log rows.
+        if request_context:
+            if isinstance(credential_id, models.AbstractModel) and credential_id._name == 'service.credential':
+                request_context = credential_id.sanitizer_request_context(request_context)
+            else:
+                request_context.pop('headers', None)
+
         return self.sudo().create({
             'state': state,
             'client_id': client_id.id if client_id else None,
             'endpoint_id': endpoint_id.id if endpoint_id else None,
             'credential_id': credential_id.id if credential_id else None,
-            'request_context': None,
-            'response': None,
+            'request_context': json.dumps(request_context, indent=4) if request_context else None,
+            'response': self.sanitize_sensitive_data(kwargs.get('response_text', None)),
         })
 
     @api.model

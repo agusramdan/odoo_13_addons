@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <!-- Email Template Preview -->
+        <record model="ir.ui.view" id="service_client_preview_form">
+            <field name="name">service_client.preview.form</field>
+            <field name="model">service_client.preview</field>
+            <field name="arch" type="xml">
+                <form string="Service Client Preview">
+                    <field name="model_id" invisible="1"/>
+                    <h3>Preview of <field name="name" readonly="1" nolabel="1" class="oe_inline"/></h3>
+                    Choose an example <field name="model_id" class="oe_inline" readonly="1"/>
+                    record: <field name="res_id" class="oe_inline" style="margin-left: 8px;"/>
+                    <group>
+                        <field name="send_request"/>
+                        <field name="method"/>
+                        <field name="path"/>
+                    </group>
+                    <group string="Params">
+                        <field name="params" widget="text"/>
+                    </group>
+                    <group string="Header">
+                        <field name="headers" widget="text"/>
+                    </group>
+                    <group string="Payload">
+                        <field name="payload" widget="text"/>
+                    </group>
+                    <group string="Response">
+                        <field name="status_code" />
+                        <field name="response_text" widget="text"/>
+                    </group>
+<!--                    <group>-->
+<!--                        <field name="subject" readonly="1"/>-->
+<!--                        <field name="email_from" readonly="1"-->
+<!--                                attrs="{'invisible':[('email_from','=',False)]}"/>-->
+<!--                        <field name="partner_ids" widget="many2many_tags" readonly="1"/>-->
+<!--                        <field name="email_to" readonly="1"-->
+<!--                                attrs="{'invisible':[('email_to','=',False)]}"/>-->
+<!--                        <field name="email_cc" readonly="1"-->
+<!--                                attrs="{'invisible':[('email_cc','=',False)]}"/>-->
+<!--                        <field name="reply_to" readonly="1"-->
+<!--                                attrs="{'invisible':[('reply_to','=',False)]}"/>-->
+<!--                        <field name="scheduled_date" readonly="1"-->
+<!--                                attrs="{'invisible':[('scheduled_date','=',False)]}"/>-->
+<!--                    </group>-->
+<!--                    <field name="body_html" widget="html" readonly="1"-->
+<!--                            nolabel="1" options='{"safe": True}'/>-->
+<!--                    <field name="attachment_ids" widget="many2many_binary" readonly="1"/>-->
+                    <footer>
+                        <button string="Discard" class="btn-secondary" special="cancel"/>
+                    </footer>
+                </form>
+            </field>
+        </record>
+
+        <record id="wizard_service_client_preview" model="ir.actions.act_window">
+            <field name="name">Service Client Preview</field>
+            <field name="res_model">service_client.preview</field>
+            <field name="binding_model_id" eval="False"/>
+            <field name="type">ir.actions.act_window</field>
+            <field name="view_mode">form</field>
+            <field name="view_id" ref="service_client_preview_form"/>
+            <field name="target">new</field>
+            <field name="context">{'service_client_id':active_id}</field>
+        </record>
+
+    </data>
+</odoo>
