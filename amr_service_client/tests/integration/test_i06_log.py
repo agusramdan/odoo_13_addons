@@ -3,7 +3,8 @@ import copy
 import uuid
 from unittest.mock import Mock, patch
 
-from odoo.exceptions import UserError
+from odoo.exceptions import AccessError, UserError
+from odoo.service.model import execute
 from odoo.tests.common import TransactionCase
 
 
@@ -44,10 +45,10 @@ class TestI06Log(TransactionCase):
             'credential_id': self.credential, 'request_context': self.context,
         }
         if error:
-            row = self.logs.create_error(ValueError(self.markers[3]), **kwargs)
+            row = self.logs._create_error(ValueError(self.markers[3]), **kwargs)
             expected_state = 'error'
         else:
-            row = self.logs.create_log('done', response_text=self.markers[3], **kwargs)
+            row = self.logs._create_log('done', response_text=self.markers[3], **kwargs)
             expected_state = 'done'
         self.assertEqual(len(row), 1)
         self.logs.flush()
@@ -118,3 +119,51 @@ class TestI06Log(TransactionCase):
         self.logs.invalidate_cache()
         self.assertEqual(set(self.logs.search([]).ids), before_ids)
         self.assertEqual(row.read(fields), before)
+
+    def test_rpc_cannot_create_or_forge_log_attribution(self):
+        user = self.env.ref('base.user_demo')
+        self.assertTrue(user.has_group('base.group_user'))
+        self.assertFalse(user.has_group('base.group_system'))
+        before = set(self.logs.search([]).ids)
+        for method in ('_create_log', '_create_error'):
+            with self.assertRaises(AccessError):
+                execute(self.env.cr.dbname, user.id, 'service.client.log', method, [],
+                        state='done', client_id=self.client.id,
+                        response_text='FORGED-RPC-LOG')
+        for method in ('create_log', 'create_error'):
+            with self.assertRaises(AttributeError):
+                if method == 'create_log':
+                    execute(self.env.cr.dbname, user.id, 'service.client.log', method,
+                               [], 'done', client_id=self.client.id,
+                               response_text='FORGED-RPC-LOG')
+                else:
+                    execute(self.env.cr.dbname, user.id, 'service.client.log', method,
+                               [], 'forged', client_id=self.client.id)
+        with self.assertRaises(AccessError):
+            execute(self.env.cr.dbname, user.id, 'service.client.log', 'create', [{
+                'state': 'done', 'client_id': self.client.id,
+                'response': 'FORGED-RPC-LOG',
+            }])
+        self.logs.flush()
+        self.assertEqual(set(self.logs.search([]).ids), before)
+
+    def test_internal_dispatch_persists_log_with_integer_client_id(self):
+        self.endpoint.write({'content_type_default': 'application/json'})
+        payload = {'nested': [1]}
+        service = self.client.get_service_client(
+            self.endpoint, path='/sec04-internal', method='POST')
+        self.assertIs(type(service.client_id), int)
+        sender = service.prepare_payload(**payload)
+        # Isolate the log-writer path; endpoint flag propagation is separate scope.
+        sender.active_log = True
+        response = Mock(text='internal success')
+        before = set(self.logs.search([]).ids)
+        with patch('odoo.addons.amr_service_client.models.service_client.requests.request',
+                   return_value=response) as transport, \
+                patch.object(service, '_report_sentry'):
+            sender.dispatch_send()
+        created = self.logs.search([]).filtered(lambda record: record.id not in before)
+        self.assertEqual(transport.call_count, 1)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created.state, 'done')
+        self.assertEqual(created.client_id.id, self.client.id)

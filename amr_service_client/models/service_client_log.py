@@ -99,11 +99,11 @@ class ServiceClientLog(models.Model):
             log_texts.append(f"--- STACK TRACE ---\n{tb_str}")
         return "\n".join(log_texts)
 
-    def create_error(self, e: Exception, **kwargs):
+    def _create_error(self, e: Exception, **kwargs):
         kwargs['response_text'] = self.format_error(e, extra_params=kwargs.get('extra_params', None))
-        return self.sudo().create_log('error', **kwargs)
+        return self.sudo()._create_log('error', **kwargs)
 
-    def create_log(self, state, client_id=None, endpoint_id=None, credential_id=None, request_context=None, **kwargs):
+    def _create_log(self, state, client_id=None, endpoint_id=None, credential_id=None, request_context=None, **kwargs):
 
         if request_context:
             if isinstance(credential_id, models.AbstractModel) and credential_id._name == 'service.credential':
@@ -111,9 +111,10 @@ class ServiceClientLog(models.Model):
             else:
                 request_context.pop('headers', None)
 
+        # sudo: internal ServiceClient dispatch uses this private writer; RPC cannot invoke it.
         return self.sudo().create({
             'state': state,
-            'client_id': client_id.id if client_id else None,
+            'client_id': (client_id if isinstance(client_id, int) else client_id.id) if client_id else None,
             'endpoint_id': endpoint_id.id if endpoint_id else None,
             'credential_id': credential_id.id if credential_id else None,
             'request_context': json.dumps(request_context, indent=4) if request_context else None,

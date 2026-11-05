@@ -21,7 +21,8 @@ def load_sources():
     odoo = types.ModuleType('odoo')
     odoo.fields = fields
     odoo.models = types.SimpleNamespace(Model=type('Model', (), {}), AbstractModel=type('AbstractModel', (), {}))
-    odoo.api = types.SimpleNamespace(model=lambda f: f, constrains=lambda *a: lambda f: f)
+    odoo.api = types.SimpleNamespace(model=lambda f: f, returns=lambda *a, **k: lambda f: f,
+                                     constrains=lambda *a: lambda f: f)
     odoo._ = lambda s: s
     tools = types.ModuleType('odoo.tools')
     tools.config = {}
@@ -263,13 +264,19 @@ class U07(unittest.TestCase):
         self.assertIs(server.run_action_service_client_multi(action, ctx), False)
         self.assertEqual(target.run_action_service_client.call_count, 1)
 
+    def test_log_creation_helpers_are_private(self):
+        self.assertFalse(hasattr(log_mod.ServiceClientLog, 'create_log'))
+        self.assertFalse(hasattr(log_mod.ServiceClientLog, 'create_error'))
+        self.assertTrue(callable(getattr(log_mod.ServiceClientLog, '_create_log', None)))
+        self.assertTrue(callable(getattr(log_mod.ServiceClientLog, '_create_error', None)))
+
     def test_log_minimizes_data_preserves_input_and_relations(self):
         import copy
         log = Log()
         context = {'url': 'https://example.invalid/x', 'headers': {'X': 'synthetic'}, 'params': {'a': 1}, 'json': {'b': 2}}
         original = copy.deepcopy(context)
         client, endpoint, credential = (types.SimpleNamespace(id=i) for i in (11, 12, 13))
-        log.create_log('done', client_id=client, endpoint_id=endpoint, credential_id=credential,
+        log._create_log('done', client_id=client, endpoint_id=endpoint, credential_id=credential,
                        request_context=context, response_text='ok')
         row = log.rows[0]
         self.assertEqual((row['state'], row['client_id'], row['endpoint_id'], row['credential_id']), ('done', 11, 12, 13))
@@ -287,7 +294,7 @@ class U07(unittest.TestCase):
                    'json': {'nested': [markers[4]]}, 'headers': {'X': markers[5]}}
         original = copy.deepcopy(context)
         log = Log()
-        log.create_log('error', request_context=context, response_text=markers[6])
+        log._create_log('error', request_context=context, response_text=markers[6])
         row = log.rows[0]
         sensor = lambda value: any(marker in str(value) for marker in markers)
         self.assertTrue(sensor(markers))  # positive control
@@ -298,13 +305,13 @@ class U07(unittest.TestCase):
         self.assertTrue(row['request_context'] is None)
         self.assertTrue(row['response'] is None)
         for request, response in ((None, None), ({}, b'\xff'), (['malformed'], {'nested': markers[6]})):
-            log.create_log('outgoing', request_context=request, response_text=response)
+            log._create_log('outgoing', request_context=request, response_text=response)
             self.assertTrue(log.rows[-1]['request_context'] is None)
             self.assertTrue(log.rows[-1]['response'] is None)
 
     def leak_observation(self, marker):
         log = Log()
-        log.create_log('error', request_context={'url': 'https://example.invalid/' + marker}, response_text=marker)
+        log._create_log('error', request_context={'url': 'https://example.invalid/' + marker}, response_text=marker)
         return tuple(marker in str(log.rows[0].get(key)) for key in ('request_context', 'response'))
 
     def test_synthetic_marker_sensor_and_minimized_log(self):
@@ -321,7 +328,7 @@ class U07(unittest.TestCase):
     def test_minimized_new_log_replay_is_rejected_without_side_effects(self):
         log = Log()
         marker = 'SYNTHETIC_SECRET_REPLAY_987'
-        row = log.create_log('outgoing', request_context={'headers': {'Authorization': marker}}, response_text=marker)
+        row = log._create_log('outgoing', request_context={'headers': {'Authorization': marker}}, response_text=marker)
         log.request_context = row['request_context']
         client = types.SimpleNamespace(provider=types.SimpleNamespace(authenticate=mock.Mock()), _report_sentry=mock.Mock())
         log.client_id = types.SimpleNamespace(get_service_client=mock.Mock(return_value=client))
@@ -373,12 +380,14 @@ class U07(unittest.TestCase):
         self.assertEqual([row['state'] for row in log.rows], ['error'])
         service.prepare_request_context.side_effect = None
         service.prepare_request_context.return_value = {'method': 'POST', 'url': 'https://example.invalid/'}
-        service.env['service.client.log'] = types.SimpleNamespace(create_error=mock.Mock(side_effect=RuntimeError('log failed')))
+        service.env['service.client.log'] = types.SimpleNamespace(
+            _create_log=mock.Mock(side_effect=RuntimeError('log failed')),
+            _create_error=mock.Mock(side_effect=RuntimeError('log failed')))
         response = types.SimpleNamespace(text='ok', raise_for_status=lambda: None)
         with mock.patch.object(client_mod.requests, 'request', return_value=response), mock.patch.object(client_mod._logger, 'exception'):
             with self.assertRaisesRegex(RuntimeError, 'log failed'):
                 client_mod.ServiceClientSend(service, {}, active_log=True).dispatch_send()
-        self.assertEqual(service.env['service.client.log'].create_error.call_count, 2)
+        self.assertEqual(service.env['service.client.log']._create_error.call_count, 1)
 
     def test_dispatch_success_and_http_failure_rows(self):
         for active, failing, expected in ((False, False, 0), (True, False, 1), (False, True, 1)):
@@ -396,8 +405,7 @@ class U07(unittest.TestCase):
                                               headers={'X-Test': 'synthetic'}, json={'value': 3})
             self.assertEqual(len(log.rows), expected)
             if expected:
-                # Baseline calls create_error even on success.
-                self.assertEqual(log.rows[0]['state'], 'error')
+                self.assertEqual(log.rows[0]['state'], 'error' if failing else 'done')
 
 
 if __name__ == '__main__':

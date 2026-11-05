@@ -6,7 +6,13 @@ import types
 import unittest
 from unittest import mock
 
-from test_U11_sentry_behavior import ROOT, extracted_method, policy
+from support import ROOT
+
+_spec = importlib.util.spec_from_file_location(
+    'sentry_behavior_cases', ROOT / 'amr_sentry/tests/unit/test_unit_sentry_behavior.py')
+_cases = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cases)
+extracted_method, policy = _cases.extracted_method, _cases.policy
 
 
 class _Recordset(object):
@@ -21,7 +27,7 @@ class _Recordset(object):
 
 
 _MODEL_PATH = os.path.join(
-    os.path.dirname(__file__), "../../amr_sentry/models/service_client.py"
+    str(ROOT), "amr_sentry/models/service_client.py"
 )
 
 
@@ -116,7 +122,7 @@ class TestOptionalSentryModelHook(unittest.TestCase):
             active_log=False, payload={}, service_client=client,
             client_id=None, endpoint_id=None, credential_id=None,
             env={'service.client.log': types.SimpleNamespace(
-                create_error=lambda *a, **kw: logs.append((a, kw)))},
+                _create_error=lambda *a, **kw: logs.append((a, kw)))},
         )
         dispatch = extracted_method(
             ROOT / 'amr_service_client/models/service_client.py',

@@ -22,10 +22,12 @@ def load_proxy():
         setattr(fields, name, field)
     fields.Date = fields.Datetime = types.SimpleNamespace(to_string=str)
     odoo = types.ModuleType('odoo')
+    setattr(odoo, '_', lambda value: value)
     odoo.fields = fields
     odoo.models = types.SimpleNamespace(Model=type('Model', (), {}))
-    odoo.api = types.SimpleNamespace(model=lambda fn: fn,
-                                     constrains=lambda *args: lambda fn: fn)
+    setattr(odoo, 'api', types.SimpleNamespace(model=lambda fn: fn,
+                                               returns=lambda *args, **kwargs: lambda fn: fn,
+                                               constrains=lambda *args: lambda fn: fn))
     tools = types.ModuleType('odoo.tools')
     tools.config = {}
     odoo.tools = tools

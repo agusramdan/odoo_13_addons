@@ -62,7 +62,7 @@ class WorkflowGate(OfflineCase):
         self.assertIn('NOT RUN/BLOCKED', uat)
 
     def test_tests_do_not_call_plane_or_remote_git_apis(self):
-        tests = '\n'.join(p.read_text() for p in (ROOT / 'tests/addons13_27').glob('test_U*.py'))
+        tests = '\n'.join(p.read_text() for directory in (ROOT / 'tests/addons13_27', ROOT / 'amr_sentry/tests', ROOT / 'amr_service_client/tests') for p in directory.glob('test_U*.py'))
         plane_host = 'plane' + '.agusramdan.web.id'
         remote_command = 'git ' + 'ls-remote'
         self.assertNotIn(plane_host, tests)
