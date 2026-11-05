@@ -117,8 +117,8 @@ class ServiceClientLog(models.Model):
             'client_id': (client_id if isinstance(client_id, int) else client_id.id) if client_id else None,
             'endpoint_id': endpoint_id.id if endpoint_id else None,
             'credential_id': credential_id.id if credential_id else None,
-            'request_context': json.dumps(request_context, indent=4) if request_context else None,
-            'response': self.sanitize_sensitive_data(kwargs.get('response_text', None)),
+            'request_context': None,
+            'response': None,
         })
 
     @api.model
