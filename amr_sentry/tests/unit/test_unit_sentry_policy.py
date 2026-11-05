@@ -1,7 +1,27 @@
+"""Collect policy cases without importing the Odoo-dependent addon initializer."""
+import importlib.util
+import pathlib
+import sys
+import types
+from unittest.mock import patch
+
+_here = pathlib.Path(__file__).resolve()
+_addon = _here.parents[2] if _here.parent.name == 'unit' else _here.parents[1]
+_package = types.ModuleType('amr_sentry')
+_package.__path__ = [str(_addon)]
+_services = types.ModuleType('amr_sentry.services')
+_services.__path__ = [str(_addon / 'services')]
+_name = 'amr_sentry.services.sentry_reporting'
+_spec = importlib.util.spec_from_file_location(_name, _addon / 'services' / 'sentry_reporting.py')
+_reporting = importlib.util.module_from_spec(_spec)
+with patch.dict(sys.modules, {'amr_sentry': _package, 'amr_sentry.services': _services, _name: _reporting}):
+    _spec.loader.exec_module(_reporting)
+reporting = _reporting
+
+
 """Offline behavior tests for optional Sentry reporting policy."""
 import unittest
 
-import amr_sentry.services.sentry_reporting as reporting
 
 
 class FakeSDK(object):

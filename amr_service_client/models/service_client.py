@@ -127,6 +127,7 @@ class ServiceClientSend:
         response = None
         active_log = self.active_log
         request_context = {'payload': self.payload}
+        request_reported = False
 
         try:
             request_context = self.service_client.prepare_request_context(**request_context)
@@ -139,19 +140,21 @@ class ServiceClientSend:
                 debug = getattr(_logger, "debug", None)
                 if debug:
                     debug("Unable to report service request success", exc_info=False)
+            request_reported = True
             if active_log:
-                self.env["service.client.log"].create_error(
+                self.env["service.client.log"].create_log(
                     'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                     request_context=request_context, response_text=response.text
                 )
         except Exception as e:
             method = request_context.get('method') if isinstance(request_context, dict) else None
-            try:
-                self.service_client._report_sentry(response=response, exception=e, method=method)
-            except Exception:
-                debug = getattr(_logger, "debug", None)
-                if debug:
-                    debug("Unable to report service request failure", exc_info=False)
+            if not request_reported:
+                try:
+                    self.service_client._report_sentry(response=response, exception=e, method=method)
+                except Exception:
+                    debug = getattr(_logger, "debug", None)
+                    if debug:
+                        debug("Unable to report service request failure", exc_info=False)
             _logger.exception("error dispatch_send")
             self.env["service.client.log"].create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
@@ -206,6 +209,7 @@ class ServiceClient:
                        method=method)
 
     def call(self, method=None, path=None, params=None, payload=None, headers=None, raise_exception=True, **kw):
+        response = None
         try:
             request_context = self.prepare_request_context(
                 path, method, params=params, payload=payload, headers=headers

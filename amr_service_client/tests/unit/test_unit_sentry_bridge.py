@@ -1,8 +1,11 @@
 import builtins
 import importlib.util
-import os
 import unittest
+from pathlib import Path
 from unittest import mock
+
+
+TEST_PATH = Path(__file__).resolve()
 
 
 class _ConfigParameters(object):
@@ -39,7 +42,7 @@ class _Environment(object):
 class TestSentryBridge(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = os.path.join(os.path.dirname(__file__), "../../amr_service_client/services/sentry_reporting.py")
+        path = str(TEST_PATH.parents[2] / "services" / "sentry_reporting.py")
         spec = importlib.util.spec_from_file_location("sentry_reporting_under_test", path)
         cls.reporting = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.reporting)

@@ -6,7 +6,13 @@ import types
 import unittest
 from unittest import mock
 
-from test_U11_sentry_behavior import ROOT, extracted_method, policy
+from support import ROOT
+
+_spec = importlib.util.spec_from_file_location(
+    'sentry_behavior_cases', ROOT / 'amr_sentry/tests/unit/test_unit_sentry_behavior.py')
+_cases = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cases)
+extracted_method, policy = _cases.extracted_method, _cases.policy
 
 
 class _Recordset(object):
@@ -21,7 +27,7 @@ class _Recordset(object):
 
 
 _MODEL_PATH = os.path.join(
-    os.path.dirname(__file__), "../../amr_sentry/models/service_client.py"
+    str(ROOT), "amr_sentry/models/service_client.py"
 )
 
 

@@ -7,7 +7,8 @@ import unittest
 import xml.etree.ElementTree as ET
 
 
-ADDON_ROOT = Path(__file__).resolve().parents[2] / 'amr_service_client'
+TEST_PATH = Path(__file__).resolve()
+ADDON_ROOT = TEST_PATH.parents[2]
 
 
 class TestSentrySettingsRemoval(unittest.TestCase):

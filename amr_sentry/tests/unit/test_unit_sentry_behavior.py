@@ -133,6 +133,127 @@ class SentryReporting(unittest.TestCase):
         self.assertNotIn('private response body', repr(calls))
         self.assertNotIn('Authorization', repr(calls))
 
+    def test_call_pre_response_failure_returns_none_without_masking(self):
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        for stage in ('preparation', 'transport'):
+            error = RuntimeError(stage)
+            reports, requests_made = [], []
+            def request(**kwargs):
+                requests_made.append(kwargs)
+                raise error
+            class Client:
+                def prepare_request_context(self, *args, **kwargs):
+                    if stage == 'preparation':
+                        raise error
+                    return {'method': 'POST'}
+                def _report_sentry(self, **kwargs): reports.append(kwargs)
+            call = extracted_method(path, 'ServiceClient', 'call', {
+                'requests': types.SimpleNamespace(request=request)})
+            try:
+                result = call(Client(), method='POST', raise_exception=False)
+            except Exception as caught:
+                self.fail('expected None for %s, got %r' % (stage, caught))
+            self.assertIsNone(result)
+            self.assertEqual(len(requests_made), int(stage == 'transport'))
+            self.assertEqual(len(reports), 1)
+            self.assertIs(reports[0]['exception'], error)
+            with self.assertRaises(RuntimeError) as caught:
+                call(Client(), method='POST', raise_exception=True)
+            self.assertIs(caught.exception, error)
+
+    def _exercise_call_outcome(self, stage, raise_exception, sdk_fails):
+        # Source-extracted call plus the real bridge and policy; not ORM execution.
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        original = RuntimeError('synthetic ' + stage)
+        requests_made, hooks, delegated, captures = [], [], [], []
+
+        class SDK:
+            def init(self, **kwargs):
+                pass
+            def capture_message(self, *args, **kwargs):
+                captures.append(('success', args, kwargs))
+                if sdk_fails:
+                    raise RuntimeError('SDK offline')
+            def capture_exception(self, error):
+                captures.append(('failure', error))
+                if sdk_fails:
+                    raise RuntimeError('SDK offline')
+
+        sdk_reporter = policy.build_reporter(
+            {'dsn': 'https://example.invalid/1'},
+            {'enabled': True, 'mode': 'all'}, SDK())
+
+        def report(**kwargs):
+            delegated.append(kwargs)
+            sdk_reporter.report(success=kwargs['exception'] is None,
+                                exception=kwargs['exception'])
+
+        class Client:
+            def prepare_request_context(self, *args, **kwargs):
+                if stage == 'preparation':
+                    raise original
+                return {'method': 'POST'}
+            def _report_sentry(self, response=None, exception=None, method=None):
+                kwargs = {'response': response, 'exception': exception, 'method': method}
+                hooks.append(kwargs)
+                reporter.report_outcome({'service.client': types.SimpleNamespace(
+                    _report_sentry=report)}, **kwargs)
+
+        class Response:
+            def raise_for_status(self):
+                if stage == 'http_error':
+                    raise original
+
+        response = Response()
+        def request(**kwargs):
+            requests_made.append(kwargs)
+            if stage == 'transport':
+                raise original
+            return response
+
+        call = extracted_method(path, 'ServiceClient', 'call', {
+            'requests': types.SimpleNamespace(request=request)})
+        if stage != 'success' and raise_exception:
+            with self.assertRaises(RuntimeError) as caught:
+                call(Client(), method='POST', raise_exception=True)
+            self.assertIs(caught.exception, original)
+        else:
+            result = call(Client(), method='POST', raise_exception=raise_exception)
+            if stage in ('preparation', 'transport'):
+                self.assertIsNone(result)
+            else:
+                self.assertIs(result, response)
+
+        self.assertEqual(len(requests_made), int(stage != 'preparation'))
+        self.assertEqual(len(hooks), 1, 'call boundary hook count')
+        self.assertEqual(len(delegated), 1, 'bridge delegation count')
+        for event in (hooks[0], delegated[0]):
+            self.assertIs(event['exception'], None if stage == 'success' else original)
+            self.assertIs(event['response'], response if stage == 'success' else None)
+            self.assertEqual(event['method'], 'POST')
+        self.assertEqual(len(captures), 1, 'total success and failure captures')
+        if stage == 'success':
+            self.assertEqual(captures[0][0], 'success')
+        else:
+            self.assertEqual(captures[0][0], 'failure')
+            self.assertIs(captures[0][1], original)
+
+    def test_call_failure_counts_and_sdk_failure_preserve_original_outcomes(self):
+        for stage in ('preparation', 'transport'):
+            for raise_exception in (False, True):
+                for sdk_fails in (False, True):
+                    with self.subTest(stage=stage, raise_exception=raise_exception,
+                                      sdk_fails=sdk_fails):
+                        self._exercise_call_outcome(stage, raise_exception, sdk_fails)
+
+    def test_call_http_counts_and_sdk_failure_preserve_original_outcomes(self):
+        for stage in ('success', 'http_error'):
+            for raise_exception in (False, True):
+                for sdk_fails in (False, True):
+                    with self.subTest(stage=stage, raise_exception=raise_exception,
+                                      sdk_fails=sdk_fails):
+                        self._exercise_call_outcome(stage, raise_exception, sdk_fails)
+
     def test_real_dispatch_send_success_and_failure_reporting_are_best_effort(self):
         path = ROOT / 'amr_service_client/models/service_client.py'
         dispatch_errors = []
@@ -160,6 +281,7 @@ class SentryReporting(unittest.TestCase):
             sender = types.SimpleNamespace(active_log=True, payload={'token': 'TOKEN_MARKER'}, service_client=Client(),
                 client_id=None, endpoint_id=None, credential_id=None,
                 env={'service.client.log': types.SimpleNamespace(
+                    create_log=lambda *a, **kw: log_calls.append((a, kw)),
                     create_error=lambda *a, **kw: log_calls.append((a, kw)))})
             try:
                 method(sender)
@@ -191,6 +313,100 @@ class SentryReporting(unittest.TestCase):
             status, error = dispatch_errors[0]
             self.fail('dispatch_send failed to preserve outcome after reporter failure (HTTP %s): %r' % (status, error))
 
+    def test_dispatch_error_logging_matrix_component(self):
+        # L3 component only: fake log sink, no ORM or transaction assertions.
+        for stage in ('preparation', 'transport', 'http'):
+            for active_log in (True, False):
+                with self.subTest(stage=stage, active_log=active_log):
+                    error = RuntimeError('synthetic ' + stage)
+                    requests_seen, reports, errors, successes = [], [], [], []
+                    payload = {'sample': 'value'}
+                    context = {'method': 'POST', 'url': 'https://example.invalid'}
+                    client_id, endpoint_id, credential_id = object(), object(), object()
+
+                    class Response:
+                        def raise_for_status(self):
+                            raise error
+                    response = Response()
+
+                    class Client:
+                        def prepare_request_context(self, **kwargs):
+                            if stage == 'preparation':
+                                raise error
+                            return context
+                        def _report_sentry(self, response=None, exception=None, method=None):
+                            reports.append((response, exception, method))
+
+                    def request(**kwargs):
+                        requests_seen.append(kwargs)
+                        if stage == 'transport':
+                            raise error
+                        return response
+
+                    def create_error(*args, **kwargs):
+                        errors.append((args, kwargs))
+
+                    sender = types.SimpleNamespace(
+                        active_log=active_log, payload=payload, service_client=Client(),
+                        client_id=client_id, endpoint_id=endpoint_id, credential_id=credential_id,
+                        env={'service.client.log': types.SimpleNamespace(
+                            create_log=lambda *a, **kw: successes.append((a, kw)),
+                            create_error=create_error)})
+                    dispatch = extracted_method(
+                        ROOT / 'amr_service_client/models/service_client.py',
+                        'ServiceClientSend', 'dispatch_send', {
+                            'requests': types.SimpleNamespace(request=request),
+                            '_logger': types.SimpleNamespace(exception=lambda *a: None)})
+
+                    self.assertIsNone(dispatch(sender))
+                    self.assertEqual(requests_seen, [] if stage == 'preparation' else [context])
+                    self.assertEqual(len(reports), 1)
+                    self.assertIs(reports[0][0], response if stage == 'http' else None)
+                    self.assertIs(reports[0][1], error)
+                    self.assertEqual(reports[0][2], None if stage == 'preparation' else 'POST')
+                    self.assertEqual(len(successes), 0)
+                    self.assertEqual(len(errors), 1)
+                    args, kwargs = errors[0]
+                    self.assertEqual(len(args), 1)
+                    self.assertIs(args[0], error)
+                    self.assertEqual(set(kwargs), {'client_id', 'endpoint_id', 'credential_id', 'request_context'})
+                    self.assertIs(kwargs['client_id'], client_id)
+                    self.assertIs(kwargs['endpoint_id'], endpoint_id)
+                    self.assertIs(kwargs['credential_id'], credential_id)
+                    if stage == 'preparation':
+                        self.assertEqual(kwargs['request_context'], {'payload': payload})
+                    else:
+                        self.assertIs(kwargs['request_context'], context)
+
+    def test_dispatch_success_without_active_log_reports_one_outcome(self):
+        # ADDONS13-68 addendum L2: one successful request and eligible success
+        # hook, with no success log when active_log is False. Component only.
+        response = types.SimpleNamespace(text='ok', raise_for_status=lambda: None)
+        requests_seen, reports, logs = [], [], []
+        class Client:
+            def prepare_request_context(self, **kwargs):
+                return {'method': 'POST'}
+            def _report_sentry(self, response=None, exception=None, method=None):
+                reports.append((response, exception, method))
+        def request(**kwargs):
+            requests_seen.append(kwargs)
+            return response
+        sender = types.SimpleNamespace(active_log=False, payload={}, service_client=Client(),
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': types.SimpleNamespace(
+                create_log=lambda *a, **kw: logs.append(('success', a, kw)),
+                create_error=lambda *a, **kw: logs.append(('error', a, kw)))})
+        dispatch = extracted_method(ROOT / 'amr_service_client/models/service_client.py',
+            'ServiceClientSend', 'dispatch_send', {
+                'requests': types.SimpleNamespace(request=request),
+                '_logger': types.SimpleNamespace(exception=lambda *a: None),
+            })
+        before = len(logs)
+        self.assertIsNone(dispatch(sender))
+        self.assertEqual(requests_seen, [{'method': 'POST'}])
+        self.assertEqual(reports, [(response, None, 'POST')])
+        self.assertEqual(len(logs), before)
+
     def test_dispatch_success_log_failure_uses_baseline_error_log_path(self):
         path = ROOT / 'amr_service_client/models/service_client.py'
         business_error = RuntimeError('done log failed')
@@ -201,13 +417,14 @@ class SentryReporting(unittest.TestCase):
                 return {'method': 'POST'}
             def _report_sentry(self, response=None, exception=None, method=None):
                 reports.append((response, exception, method))
+        def create_log(*args, **kwargs):
+            logs.append((args, kwargs))
+            raise business_error
         def create_error(*args, **kwargs):
             logs.append((args, kwargs))
-            if args[0] == 'done':
-                raise business_error
         sender = types.SimpleNamespace(active_log=True, payload={}, service_client=Client(),
             client_id=None, endpoint_id=None, credential_id=None,
-            env={'service.client.log': types.SimpleNamespace(create_error=create_error)})
+            env={'service.client.log': types.SimpleNamespace(create_log=create_log, create_error=create_error)})
         dispatch = extracted_method(path, 'ServiceClientSend', 'dispatch_send', {
             'requests': types.SimpleNamespace(request=lambda **kw: response),
             '_logger': types.SimpleNamespace(exception=lambda *a: None, debug=lambda *a, **kw: None),
@@ -221,7 +438,26 @@ class SentryReporting(unittest.TestCase):
         self.assertEqual(logs[0][0][0], 'done')
         self.assertIs(logs[1][0][0], business_error)
         self.assertNotIn('response_text', logs[1][1])
-        self.assertEqual(reports, [(response, None, 'POST'), (response, business_error, 'POST')])
+        self.assertEqual(reports, [(response, None, 'POST')])
+
+    def test_create_log_accepts_service_client_integer_id(self):
+        path = ROOT / 'amr_service_client/models/service_client_log.py'
+        class AbstractModel: pass
+        class Log:
+            def sudo(self): return self
+            def create(self, values): return values
+            def sanitize_sensitive_data(self, value): return value
+        create = extracted_method(path, 'ServiceClientLog', 'create_log', {
+            'json': json, 'models': types.SimpleNamespace(AbstractModel=AbstractModel)})
+        try:
+            row = create(Log(), 'done', client_id=42,
+                         endpoint_id=types.SimpleNamespace(id=7), response_text='ok')
+        except Exception as error:
+            self.fail('integer client_id from ServiceClient must persist: %r' % error)
+        self.assertEqual(row['client_id'], 42)
+        self.assertEqual(row['endpoint_id'], 7)
+        self.assertEqual(row['state'], 'done')
+        self.assertEqual(row['response'], 'ok')
 
     def test_real_log_send_reports_success(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
@@ -346,6 +582,7 @@ class SentryReporting(unittest.TestCase):
                     raise self.reporter_exception
         client = Client()
         class Action:
+            active = True
             each_record = False
             payload_ids = Payloads()
             endpoint_id = credential_id = None
@@ -356,6 +593,12 @@ class SentryReporting(unittest.TestCase):
             def _run_action_iteration(self, context): return context
             def _run_action_code(self, context):
                 context.update({'method': 'POST', 'raise_exception': True})
+                return context
+            def prepare_request(self, records, ctx, eval_context):
+                context = dict(eval_context or {})
+                context.update({'ctx': ctx, 'records': records.with_context(ctx),
+                                'payload': self.payload_ids.get_payload(context)})
+                context.update(self._run_action_code(context))
                 return context
             def get_service_client(self, *args, **kwargs): return client
             def _run_action_handle(self, context):
@@ -406,6 +649,60 @@ class SentryReporting(unittest.TestCase):
         report = [event for event in events if event[0] == 'reported'][0]
         self.assertEqual(report, ('reported', response, sentinel, 'POST'))
         self.assertEqual(events[-1], ('handled', sentinel))
+
+    def test_run_action_success_then_next_action_failure_are_distinct(self):
+        # Extracted methods and fake request/reporter: not SDK or ORM evidence.
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        for reporter_fails in (False, True):
+            with self.subTest(reporter_fails=reporter_fails):
+                requests_made, outcomes, next_contexts = [], [], []
+                response = types.SimpleNamespace(status_code=200, raise_for_status=lambda: None)
+                error = RuntimeError('next action failure')
+                run, action, records, _, events = self._run_action_service_client_fixture(
+                    lambda client, kwargs: None)
+
+                def request(**kwargs):
+                    requests_made.append(kwargs)
+                    return response
+
+                call = extracted_method(path, 'ServiceClient', 'call', {
+                    'requests': types.SimpleNamespace(request=request)})
+
+                class Client:
+                    def prepare_request_context(self, *args, **kwargs):
+                        return {'method': 'POST'}
+                    def call(self, **kwargs):
+                        return call(self, **kwargs)
+                    def _report_sentry(self, response=None, exception=None, method=None):
+                        outcomes.append((response, exception, method))
+                        if reporter_fails and exception is not None:
+                            raise RuntimeError('reporter failure')
+
+                class NextAction:
+                    def with_context(self, context):
+                        next_contexts.append(dict(context))
+                        return self
+                    def run(self):
+                        raise error
+
+                action.get_service_client = lambda *args, **kwargs: Client()
+                action.action_next_id = NextAction()
+                result = run(action, {'records': records})
+
+                self.assertIsNone(result)
+                self.assertEqual(requests_made, [{'method': 'POST'}])
+                self.assertEqual(len(next_contexts), 1)
+                self.assertIs(next_contexts[0]['response'], response)
+                self.assertEqual(len(outcomes), 2)
+                self.assertIs(outcomes[0][0], response)
+                self.assertIsNone(outcomes[0][1])
+                self.assertEqual(outcomes[0][2], 'POST')
+                self.assertIs(outcomes[1][0], response)
+                self.assertIs(outcomes[1][1], error)
+                self.assertEqual(outcomes[1][2], 'POST')
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0][0], 'handled')
+                self.assertIs(events[0][1], error)
 
     def test_run_action_reporter_failure_logs_only_safe_diagnostics(self):
         response = types.SimpleNamespace(status_code=200)

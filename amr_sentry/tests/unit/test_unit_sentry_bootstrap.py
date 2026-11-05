@@ -1,5 +1,6 @@
 """Contracts for the optional Sentry addon's bootstrap and packaging."""
 import importlib
+import importlib.util
 import ast
 import json
 import logging
@@ -9,7 +10,13 @@ import tempfile
 import unittest
 from unittest import mock
 
-from test_U11_sentry_safe_file import PROFILE
+from support import ROOT as REPOSITORY_ROOT
+
+_spec = importlib.util.spec_from_file_location(
+    'sentry_safe_file_cases', REPOSITORY_ROOT / 'amr_sentry/tests/unit/test_unit_sentry_safe_file.py')
+_cases = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cases)
+PROFILE = _cases.PROFILE
 
 
 class SentryBootstrapContractTest(unittest.TestCase):
@@ -113,7 +120,7 @@ class SentryBootstrapContractTest(unittest.TestCase):
 
 
 class SentryPackagingContractTest(unittest.TestCase):
-    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    ROOT = str(REPOSITORY_ROOT)
 
     def _read_contract_file(self, relative_path):
         path = os.path.join(self.ROOT, relative_path)
