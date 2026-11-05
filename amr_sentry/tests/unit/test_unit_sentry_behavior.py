@@ -582,6 +582,7 @@ class SentryReporting(unittest.TestCase):
                     raise self.reporter_exception
         client = Client()
         class Action:
+            active = True
             each_record = False
             payload_ids = Payloads()
             endpoint_id = credential_id = None
@@ -592,6 +593,12 @@ class SentryReporting(unittest.TestCase):
             def _run_action_iteration(self, context): return context
             def _run_action_code(self, context):
                 context.update({'method': 'POST', 'raise_exception': True})
+                return context
+            def prepare_request(self, records, ctx, eval_context):
+                context = dict(eval_context or {})
+                context.update({'ctx': ctx, 'records': records.with_context(ctx),
+                                'payload': self.payload_ids.get_payload(context)})
+                context.update(self._run_action_code(context))
                 return context
             def get_service_client(self, *args, **kwargs): return client
             def _run_action_handle(self, context):
