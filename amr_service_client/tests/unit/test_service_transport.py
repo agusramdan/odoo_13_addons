@@ -21,9 +21,12 @@ def load_client():
         setattr(fields, name, lambda *args, **kwargs: None)
     fields.Date = fields.Datetime = types.SimpleNamespace(to_string=lambda value: value.isoformat(sep=' ') if isinstance(value, datetime) else value.isoformat())
     odoo = types.ModuleType('odoo')
+    setattr(odoo, '_', lambda value: value)
     odoo.fields = fields
     odoo.models = types.SimpleNamespace(Model=type('Model', (), {}))
-    odoo.api = types.SimpleNamespace(model=lambda fn: fn, constrains=lambda *a: lambda fn: fn)
+    setattr(odoo, 'api', types.SimpleNamespace(model=lambda fn: fn,
+                                               returns=lambda *a, **kw: lambda fn: fn,
+                                               constrains=lambda *a: lambda fn: fn))
     tools = types.ModuleType('odoo.tools')
     tools.config = {}
     odoo.tools = tools

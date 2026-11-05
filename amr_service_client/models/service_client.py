@@ -142,7 +142,7 @@ class ServiceClientSend:
                     debug("Unable to report service request success", exc_info=False)
             request_reported = True
             if active_log:
-                self.env["service.client.log"].create_log(
+                self.env["service.client.log"]._create_log(
                     'done', client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                     request_context=request_context, response_text=response.text
                 )
@@ -156,7 +156,7 @@ class ServiceClientSend:
                     if debug:
                         debug("Unable to report service request failure", exc_info=False)
             _logger.exception("error dispatch_send")
-            self.env["service.client.log"].create_error(
+            self.env["service.client.log"]._create_error(
                 e, client_id=self.client_id, endpoint_id=self.endpoint_id, credential_id=self.credential_id,
                 request_context=request_context
             )

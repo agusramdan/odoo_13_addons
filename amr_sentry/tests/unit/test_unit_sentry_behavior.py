@@ -281,8 +281,8 @@ class SentryReporting(unittest.TestCase):
             sender = types.SimpleNamespace(active_log=True, payload={'token': 'TOKEN_MARKER'}, service_client=Client(),
                 client_id=None, endpoint_id=None, credential_id=None,
                 env={'service.client.log': types.SimpleNamespace(
-                    create_log=lambda *a, **kw: log_calls.append((a, kw)),
-                    create_error=lambda *a, **kw: log_calls.append((a, kw)))})
+                    _create_log=lambda *a, **kw: log_calls.append((a, kw)),
+                    _create_error=lambda *a, **kw: log_calls.append((a, kw)))})
             try:
                 method(sender)
             except Exception as error:
@@ -343,15 +343,15 @@ class SentryReporting(unittest.TestCase):
                             raise error
                         return response
 
-                    def create_error(*args, **kwargs):
+                    def _create_error(*args, **kwargs):
                         errors.append((args, kwargs))
 
                     sender = types.SimpleNamespace(
                         active_log=active_log, payload=payload, service_client=Client(),
                         client_id=client_id, endpoint_id=endpoint_id, credential_id=credential_id,
                         env={'service.client.log': types.SimpleNamespace(
-                            create_log=lambda *a, **kw: successes.append((a, kw)),
-                            create_error=create_error)})
+                            _create_log=lambda *a, **kw: successes.append((a, kw)),
+                            _create_error=_create_error)})
                     dispatch = extracted_method(
                         ROOT / 'amr_service_client/models/service_client.py',
                         'ServiceClientSend', 'dispatch_send', {
@@ -394,8 +394,8 @@ class SentryReporting(unittest.TestCase):
         sender = types.SimpleNamespace(active_log=False, payload={}, service_client=Client(),
             client_id=None, endpoint_id=None, credential_id=None,
             env={'service.client.log': types.SimpleNamespace(
-                create_log=lambda *a, **kw: logs.append(('success', a, kw)),
-                create_error=lambda *a, **kw: logs.append(('error', a, kw)))})
+                _create_log=lambda *a, **kw: logs.append(('success', a, kw)),
+                _create_error=lambda *a, **kw: logs.append(('error', a, kw)))})
         dispatch = extracted_method(ROOT / 'amr_service_client/models/service_client.py',
             'ServiceClientSend', 'dispatch_send', {
                 'requests': types.SimpleNamespace(request=request),
@@ -417,14 +417,14 @@ class SentryReporting(unittest.TestCase):
                 return {'method': 'POST'}
             def _report_sentry(self, response=None, exception=None, method=None):
                 reports.append((response, exception, method))
-        def create_log(*args, **kwargs):
+        def _create_log(*args, **kwargs):
             logs.append((args, kwargs))
             raise business_error
-        def create_error(*args, **kwargs):
+        def _create_error(*args, **kwargs):
             logs.append((args, kwargs))
         sender = types.SimpleNamespace(active_log=True, payload={}, service_client=Client(),
             client_id=None, endpoint_id=None, credential_id=None,
-            env={'service.client.log': types.SimpleNamespace(create_log=create_log, create_error=create_error)})
+            env={'service.client.log': types.SimpleNamespace(_create_log=_create_log, _create_error=_create_error)})
         dispatch = extracted_method(path, 'ServiceClientSend', 'dispatch_send', {
             'requests': types.SimpleNamespace(request=lambda **kw: response),
             '_logger': types.SimpleNamespace(exception=lambda *a: None, debug=lambda *a, **kw: None),
@@ -447,7 +447,7 @@ class SentryReporting(unittest.TestCase):
             def sudo(self): return self
             def create(self, values): return values
             def sanitize_sensitive_data(self, value): return value
-        create = extracted_method(path, 'ServiceClientLog', 'create_log', {
+        create = extracted_method(path, 'ServiceClientLog', '_create_log', {
             'json': json, 'models': types.SimpleNamespace(AbstractModel=AbstractModel)})
         try:
             row = create(Log(), 'done', client_id=42,

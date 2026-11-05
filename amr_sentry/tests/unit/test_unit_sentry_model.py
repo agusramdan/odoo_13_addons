@@ -122,7 +122,7 @@ class TestOptionalSentryModelHook(unittest.TestCase):
             active_log=False, payload={}, service_client=client,
             client_id=None, endpoint_id=None, credential_id=None,
             env={'service.client.log': types.SimpleNamespace(
-                create_error=lambda *a, **kw: logs.append((a, kw)))},
+                _create_error=lambda *a, **kw: logs.append((a, kw)))},
         )
         dispatch = extracted_method(
             ROOT / 'amr_service_client/models/service_client.py',
