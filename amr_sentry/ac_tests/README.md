@@ -1,12 +1,14 @@
 # AC-focused component entrypoints
 
-All addon-owned case bodies, including behavior, live in `amr_sentry/tests/unit`.
-The old `amr_sentry/tests/test_U11_sentry_*` paths and the `ac*_cases.py` files
-are compatibility adapters; canonical unit cases do not depend on those legacy
-adapters. These offline cases do not replace native Odoo ORM integration tests.
-The historical `tests/addons13_27` shim remains. AC-01
-selects the external `amr_service_client` bridge test; that dependency is not
-copied. AC-07 also includes the synthetic N3 component regression here.
+Addon-owned Sentry cases live in `amr_sentry/tests/unit`; bridge/settings cases
+live in `amr_service_client/tests/unit`. The old `test_U11_sentry_*` modules in
+both addons and the `ac*_cases.py` files are compatibility adapters. Canonical
+unit cases do not depend on those adapters. No Sentry test or selector remains
+in `tests/addons13_27`; its `support.py` is retained only as a shared fixture
+dependency. The ORM probe was moved to `amr_sentry/tests/orm_68_probe.py`. These
+offline cases do not replace native Odoo ORM integration tests. AC-01 selects
+the external `amr_service_client` bridge adapter; that dependency is not copied.
+AC-07 also includes the synthetic N3 component regression here.
 
 From the repository root, inside the supported Python 3.7.3 runtime, run one
 entrypoint at a time (replace `NN` with `01` through `12`):
