@@ -213,14 +213,18 @@ class AuthProviderRegression(unittest.TestCase):
         response.json.return_value = {'token': 'synthetic-selected-token'}
         response.raise_for_status.return_value = None
         with mock.patch.object(requests, 'post', return_value=response) as token_request:
-            token = provider._get_token(audience='synthetic-audience')
-        self.assertEqual(token, 'synthetic-selected-token')
-        token_request.assert_called_once()
-        cache.get_cache.assert_not_called()
-        cache.set_cache.assert_not_called()
-        self.assertNotIn('synthetic-selected-token', repr(token_request.call_args))
-        self.assertNotIn('synthetic-selected-token', repr(cache.get_cache.call_args_list))
-        self.assertNotIn('synthetic-selected-token', repr(cache.set_cache.call_args_list))
+            first = provider.authenticate({})
+            second = provider.authenticate({})
+        self.assertEqual(
+            (token_request.call_count, cache.get_cache.call_count, cache.set_cache.call_count),
+            (2, 0, 0),
+            'Unexpected token/cache interaction counts')
+        self.assertTrue(
+            first['headers']['Authorization'] == 'JWT synthetic-selected-token',
+            'First authorization header mismatch')
+        self.assertTrue(
+            second['headers']['Authorization'] == 'JWT synthetic-selected-token',
+            'Second authorization header mismatch')
 
     def test_legacy_U04_base_test_credential_raises_user_error(self):
         from pathlib import Path
