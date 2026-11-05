@@ -303,6 +303,82 @@ class AuthProviderRegression(unittest.TestCase):
                             None, {"header": "X-Api-Key", "value": "synthetic-key"}))
 
 
+    def test_unsupported_auth_factory_value_error_is_baseline_characterization(self):
+        """Baseline only: unsupported auth raises ValueError; policy remains open."""
+        import importlib.util
+        from pathlib import Path
+
+        odoo = types.ModuleType("odoo")
+        odoo.api = types.SimpleNamespace(model=lambda method: method)
+        odoo.models = types.SimpleNamespace(AbstractModel=object)
+        odoo.__dict__["models"] = odoo.models
+        package_name = "isolated_unsupported_auth"
+        package = types.ModuleType(package_name)
+        package.__path__ = []
+        module_name = package_name + ".auth_factory"
+        path = Path(__file__).resolve().parents[2] / "services" / "auth_factory.py"
+        spec = importlib.util.spec_from_file_location(module_name, str(path))
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {package_name: package, "odoo": odoo,
+                                          package_name + ".providers": providers}):
+            spec.loader.exec_module(module)
+
+        factory = object.__new__(module.ServiceAuthFactory)
+        factory.env = None
+        with NetworkGuard() as guard:
+            with self.assertRaises(ValueError):
+                factory.create_service_auth({"type": "synthetic-unsupported"})
+        self.assertEqual((guard.token, guard.business, guard.socket, guard.dns,
+                          guard.urlopen, guard.http_connect), (0, 0, 0, 0, 0, 0))
+
+    def test_service_client_call_sends_auth_headers_without_token_or_extra_requests(self):
+        # Import the existing offline ServiceClient.call harness, then replace its
+        # fake provider with each real provider and keep transport synthetic.
+        from test_service_transport import Endpoint, production as client_module
+
+        cases = (
+            (providers.NoneAuthProvider(None, {}), {}),
+            (providers.ApiKeyProvider(None, {"header": "X-Api-Key", "value": "synthetic-key"}),
+             {"X-Api-Key": "synthetic-key"}),
+            (providers.BearerProvider(None, {"token": "synthetic-token"}),
+             {"Authorization": "Bearer synthetic-token"}),
+            (providers.BasicProvider(None, {"username": "synthetic-user",
+                                            "password": "synthetic-password"}),
+             {"Authorization": "Basic c3ludGhldGljLXVzZXI6c3ludGhldGljLXBhc3N3b3Jk"}),
+        )
+        for provider, auth_headers in cases:
+            with self.subTest(provider=type(provider).__name__):
+                endpoint = Endpoint()
+                response = types.SimpleNamespace(raise_for_status=mock.Mock())
+                client = object.__new__(client_module.ServiceClient)
+                client.endpoint = endpoint
+                client.path = "synthetic-path"
+                client.method = "GET"
+                client.provider = provider
+                client.env = {}
+                client.service_client = None
+                client._report_sentry = mock.Mock()
+                expected_headers = {"Content-Type": "application/json",
+                                    "Accept": "application/json"}
+                expected_headers.update(auth_headers)
+                with NetworkGuard() as guard:
+                    with mock.patch.object(requests, "request", return_value=response) as send:
+                        result = client.call(method="GET", path="synthetic-path",
+                                             headers={"X-Client": "synthetic-client"})
+                self.assertIs(result, response)
+                self.assertEqual(send.call_count, 1, "unexpected transport request count")
+                sent = send.call_args[1]
+                self.assertEqual(
+                    sent["headers"] == dict(expected_headers, **{"X-Client": "synthetic-client"}),
+                    True, "request headers did not match expected values")
+                self.assertEqual((guard.token, send.call_count), (0, 1),
+                                 "token request and business request counts did not match")
+                self.assertEqual((guard.token, guard.business, guard.socket), (0, 0, 0))
+                self.assertEqual(guard.dns, 0)
+                self.assertEqual(guard.urlopen, 0)
+                self.assertEqual(guard.http_connect, 0)
+
+
 class BearerBasicRegression(unittest.TestCase):
     def assert_auth_contract(self, provider, expected):
         context = {"headers": {"Existing": "synthetic-existing", "Authorization": "old"},
