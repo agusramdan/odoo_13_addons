@@ -78,7 +78,7 @@ class PublicKey(models.Model):
         public_key = serialization.load_pem_public_key(self.public_key.encode('utf-8'))
         return public_key
 
-    def get_private_key(self):
+    def _get_private_key(self):
         record = self
         source = record.source
         if source == "database":
@@ -88,6 +88,7 @@ class PublicKey(models.Model):
         elif source == "config_pem":
             return config.get(record.reference)
         elif source == "system_parameter_pem":
+            # sudo: preserve source; refresh policy deferred.
             return self.env["ir.config_parameter"].sudo().get_param(record.reference)
         elif source == "file_path":
             return self._read_file(record.reference)
@@ -97,6 +98,7 @@ class PublicKey(models.Model):
         elif source == "config_path":
             path = config.get(record.reference)
         elif source == "system_parameter_path":
+            # sudo: preserve source refresh lookup; refresh policy deferred.
             path = self.env["ir.config_parameter"].sudo().get_param(record.reference)
         else:
             raise ValueError(f"Unsupported source: {source}")
@@ -127,18 +129,34 @@ class PublicKey(models.Model):
             list_key.append(jwk_dict)
         return list_key
 
-    def generate_token(self, payload):
+    def _generate_token(self, payload):
         return jwt.encode(payload, self.private_key, algorithm=self.algorithm, headers={'kid': self.kid})
 
     def validate_token(self, token, issuer=None, audience=None, options=None):
         try:
-            options = options or {"verify_aud": False}
-            return jwt.decode(token, self.public_key, issuer=issuer, audience=audience or None, algorithms=[self.algorithm], options=options)
+            if not self.active or not self.kid:
+                raise ValueError("An active key identifier is required")
+            if jwt.get_unverified_header(token).get("kid") != self.kid:
+                raise ValueError("Token kid does not match active key")
+            if self.algorithm not in ('RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512',
+                                     'ES256', 'ES256K', 'ES384', 'ES512'):
+                raise ValueError("A supported asymmetric algorithm is required")
+            if not issuer or not audience:
+                raise ValueError("Explicit issuer and audience are required")
+            options = dict(options or {})
+            options.update({
+                "verify_signature": True,
+                "verify_iss": True,
+                "verify_aud": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "require": ["exp", "iss", "aud"],
+            })
+            return jwt.decode(token, self.public_key, issuer=issuer, audience=audience, algorithms=[self.algorithm], options=options)
         except InvalidTokenError as e:
-            _logger.warning("Failed to validate token with public key: %s", e)
             raise
 
     def action_generate_key(self):
-        data = self.env['amr.oidc.helper'].generate_key(self.algorithm)
+        data = self.env['amr.oidc.helper']._generate_key(self.algorithm)
         data.pop('source', None)
         self.write(data)

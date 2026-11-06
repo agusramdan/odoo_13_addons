@@ -60,17 +60,11 @@ class ResConfigSettings(models.TransientModel):
     )
     amr_token_audience = fields.Char("Audience", config_parameter="database.uuid")
 
-    # module_amr_oidc = fields.Boolean("OIDC")
-    # module_amr_oauth = fields.Boolean("Client OAuth")
-    # module_amr_auto_login = fields.Boolean("Auto Login OAuth")
-
     @api.depends("amr_token_algorithm")
     def _compute_amr_token_using_secret(self):
         for record in self:
             record.amr_token_using_secret = record.amr_token_algorithm == "HS256"
 
-    # will remove
-    module_amr_token_oauth = fields.Boolean("Token OAuth")
-
     def action_create_public_key(self):
-        self.env['amr.token.helper'].sudo().create_public_key(self.amr_token_public_key_algorithm)
+        # sudo: preserve source refresh lookup; refresh policy deferred.
+        self.env['amr.oidc.helper'].sudo().create_public_key(self.amr_token_public_key_algorithm)

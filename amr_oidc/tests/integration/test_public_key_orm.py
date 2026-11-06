@@ -58,17 +58,12 @@ class TestPublicKeyORM(SavepointCase):
             "algorithm": "ES256",
         })
         oidc_helper = self.env["amr.oidc.helper"]
-        legacy_helper = self.env["amr.token.helper"]
         with mock.patch.object(
                 type(oidc_helper), "generate_key",
-                wraps=type(oidc_helper).generate_key) as oidc_spy, \
-                mock.patch.object(
-                    type(legacy_helper), "generate_key",
-                    wraps=type(legacy_helper).generate_key) as legacy_spy:
+                wraps=type(oidc_helper).generate_key) as oidc_spy:
             key.action_generate_key()
         self.assertEqual(oidc_spy.call_count, 1)
         self.assertEqual(oidc_spy.call_args[0][0], "ES256")
-        self.assertEqual(legacy_spy.call_count, 0)
 
     def test_action_generate_key_stores_coherent_pair_and_public_only_jwks(self):
         key = self.env["amr.public.key"].create({

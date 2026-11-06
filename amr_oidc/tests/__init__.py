@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-from . import test_helper_decode
-from . import test_public_key_ownership
-from . import test_public_key_orm
-from . import test_jwks_route
-from . import test_introspect_query_rejection
-from . import test_replay_acl
-from . import test_oidc_client_identity
-from . import test_client_secret_verifier
-
-from . import test_client_registration
+# amr.resource-owned helper tests stay with that addon; package tests use tests/unit.
+from .integration import test_public_key_ownership
+from .integration import test_public_key_orm
+from .integration import test_jwks_route
+from .integration import test_introspect_query_rejection
+from .integration import test_replay_acl
+from .integration import test_oidc_client_identity
+from .integration import test_client_secret_verifier
+from .integration import test_client_registration
