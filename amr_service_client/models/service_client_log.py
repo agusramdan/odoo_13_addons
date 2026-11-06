@@ -105,12 +105,8 @@ class ServiceClientLog(models.Model):
 
     def _create_log(self, state, client_id=None, endpoint_id=None, credential_id=None, request_context=None, **kwargs):
 
-        if request_context:
-            if isinstance(credential_id, models.AbstractModel) and credential_id._name == 'service.credential':
-                request_context = credential_id.sanitizer_request_context(request_context)
-            else:
-                request_context.pop('headers', None)
-
+        # The writer intentionally persists neither request nor response content.
+        # Avoid sanitizing/mutating caller-owned request_context that will be discarded.
         # sudo: internal ServiceClient dispatch uses this private writer; RPC cannot invoke it.
         return self.sudo().create({
             'state': state,
