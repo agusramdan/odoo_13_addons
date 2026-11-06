@@ -149,8 +149,10 @@ class GetJWTCharacterization(unittest.TestCase):
     def test_wire_json_and_success_response(self):
         self.response.json.return_value = {"token": "synthetic-token", "token_type": "JWT"}
         result = self.invoke_safely(lambda: self.provider._request_token(audience="synthetic-audience"))
-        self.assertTrue(result == {"access_token": "synthetic-token", "token_type": "JWT",
-                                  "raw_response": {"token": "synthetic-token", "token_type": "JWT"}})
+        expected = {"access_token": "synthetic-token", "token_type": "JWT",
+                    "cache_ttl": 3540,
+                    "raw_response": {"token": "synthetic-token", "token_type": "JWT"}}
+        self.assertEqual(result, expected, "token response shape mismatch")
         self.response.raise_for_status.assert_called_once_with()
         self.assert_wire()
 

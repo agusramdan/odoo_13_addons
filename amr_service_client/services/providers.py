@@ -103,15 +103,10 @@ class GetJWTTokenProvider(AuthenticationProvider):
         return "GetJWT|%s|%s|%s" % (self.credential["username"], audience or "",token_uri)
 
     def _get_token(self, audience=None):
-        cache_key = self._get_cache_key(audience or "", )
-        token = self.env["service.token.cache"].get_cache(cache_key)
-        if token and not self.is_token_expired(token):
-            return token
-
+        # Preserve the required cache-key input check while bypassing cache reuse.
+        if "username" not in self.credential:
+            raise KeyError("username")
         token_response = self._request_token(audience=audience, )
-        self.env["service.token.cache"].set_cache(
-            cache_key, token_response["access_token"], token_response["cache_ttl"],
-        )
         return token_response["access_token"]
 
     def _request_token(self, audience=None):
@@ -203,17 +198,10 @@ class ClientSecretProvider(AuthenticationProvider):
         return "ClientSecret|%s|%s|%s" % (self.credential["client_id"], audience or "-", token_uri or "-")
 
     def _get_token(self, audience=None):
-        cache_key = self._get_cache_key(audience or "", )
-        token = self.env["service.token.cache"].get_cache(cache_key)
-        if token:
-            return token
-
+        # Preserve the required cache-key input check while bypassing cache reuse.
+        if "client_id" not in self.credential:
+            raise KeyError("client_id")
         token_response = self._request_token(audience=audience, )
-
-        self.env["service.token.cache"].set_cache(
-            cache_key, token_response["access_token"], token_response["cache_ttl"],
-        )
-
         return token_response["access_token"]
 
     def _request_token(self, audience=None):
