@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # 1. Odoo 13 Server (Ready for Remote Debugging & Testing)
+  web:
+    # image: agusramdan/odoo-13-addons:latest   # <-- Menggunakan repositori Docker Anda
+    build:
+      context: .
+      dockerfile: ../Dockerfile
+    container_name: odoo13_task_web
+    depends_on:
+      - db
+    ports:
+      - "8013:8069"   # Port HTTP Odoo 13
+      - "5678:5678"   # Port Python Debugpy untuk remote debugging
+    volumes:
+      - ..:/mnt/extra-addons
+      - ./config/odoo.conf:/etc/odoo/odoo.conf
+    environment:
+      - HOST=db
+      - USER=${POSTGRES_USER:-odoo}
+      - PASSWORD=${POSTGRES_PASSWORD:-odoo}
+    command: python3 /opt/odoo/odoo-bin -c /etc/odoo/odoo.conf --dev=reload,xml
+    networks:
+      - task-network
+    restart: unless-stopped
+
+  # 2. PostgreSQL Database (biasanya PG 11 atau 12 sangat stabil untuk Odoo 13)
+  db:
+    image: postgres:12
+    container_name: odoo13_task_db
+    environment:
+      - POSTGRES_DB=${POSTGRES_USER:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-odoo}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-odoo}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - task-network
+    restart: unless-stopped
+
+  # 3. Hermes Agent Container (Autonomous Coding / Assistant)
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.hermes
+    container_name: odoo13_task_hermes
+    volumes:
+      - ..:/workspace/addons
+      # - ./hermes-workspace:/workspace/agent
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - PASSWORD=${CODE_SERVER_PASSWORD}   # <--- Mengambil dari file .env
+    networks:
+      - task-network
+    command: python3 -m hermes_agent.cli --workspace /workspace
+    restart: unless-stopped
+
+volumes:
+  db-data:
+
+networks:
+  task-network:
+    driver: bridge

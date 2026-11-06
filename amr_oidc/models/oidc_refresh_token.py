@@ -9,6 +9,7 @@ import jwt
 from jwt import InvalidTokenError
 
 from odoo import api, fields, models
+from odoo.exceptions import AccessError
 
 _logger = logging.getLogger(__name__)
 
@@ -23,12 +24,12 @@ class OidcRefreshToken(models.Model):
         return int(self.env['ir.config_parameter'].sudo().get_param('amr_token.expires_in', 60 * 60 * 24))
 
     @api.model
-    def get_secret(self):
+    def _get_secret(self):
         # sudo: preserve source configuration read; secret handling unchanged.
         return self.env['ir.config_parameter'].sudo().get_param('amr_token.secret')
 
     @api.model
-    def get_issuer(self):
+    def _get_issuer(self):
         # sudo: preserve source configuration read; refresh policy deferred.
         return self.env['ir.config_parameter'].sudo().get_param('web.base.url')
 
@@ -54,7 +55,9 @@ class OidcRefreshToken(models.Model):
         return str(uuid.uuid4())
 
     @api.model
-    def create_refresh_token(self, user, **kw):
+    def _create_refresh_token(self, user, **kw):
+        if user.id != self.env.uid and not self.env.user.has_group('base.group_system'):
+            raise AccessError('You may only issue a refresh token for yourself.')
         token = self.generate_token()
         expires_in = 60 * 60 * 24 * 14
         expire = int(time.time()) + expires_in
@@ -68,7 +71,7 @@ class OidcRefreshToken(models.Model):
         payload = {
             'token': token,
             'data': f"{user.id}-{user.email}-{time.time()}-{self.env.cr.dbname}",
-            'iss': self.get_issuer(),
+            'iss': self._get_issuer(),
             'exp': expire,
         }
         aud = kw.get('aud')
@@ -79,7 +82,7 @@ class OidcRefreshToken(models.Model):
             payload['aud'] = aud
         return jwt.encode(
             payload,
-            self.get_secret(),
+            self._get_secret(),
             algorithm=self.get_algorithm(),
         )
 
@@ -89,8 +92,8 @@ class OidcRefreshToken(models.Model):
             options = options or {"require": ["exp", "iss", "aud"]}
             payload = jwt.decode(
                 token,
-                self.get_secret(),
-                issuer=self.get_issuer(),
+                self._get_secret(),
+                issuer=self._get_issuer(),
                 audience=audience,
                 algorithms=[self.get_algorithm()],
                 options=options,

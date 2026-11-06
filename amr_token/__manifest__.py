@@ -1,20 +1,12 @@
 # -*- coding: utf-8 -*-
-
 {
-    'name': "Token Provider",
-    'summary': "Token Provider",
-    'description': "Token Provider",
-    'author': "Agus Muhammad Ramdan",
-    'website': "https://www.agusramdan.web.id",
+    'name': 'Token Provider Compatibility Adapter',
+    'summary': 'Optional legacy helper alias for amr_oidc',
+    'description': 'Thin compatibility adapter; provider implementation lives in amr_oidc.',
+    'author': 'Agus Muhammad Ramdan',
+    'website': 'https://www.agusramdan.web.id',
     'category': 'API',
     'version': '13.0.0.0.8',
-    'depends': ['base', 'base_setup', 'web', 'amr_resource'],
-    'external_dependencies': {
-        'python': ['pyjwt'],
-    },
-    'data': [
-        'security/ir.model.access.csv',
-
-        'views/res_config_settings_views.xml',
-    ],
+    'depends': ['amr_oidc'],
+    'data': [],
 }
