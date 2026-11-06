@@ -1,3 +1,1 @@
-# -*- coding: utf-8 -*-
-
-from . import main
+# Adapter addon intentionally defines no routes.

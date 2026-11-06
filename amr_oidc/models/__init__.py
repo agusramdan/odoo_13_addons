@@ -9,3 +9,5 @@ from . import oidc_client_key
 from . import oidc_client_grant
 from . import oidc_authorization_code
 from . import oidc_jwt_replay
+from . import res_config_settings
+from . import res_users

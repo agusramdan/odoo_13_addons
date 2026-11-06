@@ -70,7 +70,6 @@ class ResConfigSettings(models.TransientModel):
             record.amr_token_using_secret = record.amr_token_algorithm == "HS256"
 
     # will remove
-    module_amr_token_oauth = fields.Boolean("Token OAuth")
 
     def action_create_public_key(self):
-        self.env['amr.token.helper'].sudo().create_public_key(self.amr_token_public_key_algorithm)
+        self.env['amr.oidc.helper'].sudo().create_public_key(self.amr_token_public_key_algorithm)

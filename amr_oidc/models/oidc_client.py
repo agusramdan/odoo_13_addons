@@ -5,8 +5,6 @@ import logging
 from datetime import timedelta
 from urllib.parse import urlparse
 
-import jwt
-
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
@@ -26,6 +24,7 @@ class OidcClient(models.Model):
 
     active = fields.Boolean(default=True)
     is_confidential = fields.Boolean(default=True)
+    allow_introspection = fields.Boolean(default=False, groups="amr_oidc.group_provider_admin")
     name = fields.Char(help="Authorized Party (client yang meminta token, umum di OpenID Connect)")
     user_id = fields.Many2one('res.users', help="machine user or bot", default=1)
     client_id = fields.Char(
@@ -167,19 +166,9 @@ class OidcClient(models.Model):
 
     def validate_token(self, token):
         client = self
-        if not client:
-            payload = jwt.decode(
-                token,
-                options={
-                    "verify_signature": False,
-                    "verify_exp": True,
-                    "verify_aud": False,
-                    "verify_iss": False,
-                }
-            )
-            # sudo: preserve source audience lookup; access review deferred.
-            client = self.sudo().search([('client_id', '=', payload.get('aud'))], limit=1)
-        return self.env['amr.oidc.helper'].decode(token)
+        return self.env['amr.oidc.helper'].decode(
+            token, audience=self.client_id
+        ) if self else self.env['amr.oidc.helper'].decode(token)
 
     def validate_refresh_token(self, token):
         return self.env['oidc.refresh.token'].validate_token(token, self.client_id)

@@ -9,12 +9,13 @@
     'author': 'Agus Muhammad Ramdan',
     'website': 'https://www.agusramdan.web.id',
     'license': 'LGPL-3',
-    'depends': ['base', 'web', 'amr_token'],
+    'depends': ['base', 'base_setup', 'web'],
     'external_dependencies': {
         'python': ['pyjwt', 'cryptography'],
     },
     'data': [
         'security/res_groups.xml',
+        'views/res_config_settings_views.xml',
         'security/ir.model.access.csv',
         'data/oidc_client_grants.xml',
         'views/public_key_views.xml',

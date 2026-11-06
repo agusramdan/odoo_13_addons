@@ -1,20 +1,23 @@
 """Offline package contracts only; no registry, ORM, HTTP or security verdict.
 
 Run from repository root with:
-python3 -B -m unittest discover -s amr_oidc/tests -p 'test_*.py' -v
+python3.7 -B -m unittest discover -s amr_oidc/tests/unit -p 'test_*.py' -v
 The addon root is deliberately never imported.
 """
 import ast
 from pathlib import Path
 import unittest
+from unittest import mock
 
 try:
     from .support import load
 except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from support import load
 
 
-ADDON = Path(__file__).resolve().parents[1]
+ADDON = Path(__file__).resolve().parents[2]
 
 
 class PackageContract(unittest.TestCase):
@@ -34,7 +37,7 @@ class PackageContract(unittest.TestCase):
         manifest = ast.literal_eval(self.source("__manifest__.py"))
         self.assertEqual(manifest["version"], "13.0.1.0.0")
         self.assertEqual(manifest["license"], "LGPL-3")
-        self.assertEqual(manifest["depends"], ["base", "web", "amr_token"])
+        self.assertEqual(manifest["depends"], ["base", "base_setup", "web"])
         # Distribution/import-name loader compatibility is not verified here.
         self.assertEqual(manifest["external_dependencies"]["python"],
                          ["pyjwt", "cryptography"])
@@ -87,7 +90,14 @@ class PackageContract(unittest.TestCase):
         self.assertNotIn("oidc_token", helper.__dict__)
 
     def test_oidc_helper_is_standalone_token_engine_base(self):
-        base = self.model("models/token_helper.py", "TokenHelper")
+        import types
+        packages = {name: types.ModuleType(name) for name in (
+            "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
+            "cryptography.hazmat.primitives.asymmetric")}
+        packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
+        packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
+        with mock.patch.dict("sys.modules", packages):
+            base = self.model("models/token_helper.py", "TokenHelper")
         extension = self.model("models/helper.py", "TokenHelper")
         self.assertEqual(base._name, "amr.oidc.helper")
         self.assertEqual(extension._inherit, "amr.oidc.helper")
@@ -104,9 +114,11 @@ class PackageContract(unittest.TestCase):
         tree = self.tree("controllers/main.py")
         controller = next(node for node in tree.body if isinstance(node, ast.ClassDef))
         self.assertEqual(controller.name, "ControllerOIDC")
-        self.assertEqual([node.id for node in controller.bases], ["ControllerToken"])
+        self.assertEqual([node.id for node in controller.bases], ["Controller"])
         imports = [node.module for node in tree.body if isinstance(node, ast.ImportFrom)]
-        self.assertTrue("odoo.addons.amr_token.controllers.main" in imports)
+        self.assertIn("odoo.http", imports)
+        self.assertFalse(any(module and module.startswith("odoo.addons.amr_token")
+                             for module in imports))
 
     def test_replay_acl_is_one_minimal_system_create_only_rule(self):
         import csv
@@ -151,7 +163,8 @@ class PackageContract(unittest.TestCase):
         expected = {
             "__init__.py": {"controllers", "models", "wizard"},
             "models/__init__.py": {"token_helper", "public_key", "helper", "oidc_authorization_code", "oidc_client",
-                                   "oidc_client_key", "oidc_client_grant", "oidc_jwt_replay", "oidc_refresh_token"},
+                                   "oidc_client_key", "oidc_client_grant", "oidc_jwt_replay",
+                                   "oidc_refresh_token", "res_config_settings", "res_users"},
             "controllers/__init__.py": {"main"},
             "wizard/__init__.py": {"service_account"},
         }

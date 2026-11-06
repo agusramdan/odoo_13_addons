@@ -13,7 +13,6 @@ except ModuleNotFoundError as error:
 from odoo.tests.common import HttpCase, TransactionCase
 
 import odoo.addons.amr_oidc.controllers.main as oidc_controller
-import odoo.addons.amr_token.controllers.main as token_controller
 
 
 class TestJwksRouteOwnership(TransactionCase):
@@ -21,21 +20,14 @@ class TestJwksRouteOwnership(TransactionCase):
         keys = [{"kid": "oidc-key", "kty": "RSA", "use": "sig"}]
         oidc_helper = Mock()
         oidc_helper.oidc_jwks.return_value = {"keys": keys}
-        legacy_helper = Mock()
-        legacy_helper.oidc_jwks.return_value = {"keys": []}
         request_stub = Mock()
-        request_stub.env = {
-            "amr.oidc.helper": oidc_helper,
-            "amr.token.helper": legacy_helper,
-        }
+        request_stub.env = {"amr.oidc.helper": oidc_helper}
         controller = oidc_controller.ControllerOIDC()
 
-        with patch.object(oidc_controller, "request", request_stub), \
-                patch.object(token_controller, "request", request_stub):
+        with patch.object(oidc_controller, "request", request_stub):
             response = controller.well_known_jwks.__wrapped__(controller)
 
         oidc_helper.oidc_jwks.assert_called_once_with()
-        legacy_helper.oidc_jwks.assert_not_called()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content_type, "application/json; charset=utf-8")
         self.assertEqual(json.loads(response.data), {"keys": keys})
@@ -50,11 +42,8 @@ class TestJwksRouteOwnership(TransactionCase):
 class TestJwksHttpRoute(HttpCase):
     def test_live_jwks_route_dispatches_to_oidc_helper(self):
         oidc_model = type(self.env['amr.oidc.helper'])
-        legacy_model = type(self.env['amr.token.helper'])
-
         oidc_payload = {'keys': [{'kid': 'oidc-route-test', 'kty': 'RSA', 'use': 'sig'}]}
-        with patch.object(oidc_model, 'oidc_jwks', return_value=oidc_payload), \
-                patch.object(legacy_model, 'oidc_jwks', return_value={'keys': []}):
+        with patch.object(oidc_model, 'oidc_jwks', return_value=oidc_payload):
             response = self.url_open('/.well-known/jwks.json')
 
         self.assertEqual(response.status_code, 200)

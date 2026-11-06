@@ -1,16 +1,28 @@
 # -*- coding: utf-8 -*-
 
 from odoo import api
-from odoo.addons.amr_token.controllers.main import ControllerToken
-from odoo.http import request, route
+from odoo.http import Controller, request, route
+from werkzeug.wrappers import Response
+import json
 
 
-class ControllerOIDC(ControllerToken):
+class ControllerOIDC(Controller):
+
+    @classmethod
+    def make_response(cls, status=200, **payload):
+        return Response(json.dumps(payload or {"error": "unknown_error"}), status=status, content_type="application/json; charset=utf-8")
+
+    def invalid_response(self, status, error, info=""):
+        return self.make_response(status=status, error=error, error_description=info)
 
     @route('/.well-known/jwks.json', type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_jwks(self):
         payload = request.env['amr.oidc.helper'].oidc_jwks()
         return self.make_response(**payload)
+
+    @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
+    def api_oidc_token(self, **kwargs):
+        return self.make_response(status=400, error='unsupported_grant_type')
 
     @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_openid_configuration(self):
@@ -48,13 +60,45 @@ class ControllerOIDC(ControllerToken):
 
     @route('/oidc/introspect', type='http', auth='none', methods=['GET', 'POST'], csrf=False)
     def api_oidc_introspect(self, **kwargs):
-        if request.httprequest.method == 'GET':
+        http_request = request.httprequest
+        if http_request.method != 'POST' or not http_request.is_secure:
             return self.invalid_response(400, 'invalid_request')
-        if 'token' in request.httprequest.args or 'access_token' in request.httprequest.args:
+        if http_request.args:
             return self.invalid_response(400, 'invalid_request')
-        return super(ControllerOIDC, self).api_oidc_introspect(**kwargs)
-
-    @route(['/oidc/profile', '/oidc/userinfo'], type='http', auth='none', methods=['GET'], csrf=False)
-    def api_oidc_profile(self, **kwargs):
-        payload = request.env['amr.oidc.helper'].oidc_profile(**kwargs)
+        token = http_request.form.get('token')
+        if (not token or len(http_request.form) != 1
+                or kwargs and kwargs != {'token': token}):
+            return self.invalid_response(400, 'invalid_request')
+        try:
+            client_id, client_secret = request.env['amr.oidc.helper'].get_basic_auth()
+            # sudo: resolve the registered client before checking its verifier.
+            client = request.env['oidc.client'].sudo().search([
+                ('client_id', '=', client_id), ('active', '=', True),
+            ], limit=1)
+            if not client or not client.allow_introspection:
+                raise ValueError()
+            client.check_credentials(client_secret)
+        except Exception:
+            return self.invalid_response(401, 'invalid_client')
+        try:
+            claims = request.env['amr.oidc.helper'].validate(token, audience=client.client_id)
+        except Exception:
+            return self.make_response(active=False)
+        allowed = ('sub', 'aud', 'iss', 'exp', 'iat', 'scope', 'jti', 'token_type', 'client_id')
+        payload = {'active': True}
+        payload.update((key, claims[key]) for key in allowed if key in claims)
         return self.make_response(**payload)
+
+    @route(['/oidc/profile', '/oidc/userinfo'], type='http', auth='none', methods=['GET', 'POST'], csrf=False)
+    def api_oidc_profile(self, **kwargs):
+        auth = request.httprequest.headers.get('Authorization', '')
+        if (not auth.startswith('Bearer ') or kwargs or request.httprequest.args
+                or request.httprequest.form or request.httprequest.get_data(cache=True)):
+            return self.invalid_response(400, 'invalid_request')
+        try:
+            claims = request.env['amr.oidc.helper'].validate(auth[7:])
+        except Exception:
+            return self.invalid_response(401, 'invalid_token')
+        if not claims.get('sub'):
+            return self.invalid_response(401, 'invalid_token')
+        return self.make_response(sub=claims['sub'])

@@ -4,7 +4,16 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from support import load, load_controller, load_amr_token_parent_helper
+import importlib.util
+from pathlib import Path
+
+ADDON_ROOT = Path(__file__).resolve().parents[2]
+_SUPPORT_SPEC = importlib.util.spec_from_file_location(
+    "oidc_test_support", str(ADDON_ROOT / "tests" / "support.py")
+)
+support = importlib.util.module_from_spec(_SUPPORT_SPEC)
+_SUPPORT_SPEC.loader.exec_module(support)
+load, load_controller = support.load, support.load_controller
 
 
 class _Environment(dict):
@@ -15,13 +24,13 @@ class _Environment(dict):
 
 class TestFailClosedOidcSurface(unittest.TestCase):
     def test_oidc_child_does_not_override_grant_dispatch_or_publish_helper(self):
-        module = load("models/helper.py", parent_helper=load_amr_token_parent_helper())
+        module = load("models/helper.py")
         helper_class = module.TokenHelper
         self.assertNotIn("oidc_token", helper_class.__dict__)
         self.assertFalse(callable(getattr(helper_class, "openid_configuration", None)))
 
     def test_incomplete_child_grants_cannot_dispatch_or_issue_tokens(self):
-        module = load("models/helper.py", parent_helper=load_amr_token_parent_helper())
+        module = load("models/helper.py")
         helper = module.TokenHelper()
         cases = (
             ("client_credentials", "do_client_credentials"),
@@ -42,7 +51,7 @@ class TestFailClosedOidcSurface(unittest.TestCase):
             spy.assert_not_called()
 
     def test_incomplete_child_grant_handlers_are_not_public_methods(self):
-        module = load("models/helper.py", parent_helper=load_amr_token_parent_helper())
+        module = load("models/helper.py")
         for method in (
             "do_password_grant",
             "do_client_credentials",

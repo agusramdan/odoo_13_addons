@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
+from urllib.parse import urlencode
 from unittest.mock import patch
 
 
@@ -57,6 +58,13 @@ def load(relative, parent_helper=None):
     abstract_model = parent_helper or ParentHelper
     setattr(odoo, 'models', SimpleNamespace(Model=object, AbstractModel=abstract_model,
                                              TransientModel=object))
+    exceptions = ModuleType('odoo.exceptions')
+    setattr(exceptions, 'UserError', type('UserError', (Exception,), {}))
+    setattr(exceptions, 'ValidationError', type('ValidationError', (Exception,), {}))
+    tools = ModuleType('odoo.tools')
+    setattr(tools, 'ormcache', lambda *_keys: (lambda function: function))
+    setattr(tools, 'config', {})
+    setattr(odoo, 'tools', tools)
     http = ModuleType('odoo.http')
     setattr(http, 'request', SimpleNamespace())
     setattr(http, 'route', _route)
@@ -68,26 +76,14 @@ def load(relative, parent_helper=None):
     spec = importlib.util.spec_from_file_location('_isolated_oidc_leaf',
                                                   str(ADDON / relative))
     module = importlib.util.module_from_spec(spec)
+    werkzeug = ModuleType('werkzeug')
+    setattr(werkzeug, 'url_encode', urlencode)
     with patch.dict(sys.modules, {'odoo': odoo, 'odoo.http': http,
+                                 'odoo.exceptions': exceptions, 'odoo.tools': tools,
+                                 'werkzeug': werkzeug,
                                  'jwt': jwt, 'psycopg2': psycopg2}):
         spec.loader.exec_module(module)
     return module
-
-
-def load_amr_token_parent_helper():
-    """Load the base helper through its offline test doubles, not Odoo boot."""
-    support_path = ADDON.parent / 'amr_token' / 'tests' / 'support.py'
-    spec = importlib.util.spec_from_file_location(
-        '_amr_token_offline_support', str(support_path)
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError('cannot create amr_token test support spec')
-    support = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(support)
-    jwt = ModuleType('jwt')
-    setattr(jwt, 'InvalidTokenError', type('InvalidTokenError', (Exception,), {}))
-    with patch.dict(sys.modules, {'jwt': jwt}):
-        return support.load_helper_module().TokenHelper
 
 
 def load_controller():
@@ -102,27 +98,6 @@ def load_controller():
     setattr(http, 'request', SimpleNamespace(env={}))
     setattr(http, 'route', _route)
     setattr(http, 'Controller', type('Controller', (), {}))
-
-    class ControllerToken:
-        def make_response(self, status=200, **payload):
-            body = json.dumps(payload)
-            return StubResponse(response=body, status=status)
-
-        def invalid_response(self, status, error, info=""):
-            return self.make_response(
-                status=status,
-                error=error,
-                error_description=info,
-            )
-
-    addons = ModuleType('odoo.addons')
-    setattr(addons, '__path__', [])
-    amr_token = ModuleType('odoo.addons.amr_token')
-    setattr(amr_token, '__path__', [])
-    controllers = ModuleType('odoo.addons.amr_token.controllers')
-    setattr(controllers, '__path__', [])
-    parent_controller = ModuleType('odoo.addons.amr_token.controllers.main')
-    setattr(parent_controller, 'ControllerToken', ControllerToken)
 
     werkzeug = ModuleType('werkzeug')
     utils = ModuleType('werkzeug.utils')
@@ -139,10 +114,6 @@ def load_controller():
     replacements = {
         'odoo': odoo,
         'odoo.http': http,
-        'odoo.addons': addons,
-        'odoo.addons.amr_token': amr_token,
-        'odoo.addons.amr_token.controllers': controllers,
-        'odoo.addons.amr_token.controllers.main': parent_controller,
         'werkzeug': werkzeug,
         'werkzeug.utils': utils,
         'werkzeug.exceptions': exceptions,

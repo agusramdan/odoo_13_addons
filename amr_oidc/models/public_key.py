@@ -132,10 +132,26 @@ class PublicKey(models.Model):
 
     def validate_token(self, token, issuer=None, audience=None, options=None):
         try:
-            options = options or {"verify_aud": False}
-            return jwt.decode(token, self.public_key, issuer=issuer, audience=audience or None, algorithms=[self.algorithm], options=options)
+            if not self.active or not self.kid:
+                raise ValueError("An active key identifier is required")
+            if jwt.get_unverified_header(token).get("kid") != self.kid:
+                raise ValueError("Token kid does not match active key")
+            if self.algorithm not in ('RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512',
+                                     'ES256', 'ES256K', 'ES384', 'ES512'):
+                raise ValueError("A supported asymmetric algorithm is required")
+            if not issuer or not audience:
+                raise ValueError("Explicit issuer and audience are required")
+            options = dict(options or {})
+            options.update({
+                "verify_signature": True,
+                "verify_iss": True,
+                "verify_aud": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "require": ["exp", "iss", "aud"],
+            })
+            return jwt.decode(token, self.public_key, issuer=issuer, audience=audience, algorithms=[self.algorithm], options=options)
         except InvalidTokenError as e:
-            _logger.warning("Failed to validate token with public key: %s", e)
             raise
 
     def action_generate_key(self):
