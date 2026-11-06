@@ -103,6 +103,9 @@ class GetJWTTokenProvider(AuthenticationProvider):
         return "GetJWT|%s|%s|%s" % (self.credential["username"], audience or "",token_uri)
 
     def _get_token(self, audience=None):
+        # Preserve the required cache-key input check while bypassing cache reuse.
+        if "username" not in self.credential:
+            raise KeyError("username")
         token_response = self._request_token(audience=audience, )
         return token_response["access_token"]
 
@@ -195,6 +198,9 @@ class ClientSecretProvider(AuthenticationProvider):
         return "ClientSecret|%s|%s|%s" % (self.credential["client_id"], audience or "-", token_uri or "-")
 
     def _get_token(self, audience=None):
+        # Preserve the required cache-key input check while bypassing cache reuse.
+        if "client_id" not in self.credential:
+            raise KeyError("client_id")
         token_response = self._request_token(audience=audience, )
         return token_response["access_token"]
 

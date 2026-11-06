@@ -226,6 +226,47 @@ class AuthProviderRegression(unittest.TestCase):
             second['headers']['Authorization'] == 'JWT synthetic-selected-token',
             'Second authorization header mismatch')
 
+    def test_get_jwt_missing_username_key_fails_before_token_request(self):
+        provider = providers.GetJWTTokenProvider(
+            {'service.token.cache': object()},
+            {'token_uri': 'https://issuer.example.invalid/token'})
+        response = mock.Mock()
+        response.json.return_value = {'token': 'synthetic-selected-token'}
+        response.raise_for_status.return_value = None
+        with mock.patch.object(requests, 'post', return_value=response) as token_request:
+            with self.assertRaises(KeyError) as error:
+                provider.authenticate({})
+        self.assertEqual(error.exception.args, ('username',))
+        token_request.assert_not_called()
+
+    def test_client_secret_missing_client_id_key_fails_before_token_request(self):
+        provider = providers.ClientSecretProvider(
+            {'service.token.cache': object()},
+            {'token_uri': 'https://issuer.example.invalid/token'})
+        response = mock.Mock()
+        response.json.return_value = {'access_token': 'synthetic-selected-token'}
+        response.raise_for_status.return_value = None
+        with mock.patch.object(requests, 'post', return_value=response) as token_request:
+            with self.assertRaises(KeyError) as error:
+                provider.authenticate({})
+        self.assertEqual(error.exception.args, ('client_id',))
+        token_request.assert_not_called()
+
+    def test_service_account_missing_client_id_key_fails_before_signing_or_token_request(self):
+        provider = providers.ServiceAccountProvider(
+            {'service.token.cache': object()},
+            {'token_uri': 'https://issuer.example.invalid/token'})
+        response = mock.Mock()
+        response.json.return_value = {'access_token': 'synthetic-selected-token'}
+        response.raise_for_status.return_value = None
+        with mock.patch.object(provider, '_create_jwt_assertion', return_value='synthetic-assertion') as sign, \
+                mock.patch.object(requests, 'post', return_value=response) as token_request:
+            with self.assertRaises(KeyError) as error:
+                provider.authenticate({})
+        self.assertEqual(error.exception.args, ('client_id',))
+        sign.assert_not_called()
+        token_request.assert_not_called()
+
     def test_legacy_U04_base_test_credential_raises_user_error(self):
         from pathlib import Path
         import importlib.util
