@@ -12,7 +12,6 @@ You are an expert Odoo developer. This project contains Odoo custom modules
 - All model has access rule
 
 ## Python / ORM rules
-- Traget Python 3.7
 - Use Odoo ORM methods exclusively. Never write raw SQL unless the task is
   explicitly a SQL report or performance-critical batch operation with a comment
   explaining why ORM is insufficient.
