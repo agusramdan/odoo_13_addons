@@ -322,7 +322,7 @@ class StandalonePackageTests(unittest.TestCase):
     def _assert_empty_encode_audience_rejected(self):
         helper = self._audience_alias_helper()
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper._encode(aud="")
+            helper.encode(aud="")
 
     def test_public_provider_helpers_reject_unconfigured_algorithms(self):
         import importlib.util

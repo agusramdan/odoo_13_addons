@@ -23,8 +23,12 @@ def get_algorith_config():
         "ES512": lambda: ec.generate_private_key(ec.SECP521R1()),
         "ES256K": lambda: ec.generate_private_key(ec.SECP256K1()),
     }
+
+
 from odoo.http import request
+
 _logger = logging.getLogger(__name__)
+
 
 class TokenHelper(models.AbstractModel):
     _name = 'amr.oidc.helper'
@@ -206,11 +210,14 @@ class TokenHelper(models.AbstractModel):
         return access_token, payload, expires_in
 
     @api.model
-    def _encode(self, algorithm=None, alg=None, audience=None, aud=None, **kw):
-        algorithm = alg or algorithm
-        if aud is not None:
-            audience = aud
+    def encode(self, **kw):
+        algorithm = kw.get('alg', None) or kw.get('algorithm')
+        audience = kw.get('audience', None) or kw.get('aud', None) or ""
         scope = kw.pop('scope', '')
+        kw.pop('alg', None)
+        kw.pop('algorithm', None)
+        kw.pop('audience', None)
+        kw.pop('aud', None)
         kw.pop('iss', None)
         kw.pop('issuer', None)
         return self._generate_token(kw, algorithm=algorithm, audience=audience, scope=scope)
@@ -316,7 +323,8 @@ class TokenHelper(models.AbstractModel):
         self._require_configured_algorithm('public_key', algorithm)
         if not kid or audience == '':
             raise ValueError('A key identifier and non-empty audience are required')
-        jwt_key = self.env['amr.public.key'].sudo().search([('algorithm', '=', algorithm), ('kid', '=', kid), ('active', '=', True)])
+        jwt_key = self.env['amr.public.key'].sudo().search(
+            [('algorithm', '=', algorithm), ('kid', '=', kid), ('active', '=', True)])
         if len(jwt_key) != 1 or not jwt_key.active:
             raise Exception("Public Key not set")
         audience = self.get_audience() if audience is None else audience
@@ -326,12 +334,61 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_introspect(self, **kwargs):
-        return {'active': False}
+        token = self.get_bearer_token()
+        if not token or kwargs:
+            return {'status': 401, 'active': False}
+        if token:
+            payload = self.env['oidc.client'].decode(token, **kwargs)
+            if payload and payload.get('uid'):
+                uid = payload.get('uid')
+                user = self.env['res.users'].sudo().browse(uid)
+                active = user.exists()
+        if active:
+            data = dict(payload)
+            data.update(
+                active=True,
+                uid=user.id,
+                user_id=user.id,
+                name=user.name,
+                login=user.login,
+            )
+            return self.oidc_introspect_payload_response_enhance(data)
+        else:
+            return {'status': 401, 'active': False, "error": "invalid_token"}
+
+    @api.model
+    def oidc_introspect_payload_response_enhance(self, data):
+        return data
 
     @api.model
     def oidc_profile(self, **kwargs):
+        active = False
+        payload = None
+        user = None
         token = self.get_bearer_token()
         if not token or kwargs:
-            return {'active': False}
-        payload = self.validate(token)
-        return {'sub': payload['sub']} if payload.get('sub') else {'active': False}
+            return {'status': 401, 'active': False}
+        if token:
+            payload = request.env['oidc.client'].decode(token, **kwargs)
+            if payload and payload.get('uid'):
+                uid = payload.get('uid')
+                user = request.env['res.users'].sudo().browse(uid)
+                active = user.exists()
+        if active:
+            data = dict(payload)
+            data.update(
+                uid=user.id,
+                user_id=user.id,
+                name=user.name,
+                login=user.login,
+                db=request.session.db,
+            )
+            if 'status' in data:
+                data.pop('status')
+            return self.oidc_profile_payload_response_enhance(data)
+        else:
+            return {'status': 401, "error": "invalid_token", "error_description": "Invalid token"}
+
+    @api.model
+    def oidc_profile_payload_response_enhance(self, data):
+        return data

@@ -10,8 +10,8 @@ from odoo import api, fields, models
 _logger = logging.getLogger(__name__)
 
 REDIRECT_MODE = {
-   'auth_oauth_oidc': '/auth_oauth/oidc',
-   'auth_oauth_oea': '/auth_oauth/oea',
+    'auth_oauth_oidc': '/auth_oauth/oidc',
+    'auth_oauth_oea': '/auth_oauth/oea',
 }
 
 
@@ -164,11 +164,28 @@ class OidcClient(models.Model):
             scope=scope, audience=self.client_id, redirect_uri=redirect_uri
         )
 
-    def validate_token(self, token):
+    def encode(self, **kwargs):
         client = self
-        return self.env['amr.oidc.helper'].decode(
-            token, audience=self.client_id
-        ) if self else self.env['amr.oidc.helper'].decode(token)
+        if not client:
+            client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        return self.env['amr.oidc.helper'].with_user(client.user_id).encode(**kwargs)
+
+    def decode(self, token, **kwargs):
+        client = self
+        if not client:
+            client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        return self.env['amr.oidc.helper'].with_user(client.user_id).decode(token, **kwargs)
+
+    def validate_token(self, token, **kwargs):
+        return self.decode(token, **kwargs)
 
     def validate_refresh_token(self, token):
         return self.env['oidc.refresh.token'].validate_token(token, self.client_id)
