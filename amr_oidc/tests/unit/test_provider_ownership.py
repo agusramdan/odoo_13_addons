@@ -1,4 +1,17 @@
+import ast
 from pathlib import Path
+
+
+def _registered_provider_model_sources(addon):
+    models = addon / "models"
+    tree = ast.parse((models / "__init__.py").read_text())
+    modules = [
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module is None
+        for alias in node.names
+    ]
+    return [models / (module + ".py") for module in modules]
 
 
 def test_provider_manifest_has_only_core_addon_dependencies():
@@ -19,7 +32,9 @@ def test_provider_routes_do_not_inherit_legacy_controller():
 
 def test_provider_registered_sources_do_not_lookup_legacy_helper():
     addon = Path(__file__).parents[2]
-    sources = [addon / "models" / "token_helper.py", addon / "models" / "helper.py"]
+    sources = _registered_provider_model_sources(addon)
+    assert sources
+    assert all(source.is_file() for source in sources)
     assert all("amr.resource.helper" not in source.read_text() for source in sources)
 
 
@@ -46,7 +61,7 @@ def test_legacy_addon_is_only_one_way_alias():
 
 def test_provider_logs_do_not_include_credentials_or_token_values():
     addon = Path(__file__).parents[2]
-    sources = [addon / "models" / "helper.py", addon / "models" / "public_key.py", addon / "models" / "token_helper.py"]
+    sources = _registered_provider_model_sources(addon)
     contents = "\n".join(source.read_text() for source in sources)
     assert '"ExpiredSignatureError %s",assertion' not in contents
     assert '"Failed to validate token with public key: %s", e' not in contents
