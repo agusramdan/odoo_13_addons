@@ -268,7 +268,7 @@ class TokenHelper(models.AbstractModel):
         })
         resource = kw.get('resource')
         if resource:
-            payload['aud'] = resource
+            payload['aud'] = audience = resource
         expires_in = expires_in or self.get_expires_in()
         access_token, payload, expires_in = self._generate_token(
             payload, audience=audience, expires_in=expires_in, scope=scope
@@ -312,8 +312,7 @@ class TokenHelper(models.AbstractModel):
             'exp': expire,
             'scope': scope,
         })
-        algorithm = self.get_signature_algorithm()
-        token_strategy = self.get_token_strategy(algorithm)
+        token_strategy = self.get_token_strategy(algorithm or self.get_signature_algorithm())
         return token_strategy.encode(payload), payload, expires_in
         # if algorithm not in allowed_algorithms[signature_type]:
         #     raise ValueError('Unsupported token algorithm')
