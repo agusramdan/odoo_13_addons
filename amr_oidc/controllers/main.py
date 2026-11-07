@@ -23,7 +23,7 @@ class ControllerOIDC(Controller):
     @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
     def api_oidc_token(self, **kwargs):
         try:
-            payload = request.env['amr.token.helper'].sudo().oidc_token(**kwargs)
+            payload = request.env['amr.oidc.helper'].sudo().oidc_token(**kwargs)
             return self.make_response(**payload)
         except Exception as ex:
             return self.handle_exception(ex, 401, "invalid_request")
