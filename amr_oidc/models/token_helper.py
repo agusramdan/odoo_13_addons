@@ -30,10 +30,62 @@ from odoo.http import request
 _logger = logging.getLogger(__name__)
 
 
+class ValidatorSecret:
+    def __init__(self, env, algorithm, issuer, secret):
+        self.env = env
+        self.algorithm = algorithm
+        self.issuer = issuer
+        self.secret = secret
+
+    def decode(self, token, **kwargs):
+        audience = kwargs.get('audience') or kwargs.get('aud')
+        options = kwargs.get('options')
+        if not options:
+            options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
+
+        return jwt.decode(token, self.secret, algorithms=[self.algorithm], issuer=self.issuer, audience=audience, options=options)
+
+
+class ValidatorAsymmetric:
+    def __init__(self, env, algorithm, issuer):
+        self.env = env
+        self.algorithm = algorithm
+        self.issuer = issuer
+
+    def decode(self, token, **kwargs):
+        audience = kwargs.get('audience') or kwargs.get('aud')
+        kid = kwargs.get('kid')
+        if not kid or not audience:
+            raise ValueError('A key identifier and non-empty audience are required')
+        if jwt.get_unverified_header(token).get("kid") != kid:
+            raise ValueError("Token kid does not match active key")
+        jwt_key = self.env['amr.public.key'].sudo().search(
+            [('algorithm', '=', self.algorithm), ('kid', '=', kid), ('active', '=', True)])
+        if len(jwt_key) != 1 or not jwt_key.active:
+            raise Exception("Public Key not set")
+        options = dict(kwargs.get('options') or {})
+        options.update({
+            "verify_signature": True,
+            "verify_iss": True,
+            "verify_aud": True,
+            "verify_exp": True,
+            "verify_nbf": True,
+            "require": ["exp", "iss", "aud"],
+        })
+        return jwt.decode(token, jwt_key.public_key, issuer=self.issuer, audience=audience, algorithms=[self.algorithm], options=options)
+
+
 class TokenHelper(models.AbstractModel):
     _name = 'amr.oidc.helper'
     _description = 'Token Helper call from Controller'
+
     ALGORITHM_CONFIG = get_algorith_config()
+
+    def get_validator(self, algorithm):
+        if algorithm in self.ALGORITHM_CONFIG:
+            return ValidatorAsymmetric(self.env, algorithm, self.get_issuer())
+        else:
+            return ValidatorSecret(self.env, algorithm, self.get_issuer(), self._get_secret())
 
     @classmethod
     def _generate_key(cls, algorithm):
@@ -296,23 +348,26 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def decode(self, token, **kw):
-        return self.validate(token, **kw)
+        header = jwt.get_unverified_header(token)
+        validator = self.get_validator(header.get('alg'))
+        return validator.decode(token, **kw)
 
     @api.model
     def validate(self, token, **kw):
-        header = jwt.get_unverified_header(token)
-        algorithm = header.get('alg')
-        signature_type = self.get_signature_type()
-        allowed_algorithms = self.get_allowed_algorithms()
-        if algorithm not in allowed_algorithms[signature_type]:
-            raise ValueError('Token algorithm does not match signature type')
-        if algorithm != self.get_signature_algorithm():
-            raise ValueError('Token algorithm does not match provider configuration')
-        audience = kw.pop('audience', None)
-        if signature_type == 'secret':
-            _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
-            return self.validate_secret(token, algorithm=algorithm, audience=audience)
-        return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
+        self.decode(self, token, **kw)
+        # header = jwt.get_unverified_header(token)
+        # algorithm = header.get('alg')
+        # signature_type = self.get_signature_type()
+        # allowed_algorithms = self.get_allowed_algorithms()
+        # if algorithm not in allowed_algorithms[signature_type]:
+        #     raise ValueError('Token algorithm does not match signature type')
+        # if algorithm != self.get_signature_algorithm():
+        #     raise ValueError('Token algorithm does not match provider configuration')
+        # audience = kw.pop('audience', None) or kw.get('aud', None)
+        # if signature_type == 'secret':
+        #     _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
+        #     return self.validate_secret(token, algorithm=algorithm, audience=audience)
+        # return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
 
     @api.model
     def validate_secret(self, token, algorithm="HS256", audience=None):
