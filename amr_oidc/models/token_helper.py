@@ -227,9 +227,6 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):
-        if grant_type == 'client_credentials':
-            return self.env['oidc.client'].client_credentials(**kwargs)
-
         return {
             'status': 400,
             'error': "unsupported_grant_type",

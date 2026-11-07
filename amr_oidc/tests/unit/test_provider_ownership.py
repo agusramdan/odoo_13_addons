@@ -35,7 +35,10 @@ def test_provider_registered_sources_do_not_lookup_legacy_helper():
     sources = _registered_provider_model_sources(addon)
     assert sources
     assert all(source.is_file() for source in sources)
-    assert all("amr.resource.helper" not in source.read_text() for source in sources)
+    for source in sources:
+        contents = source.read_text()
+        assert "amr.token.helper" not in contents
+        assert "amr.resource.helper" not in contents
 
 
 def test_provider_validation_pins_algorithm_and_projects_only_contract_claims():
