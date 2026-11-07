@@ -23,12 +23,17 @@ def test_provider_registered_sources_do_not_lookup_legacy_helper():
     assert all("amr.resource.helper" not in source.read_text() for source in sources)
 
 
-def test_provider_validation_pins_algorithm_and_does_not_return_internal_claims():
+def test_provider_validation_pins_algorithm_and_projects_only_contract_claims():
     addon = Path(__file__).parents[2]
-    helper = (addon / "models" / "token_helper.py").read_text()
-    assert "algorithm != self.get_signature_algorithm()" in helper
-    assert "return {'active': False}" in helper
-    assert "return {'sub': payload['sub']}" in helper
+    token_helper = (addon / "models" / "token_helper.py").read_text()
+    controller = (addon / "controllers" / "main.py").read_text()
+
+    assert "algorithm != self.get_signature_algorithm()" in token_helper
+    assert "return self.make_response(active=False)" in controller
+    assert "allowed = ('sub', 'aud', 'iss', 'exp', 'iat', 'scope', 'jti', 'token_type', 'client_id')" in controller
+    assert "payload.update((key, claims[key]) for key in allowed if key in claims)" in controller
+    assert "return self.make_response(sub=claims['sub'])" in controller
+    assert all(claim not in controller for claim in ("'uid'", "'user_id'", "'name'", "'login'", "'db'"))
 
 
 def test_legacy_addon_is_only_one_way_alias():
