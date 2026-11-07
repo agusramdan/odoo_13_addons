@@ -88,6 +88,7 @@ class PublicKey(models.Model):
         elif source == "config_pem":
             return config.get(record.reference)
         elif source == "system_parameter_pem":
+            # sudo: preserve source; refresh policy deferred.
             return self.env["ir.config_parameter"].sudo().get_param(record.reference)
         elif source == "file_path":
             return self._read_file(record.reference)
@@ -97,6 +98,7 @@ class PublicKey(models.Model):
         elif source == "config_path":
             path = config.get(record.reference)
         elif source == "system_parameter_path":
+            # sudo: preserve source refresh lookup; refresh policy deferred.
             path = self.env["ir.config_parameter"].sudo().get_param(record.reference)
         else:
             raise ValueError(f"Unsupported source: {source}")

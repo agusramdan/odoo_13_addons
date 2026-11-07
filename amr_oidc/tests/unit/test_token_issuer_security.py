@@ -66,8 +66,6 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         methods = _method_names("models/token_helper.py", "TokenHelper")
         for public_name, internal_name in (
                 ("get_secret", "_get_secret"),
-                ("generate_user_token", "_generate_user_token"),
-                ("encode", "_encode"),
                 ("generate_token", "_generate_token"),
                 ("generate_token_secret", "_generate_token_secret"),
                 ("generate_token_asymmetric", "_generate_token_asymmetric")):

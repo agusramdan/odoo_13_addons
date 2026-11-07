@@ -23,6 +23,7 @@ class ControllerOIDC(Controller):
     @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
     def api_oidc_token(self, **kwargs):
         try:
+            # sudo: preserve source token lookup; token policy deferred.
             payload = request.env['amr.oidc.helper'].sudo().oidc_token(**kwargs)
             return self.make_response(**payload)
         except Exception as ex:
