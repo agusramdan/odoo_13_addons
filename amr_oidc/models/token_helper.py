@@ -175,6 +175,9 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):
+        if grant_type == 'client_credentials':
+            return self.env['oidc.client'].client_credentials(**kwargs)
+
         return {
             'status': 400,
             'error': "unsupported_grant_type",
@@ -206,6 +209,12 @@ class TokenHelper(models.AbstractModel):
         expires_in = expires_in or self.get_expires_in()
         access_token, payload = self._generate_token(
             payload, audience=audience, expires_in=expires_in, scope=scope
+        )
+        return access_token, payload, expires_in
+
+    def generate_user_token(self, user, audience=None, expires_in=None, scope='', **kw):
+        access_token, payload, expires_in = self._generate_user_token(
+            user, audience=audience, expires_in=expires_in, scope=scope, **kw
         )
         return access_token, payload, expires_in
 

@@ -155,14 +155,38 @@ class OidcClient(models.Model):
         })
 
     def create_access_token(self, redirect_uri=None, scope='', **kw):
-        if self.redirect_path:
-            redirect_uri = self.web_base_url + REDIRECT_MODE.get(self.redirect_path)
-        else:
-            redirect_uri = redirect_uri or self.redirect_uri
+        client = self
+        if not client:
+            client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
 
-        return self.env.user.create_access_token(
-            scope=scope, audience=self.client_id, redirect_uri=redirect_uri
-        )
+        if not client:
+            raise ValueError("Client Not Register")
+
+        if client.redirect_path:
+            redirect_uri = self.web_base_url + REDIRECT_MODE.get(client.redirect_path)
+        else:
+            redirect_uri = redirect_uri or client.redirect_uri
+        audience = kw.get('audience') or kw.get('aud') or None
+        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(
+            self.env.user, audience=audience, scope=scope
+        )[0]
+        return token, redirect_uri, expires_in
+
+    def client_credentials(self, **kw):
+        client = self
+        if not client:
+            client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(self.env.user, **kw)
+
+        return {
+            'access_token': token,
+            'token_type': 'Bearer',
+            'expires_in': expires_in,
+        }
 
     def encode(self, **kwargs):
         client = self
@@ -184,6 +208,7 @@ class OidcClient(models.Model):
 
         return self.env['amr.oidc.helper'].with_user(client.user_id).decode(token, **kwargs)
 
+    # deprecated use decode
     def validate_token(self, token, **kwargs):
         return self.decode(token, **kwargs)
 
