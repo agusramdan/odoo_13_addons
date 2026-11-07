@@ -157,6 +157,7 @@ class OidcClient(models.Model):
     def create_access_token(self, redirect_uri=None, scope='', **kw):
         client = self
         if not client:
+            # sudo: preserve source credential lookup; access review deferred.
             client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
 
         if not client:
@@ -175,6 +176,7 @@ class OidcClient(models.Model):
     def client_credentials(self, **kw):
         client = self
         if not client:
+            # sudo: preserve source credential lookup; access review deferred.
             client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
 
         if not client:
@@ -191,6 +193,7 @@ class OidcClient(models.Model):
     def encode(self, **kwargs):
         client = self
         if not client:
+            # sudo: preserve source credential lookup; access review deferred.
             client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
 
         if not client:
@@ -201,11 +204,13 @@ class OidcClient(models.Model):
     def decode(self, token, **kwargs):
         client = self
         if not client:
+            # sudo: preserve source credential lookup; access review deferred.
             client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
 
         if not client:
             raise ValueError("Client Not Register")
-
+        if not kwargs.get("audience"):
+            kwargs["audience"] = kwargs.get("aud") or client.name
         return self.env['amr.oidc.helper'].with_user(client.user_id).decode(token, **kwargs)
 
     # deprecated use decode
