@@ -1,7 +1,7 @@
 """Offline package contracts only; no registry, ORM, HTTP or security verdict.
 
-Run from repository root with:
-python3.7 -B -m unittest discover -s amr_oidc/tests/unit -p 'test_*.py' -v
+Run from repository root with the pinned Python 3.8.20 test image:
+python -B -m unittest discover -s amr_oidc/tests/unit -p 'test_*.py' -v
 The addon root is deliberately never imported.
 """
 import ast
@@ -80,29 +80,71 @@ class PackageContract(unittest.TestCase):
         self.assertTrue(refresh._description)
         self.assertEqual(refresh.user_id.args, ("res.users",))
 
-    # def test_helper_parent_dispatch_rejects_unhandled_grants(self):
-    #     helper = self.model("models/helper.py", "TokenHelper")
-    #     self.assertEqual(helper._inherit, "amr.oidc.helper")
-    #     # The isolated parent contract is fail-closed; no real token/auth flow runs.
-    #     expected = {"status": 400, "error": "unsupported_grant_type"}
-    #     self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7), expected)
-    #     self.assertEqual(helper().oidc_token(), expected)
-    #     self.assertNotIn("oidc_token", helper.__dict__)
+    def load_token_helper(self):
+        import types
+        package_names = (
+            "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
+            "cryptography.hazmat.primitives.asymmetric",
+        )
+        packages = {name: types.ModuleType(name) for name in package_names}
+        for name in package_names[:-1]:
+            packages[name].__path__ = []
+        setattr(packages["cryptography.hazmat.primitives.asymmetric"], "ec", mock.Mock())
+        setattr(packages["cryptography.hazmat.primitives.asymmetric"], "rsa", mock.Mock())
+        with mock.patch.dict("sys.modules", packages):
+            return self.model("models/token_helper.py", "TokenHelper")
 
-    # def test_oidc_helper_is_standalone_token_engine_base(self):
-    #     import types
-    #     packages = {name: types.ModuleType(name) for name in (
-    #         "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
-    #         "cryptography.hazmat.primitives.asymmetric")}
-    #     packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
-    #     packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
-    #     with mock.patch.dict("sys.modules", packages):
-    #         base = self.model("models/token_helper.py", "TokenHelper")
-    #     extension = self.model("models/helper.py", "TokenHelper")
-    #     self.assertEqual(base._name, "amr.oidc.helper")
-    #     self.assertEqual(extension._inherit, "amr.oidc.helper")
-    #     self.assertFalse(hasattr(extension, "_name"))
-    #     self.assertNotIn("amr.token.helper", self.source("models/token_helper.py"))
+    def test_helper_parent_dispatch_rejects_unhandled_grants(self):
+        helper_class = self.load_token_helper()
+        helper = helper_class()
+        client = mock.Mock()
+        client.client_credentials.return_value = {"access_token": "synthetic-token"}
+        helper.env = {"oidc.client": client}
+
+        grant_types = (
+            None, "client_credentials", "authorization_code", "refresh_token",
+            "password", "urn:ietf:params:oauth:grant-type:jwt-bearer", "unit_sentinel",
+        )
+        for grant_type in grant_types:
+            with self.subTest(grant_type=grant_type):
+                kwargs = {} if grant_type is None else {"grant_type": grant_type}
+                result = helper.oidc_token(**kwargs)
+                self.assertEqual(result.get("status"), 400)
+                self.assertEqual(result.get("error"), "unsupported_grant_type")
+                self.assertNotIn("access_token", result)
+        client.client_credentials.assert_not_called()
+
+    def test_unsupported_grant_handlers_are_not_registered(self):
+        helper_class = self.load_token_helper()
+        for method_name in (
+                "_do_password_grant", "_do_challenge_grant", "_do_digital_signature_grant"):
+            with self.subTest(method=method_name):
+                self.assertFalse(callable(getattr(helper_class, method_name, None)))
+
+    def test_oidc_helper_is_standalone_token_engine_base_and_adapter_alias(self):
+        helper_class = self.load_token_helper()
+        self.assertEqual(helper_class._name, "amr.oidc.helper")
+        self.assertNotIn("amr.token.helper", self.source("models/token_helper.py"))
+
+        adapter_path = ADDON.parent / "amr_token" / "models" / "helper.py"
+        adapter_tree = ast.parse(adapter_path.read_text(encoding="utf-8"))
+        adapter_class = next(
+            node for node in adapter_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "TokenHelper"
+        )
+        assignments = {
+            target.id: ast.literal_eval(statement.value)
+            for statement in adapter_class.body
+            if isinstance(statement, ast.Assign)
+            for target in statement.targets
+            if isinstance(target, ast.Name)
+        }
+        self.assertEqual(assignments.get("_name"), "amr.token.helper")
+        self.assertEqual(assignments.get("_inherit"), "amr.oidc.helper")
+        self.assertFalse(any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in adapter_class.body
+        ))
 
     def test_wizard_identity_only_not_export_or_generation(self):
         wizard = self.model("wizard/service_account.py", "OidcServiceAccountWizard")

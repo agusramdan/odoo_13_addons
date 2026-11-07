@@ -1,46 +1,26 @@
 # Modul `amr_oidc`
 
-> Riwayat dokumentasi: ADDONS13-37 pada snapshot `agusramdan/odoo_13_addons@6bd356e7386420e23b23d6f2874cb9c20944d003`; target candidate ADDONS13-39 berbasis T1 `a2684e704304e947464b3eec7d8d2ef734ec0aef`. Perubahan saat ini dijelaskan pada [catatan protokol ADDONS13-39](docs/addons13-39-protocol.md). Manifest versi `13.0.1.0.0`; dokumentasi belum dirilis/dipublikasikan.
-> Riwayat inspeksi ADDONS13-37: 2026-10-22; dokumentasi tetap DRAFT, belum dirilis/dipublikasikan.
-> Candidate ADDONS13-39 telah menjalani unit tests offline pada Python 3.7.9; ini bukan bukti instalasi/runtime Odoo, keamanan efektif, atau deployment. Odoo 13; tidak mengklaim migrasi atau kompatibilitas Odoo 20.
+> Ikhtisar source addon Odoo 13. Deklarasi source bukan bukti instalasi, registry, HTTP, ACL efektif, atau operasi runtime.
 
-## Ringkasan
+## Untuk Developer
 
-Addon ini memperluas helper token `amr_token`, mendeklarasikan lima model persisten dan satu wizard, beberapa rute HTTP, tampilan/menu serta ACL statis. Deklarasi tersebut tidak membuktikan alur OIDC end-to-end atau akses efektif. Candidate ADDONS13-39 menolak semua grant dan mengembalikan 404 pada handler OIDC Discovery; RFC 8414 tidak dipublikasikan. Lihat [catatan protokol ADDONS13-39](docs/addons13-39-protocol.md), [panduan pengembang](docs/developer.md), dan [panduan pengguna](docs/user.md).
+### Arsitektur source
 
-## Untuk Pengembang
+- `amr_oidc` memiliki implementasi provider di `models/token_helper.py`; registrasi model dapat ditelusuri dari `models/__init__.py`.
+- Manifest provider mendeklarasikan dependensi addon `base`, `base_setup`, dan `web`; `amr_oidc` tidak bergantung pada `amr_token` atau `amr_resource`.
+- `amr_token` dipertahankan sebagai adapter opsional satu arah ke provider. Adapter tidak memiliki implementasi token, route, atau ekstensi `res.users` duplikat.
+- Endpoint token menolak grant dengan `unsupported_grant_type`; OIDC Discovery tetap tidak tersedia. Addon ini bukan implementasi OIDC penuh.
+- Target kompatibilitas proyek: Odoo 13 / Python 3.8.20. Runtime Odoo tidak dibuktikan oleh dokumentasi source ini.
 
-README ini adalah indeks; panduan lengkap ada di [panduan pengembang](docs/developer.md).
+### Rujukan teknis
 
-- [Arsitektur dan dependensi](docs/developer.md#arsitektur)
-- [Model, field, relasi dan ACL](docs/developer.md#model-field-dan-relasi)
-- [Konsumen terverifikasi](docs/developer.md#konsumen-terverifikasi) dan [metode yang tampak pada kode](docs/developer.md#metode-yang-tampak-pada-kode-sumber)
-- [Konfigurasi dan galat](docs/developer.md#konfigurasi)
-- [Keamanan, batas protokol, Odoo 13 vs 20, dan peta kode sumber/hash](docs/developer.md#keamanan-dan-batas)
+- [Manifest provider](__manifest__.py)
+- Implementasi source berada di `models/`, `controllers/`, dan `views/`. Dokumen lama di `docs/` mungkin merujuk snapshot sebelumnya; gunakan source saat ini untuk detail implementasi.
 
-## Untuk Pengguna
+## Untuk User
 
-README ini adalah indeks; panduan lengkap ada di [panduan pengguna](docs/user.md).
+Tidak ada prosedur operasional instance yang dibuktikan oleh source ini. `docs/user.md` adalah panduan source historis, bukan instruksi untuk instalasi atau pengaturan instance aktif. Gunakan runbook administrator yang disetujui sebelum mengubah konfigurasi, ACL, key, atau data produksi.
 
-- [Tujuan, prasyarat, menu dan role](docs/user.md#tujuan-sasaran-pembaca-dan-prasyarat)
-- [Akses dan kebijakan](docs/user.md#akses-dan-kebijakan); [tanya jawab dan eskalasi](docs/user.md#tanya-jawab-dan-eskalasi)
+## Batas
 
-### Ringkasan kontrak
-
-- **Arsitektur:** graf impor addon memuat pengendali, model, dan wizard; helper mewarisi `amr.token.helper` dari `amr_token`.
-- **Model:** `oidc.client`, `oidc.authorization.code`, `oidc.client.key`, `oidc.jwt.replay`, `oidc.refresh.token`; detail atribut di panduan pengembang.
-- **Konsumen:** `amr_resource.get_oidc_config()` mengambil Discovery dari issuer dan digunakan oleh `generate_token()`, `introspect_token()`, dan `validate()`; issuer lokal dapat terdampak oleh route 404. Consumer/cache eksternal belum diinventarisasi.
-- **Metode/rute:** permukaan lokal dan jalur delegasi dirinci di panduan pengembang; bukan kontrak runtime/API teruji.
-- **Dependensi:** addon `base`, `web`, `amr_token`; Python `pyjwt`, `cryptography` menurut manifest. Target Python proyek 3.7.9; unit test dijalankan pada interpreter 3.7.9 dalam container, tetapi Odoo runtime belum diuji.
-- **Konfigurasi:** parameter yang tampak pada kode sumber: `amr_token.expires_in`, `amr_token.secret`, `web.base.url`; jangan menyalin atau mengubah nilai produksi berdasar dokumen ini.
-- **Galat:** hanya cabang kode sumber yang terlihat dijelaskan; perilaku runtime, percobaan ulang, dan idempotensi tidak ditetapkan.
-- **OIDC/protokol:** candidate fail-closed (`400 unsupported_response_type`/`unsupported_grant_type`, Discovery 404, tanpa RFC 8414 route); token exchange dan ID-token issuance tetap tidak tersedia. UAT runtime/consumer compatibility deferred.
-- **Keamanan/batas:** ACL adalah deklarasi statis; penegakan, visibilitas menu, peran efektif dan isolasi data belum diverifikasi. Lihat kebijakan eksplisit di kedua panduan.
-- **Pengguna/menu/peran, tanya jawab:** disediakan pada [panduan pengguna](docs/user.md).
-
-## Catatan versi dan riwayat perubahan
-
-- Versi Odoo sumber: 13; manifest `13.0.1.0.0`, lisensi `LGPL-3`; snapshot ADDONS13-37 `6bd356e7386420e23b23d6f2874cb9c20944d003` adalah riwayat dokumentasi; candidate ADDONS13-39 berbasis T1 `a2684e704304e947464b3eec7d8d2ef734ec0aef`.
-- Status migrasi 20.0: belum; tidak ada migrasi atau kompatibilitas Odoo 20 yang diklaim.
-- Status bukti: suite unit offline pada Python 3.7.9 dijalankan; runtime Odoo, deployment, dan kesiapan produksi belum diverifikasi.
-- Changelog 2026-10-22 (ADDONS13-37): indeks/panduan ditinjau terhadap snapshot kode sumber, PRD-DRAFT dan UAT-DRAFT yang diterima; bukti dan batasan dicatat di panduan. Tinjauan independen: PASS (Editor dan Reviewer); tidak ada PR, rilis, atau publikasi yang diklaim.
+Dokumen ini tidak menyatakan hasil Odoo registry/MRO, akses efektif, route dispatcher, database, kriptografi runtime, atau deployment. `amr_token` tetap tersedia sebagai adapter opsional; tidak ada prosedur migrasi database yang ditetapkan di sini.

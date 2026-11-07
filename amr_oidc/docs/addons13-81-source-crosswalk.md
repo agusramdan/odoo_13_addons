@@ -12,7 +12,7 @@ This static source-to-decision crosswalk is not a UAT result. **UAT-19 remains N
 | OD-02 | Preserve endpoint/authentication/response rules; grants unsupported. | Routes in `amr_oidc/controllers/main.py`; token helper `amr_oidc/models/token_helper.py::TokenHelper.oidc_token` fails closed. Adapter adds no grant implementation. |
 | OD-03 | Database UUID only defaults when audience is absent (`None`); explicit audience must be a non-empty string or a non-empty string array; invalid explicit/default values are rejected. | `amr_oidc/models/token_helper.py::TokenHelper.get_audience`, `_validate_audience`, `generate_token`, `generate_user_token`; `amr_oidc/models/res_users.py::ResUsers.get_access_token` defaults `audience=None`. URL helpers derive only for `None`. |
 | OD-04 | Keep legacy `token_views.xml` unregistered or discard it. | `amr_token/views/token_views.xml` is not in `amr_token/__manifest__.py::data`; adapter manifest data is empty. |
-| OD-05 | No response-enrichment hook/cross-addon response glue. | Adapter `amr_token/models/helper.py::TokenHelper` is an inheritance alias; legacy response hook names are absent. Controller response projection is local to `amr_oidc/controllers/main.py`. |
+| OD-05 | No glue addon is selected; provider and Resource Server remain independent without implicit integration. | No glue addon or provider-to-resource dependency is declared. HTTP response projection is local to `amr_oidc/controllers/main.py`; provider helper methods are mapped below and are not evidence of cross-addon integration. Runtime dispatch/MRO remains unverified. |
 | OD-06 | Local fail-closed validation; asymmetric JWT `kid` resolves to active OIDC key. Do not claim live crypto verification. | `amr_oidc/models/token_helper.py::TokenHelper.validate`, `validate_secret`, `validate_asymmetric`; `amr_oidc/models/public_key.py::PublicKey.validate_token` rejects inactive/missing active key and JWT header `kid` mismatch. |
 | OD-07 | Optional one-way adapter only; no grants, persistence, or response glue. | `amr_token/models/helper.py::TokenHelper` inherits `amr.oidc.helper`; provider implementation is in `amr_oidc`. `amr_token` depends on provider, not vice versa. Runtime MRO is unverified. |
 | OD-08 | Keep the independent Resource Server unchanged. | No `amr_resource` path changed; provider and adapter manifests do not depend on it. Static fact only, not installed dependency evidence. |
@@ -27,19 +27,19 @@ The bound inventory lists 34 class helper methods **and** module-level `get_algo
 | `get_algorith_config` (module-level) | `amr_oidc/models/token_helper.py::get_algorith_config`; class constant `TokenHelper.ALGORITHM_CONFIG` derives from it. |
 | `generate_key`, `private_key_to_pem`, `public_key_to_pem`, `create_public_key` | Internal signing/key material methods are `_generate_key`, `_private_key_to_pem`, `_public_key_to_pem`; `create_public_key` remains the model action entry point. `models/oidc_client.py::OidcClient.export_service_account` calls `TokenHelper._generate_key`. |
 | `get_header_token` | `TokenHelper.get_header_token` in `amr_oidc/models/token_helper.py`. |
-| `get_bearer_token` | Base `TokenHelper.get_bearer_token` in `amr_oidc/models/token_helper.py`; effective provider extension override is `amr_oidc/models/helper.py::TokenHelper.get_bearer_token`. |
-| `get_basic_auth` | Base `TokenHelper.get_basic_auth` in `amr_oidc/models/token_helper.py`; effective provider extension override is `amr_oidc/models/helper.py::TokenHelper.get_basic_auth`. |
+| `get_bearer_token` | `TokenHelper.get_bearer_token` in `amr_oidc/models/token_helper.py`; no separate provider extension class is imported by `models/__init__.py`. |
+| `get_basic_auth` | `TokenHelper.get_basic_auth` in `amr_oidc/models/token_helper.py`; no separate provider extension class is imported by `models/__init__.py`. |
 | `get_signature_type`, `get_signature_algorithm`, `get_expires_in`, `get_retention_in`, `get_secret`, `get_issuer`, `get_audience`, `get_token_endpoint`, `_service_account_endpoint_defaults` | Corresponding provider config methods in `amr_oidc/models/token_helper.py`; secret retrieval is private (`_get_secret`); audience behavior is OD-03. |
 | `oidc_jwks` | `TokenHelper.oidc_jwks` in `amr_oidc/models/token_helper.py`; route handler `ControllerOIDC.well_known_jwks`. |
 | `oidc_token` | `TokenHelper.oidc_token` in `amr_oidc/models/token_helper.py`; unsupported under OD-02. |
 | `_do_password_grant`, `_do_challenge_grant`, `_do_digital_signature_grant` | Explicit OD-02 disposition: no callable grant implementation retained in provider or adapter. |
 | `generate_user_token`, `encode`, `generate_token`, `generate_token_asymmetric`, `generate_token_secret` | Corresponding methods are internal (`_generate_user_token`, `_encode`, `_generate_token`, `_generate_token_asymmetric`, `_generate_token_secret`) in `amr_oidc/models/token_helper.py`; configured algorithms and OD-03 apply. User issuance rejects a non-self target unless the actor has `base.group_system`, before signing. `_generate_user_token` does not call `amr_resource` user-category methods; the resource-specific `type` claim is omitted because provider category policy is not defined (OD-05). |
 | `decode`, `validate`, `validate_secret`, `validate_asymmetric` | Corresponding `TokenHelper` methods in `amr_oidc/models/token_helper.py`; asymmetric lookup/validation is local and fail-closed (OD-06). |
-| `oidc_introspect` | Base `TokenHelper.oidc_introspect` in `amr_oidc/models/token_helper.py`; effective provider extension override `amr_oidc/models/helper.py::TokenHelper.oidc_introspect` returns inactive. Route logic is in controller. |
-| `oidc_profile` | Base `TokenHelper.oidc_profile` in `amr_oidc/models/token_helper.py`; effective provider extension override `amr_oidc/models/helper.py::TokenHelper.oidc_profile` returns inactive. Route logic is in controller. |
-| `oidc_introspect_payload_response_enhance`, `oidc_profile_payload_response_enhance` | Explicit OD-05 disposition: absent, unsupported extension APIs; no adapter hook replacement. |
+| `oidc_introspect` | `TokenHelper.oidc_introspect` in `amr_oidc/models/token_helper.py`. The HTTP handler is separately implemented in `amr_oidc/controllers/main.py` and projects an allowlist; this source mapping does not claim Odoo RPC behavior was verified. |
+| `oidc_profile` | `TokenHelper.oidc_profile` in `amr_oidc/models/token_helper.py`. The HTTP handler is separately implemented in `amr_oidc/controllers/main.py` and returns `sub`; this source mapping does not claim Odoo RPC behavior was verified. |
+| `oidc_introspect_payload_response_enhance`, `oidc_profile_payload_response_enhance` | Both methods are present in `amr_oidc/models/token_helper.py` and currently return the input data unchanged; no adapter override is registered in this candidate. Their effective runtime dispatch remains unverified. |
 
-Effective override qualification: `amr_oidc/models/helper.py::TokenHelper` overrides `get_bearer_token`, `get_basic_auth`, `oidc_introspect`, and `oidc_profile`; the base definitions remain mapped above as the directly corresponding base methods. Effective registry MRO itself is not asserted.
+Current provider registration: `amr_oidc/models/__init__.py` imports the helper definitions directly from `token_helper.py`; there is no provider `models/helper.py` extension in the registered source graph. `amr_token/models/helper.py::TokenHelper` is a separate optional alias inheriting `amr.oidc.helper`, not a provider override. Effective registry MRO itself is not asserted.
 
 ## Inventoried `res.users` methods
 
@@ -103,9 +103,10 @@ Exact `amr_oidc/__manifest__.py` data registrations, in declared order: `securit
 
 | Exact path | Disposition / runner |
 |---|---|
-| `amr_oidc/tests/unit/test_capability_fail_closed.py` | Offline `unittest.TestCase`; now in `tests/unit`, not imported by addon initializer; collected by isolated Python 3.7.9 unit runner. Moved from `amr_oidc/tests/test_capability_fail_closed.py`; imports support by explicit file path. |
+| `amr_oidc/tests/unit/test_capability_fail_closed.py` | Offline `unittest.TestCase`; now in `tests/unit`, not imported by addon initializer; collected by isolated Python 3.8.20 unit runner. Moved from `amr_oidc/tests/test_capability_fail_closed.py`; imports support by explicit file path. |
 | `amr_oidc/tests/unit/test_package_contract.py` | Offline unit test; isolated unit runner; not addon-registered. Reconciles the former candidate filename `amr_oidc/tests/test_package_contract.py` named in source/addendum evidence. |
 | `amr_oidc/tests/unit/test_provider_ownership.py` | Offline unit test; isolated unit runner; not addon-registered. |
+| `amr_oidc/tests/unit/test_token_issuer_security.py` | Offline security unit test for internal signing/access boundaries; isolated unit runner; not addon-registered. Odoo RPC dispatch remains unverified. |
 | `amr_oidc/tests/unit/test_standalone_package.py` | Offline unit test; isolated unit runner; not addon-registered. |
 | `amr_oidc/tests/test_helper_decode.py` | `TransactionCase` referencing `amr.resource.helper`; excluded from the provider's eight imports and not part of the offline unit run. It is not the Resource Server's `test_helper.py`. |
 | `amr_oidc/tests/support.py` | Shared isolated import doubles used by offline tests; not a test module/runner target and not imported through Odoo test initializer. |
@@ -133,6 +134,6 @@ The accepted addendum's source-test anchors `amr_oidc/tests/test_capability_fail
 | ACL, data, manifest | Exact provider data/demo registrations are itemized above; adapter data empty; source adapter ACL CSV was header-only. Declarations do not establish effective ACL/install state. |
 | No glue / no Resource Server dependency | OD-05 adapter lacks hooks; OD-08 resource addon unchanged and omitted from provider/adapter dependency lists. |
 
-Step 1 offline runner verification on the candidate: Python 3.7.9 skill runner `scripts/run_tests.py --addon amr_oidc` completed **59 passed**; `scripts/run_tests.py --addon amr_token` completed **2 passed**. The focused issuance-security module completed **9 passed**. These are isolated unit/contract suite results only; no Odoo server/RPC dispatch, ORM registry, ACL, database, HTTP or UAT was run.
+Step 1 unit-test execution evidence is recorded separately against the exact candidate SHA. This crosswalk is a static source mapping only; no Odoo server/RPC dispatch, ORM registry, ACL, database, HTTP or UAT result is claimed here.
 
 **UAT-19 status: NOT RUN.** This crosswalk maps source items and dispositions and records isolated suite execution separately; it does not convert those test runs into UAT-19, Odoo integration, runtime, cryptographic, registry, HTTP, ACL, or installation evidence.
