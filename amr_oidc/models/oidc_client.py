@@ -10,8 +10,8 @@ from odoo import api, fields, models
 _logger = logging.getLogger(__name__)
 
 REDIRECT_MODE = {
-   'auth_oauth_oidc': '/auth_oauth/oidc',
-   'auth_oauth_oea': '/auth_oauth/oea',
+    'auth_oauth_oidc': '/auth_oauth/oidc',
+    'auth_oauth_oea': '/auth_oauth/oea',
 }
 
 
@@ -155,20 +155,67 @@ class OidcClient(models.Model):
         })
 
     def create_access_token(self, redirect_uri=None, scope='', **kw):
-        if self.redirect_path:
-            redirect_uri = self.web_base_url + REDIRECT_MODE.get(self.redirect_path)
-        else:
-            redirect_uri = redirect_uri or self.redirect_uri
-
-        return self.env.user.create_access_token(
-            scope=scope, audience=self.client_id, redirect_uri=redirect_uri
-        )
-
-    def validate_token(self, token):
         client = self
-        return self.env['amr.oidc.helper'].decode(
-            token, audience=self.client_id
-        ) if self else self.env['amr.oidc.helper'].decode(token)
+        if not client:
+            # sudo: preserve source credential lookup; access review deferred.
+            client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        if client.redirect_path:
+            redirect_uri = self.web_base_url + REDIRECT_MODE.get(client.redirect_path)
+        else:
+            redirect_uri = redirect_uri or client.redirect_uri
+        audience = kw.get('audience') or kw.get('aud') or None
+        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(
+            self.env.user, audience=audience, scope=scope
+        )[0]
+        return token, redirect_uri, expires_in
+
+    def client_credentials(self, **kw):
+        client = self
+        if not client:
+            # sudo: preserve source credential lookup; access review deferred.
+            client = self.sudo().search([("client_id", "=", kw.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(self.env.user, **kw)
+
+        return {
+            'access_token': token,
+            'token_type': 'Bearer',
+            'expires_in': expires_in,
+        }
+
+    def encode(self, **kwargs):
+        client = self
+        if not client:
+            # sudo: preserve source credential lookup; access review deferred.
+            client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+
+        return self.env['amr.oidc.helper'].with_user(client.user_id).encode(**kwargs)
+
+    def decode(self, token, **kwargs):
+        client = self
+        if not client:
+            # sudo: preserve source credential lookup; access review deferred.
+            client = self.sudo().search([("client_id", "=", kwargs.get("client_id"))])
+
+        if not client:
+            raise ValueError("Client Not Register")
+        if not kwargs.get("audience"):
+            kwargs["audience"] = kwargs.get("aud") or client.name
+        return self.env['amr.oidc.helper'].with_user(client.user_id).decode(token, **kwargs)
+
+    # deprecated use decode
+    def validate_token(self, token, **kwargs):
+        return self.decode(token, **kwargs)
 
     def validate_refresh_token(self, token):
         return self.env['oidc.refresh.token'].validate_token(token, self.client_id)

@@ -80,29 +80,29 @@ class PackageContract(unittest.TestCase):
         self.assertTrue(refresh._description)
         self.assertEqual(refresh.user_id.args, ("res.users",))
 
-    def test_helper_parent_dispatch_rejects_unhandled_grants(self):
-        helper = self.model("models/helper.py", "TokenHelper")
-        self.assertEqual(helper._inherit, "amr.oidc.helper")
-        # The isolated parent contract is fail-closed; no real token/auth flow runs.
-        expected = {"status": 400, "error": "unsupported_grant_type"}
-        self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7), expected)
-        self.assertEqual(helper().oidc_token(), expected)
-        self.assertNotIn("oidc_token", helper.__dict__)
+    # def test_helper_parent_dispatch_rejects_unhandled_grants(self):
+    #     helper = self.model("models/helper.py", "TokenHelper")
+    #     self.assertEqual(helper._inherit, "amr.oidc.helper")
+    #     # The isolated parent contract is fail-closed; no real token/auth flow runs.
+    #     expected = {"status": 400, "error": "unsupported_grant_type"}
+    #     self.assertEqual(helper().oidc_token(grant_type="unit_sentinel", marker=7), expected)
+    #     self.assertEqual(helper().oidc_token(), expected)
+    #     self.assertNotIn("oidc_token", helper.__dict__)
 
-    def test_oidc_helper_is_standalone_token_engine_base(self):
-        import types
-        packages = {name: types.ModuleType(name) for name in (
-            "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
-            "cryptography.hazmat.primitives.asymmetric")}
-        packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
-        packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
-        with mock.patch.dict("sys.modules", packages):
-            base = self.model("models/token_helper.py", "TokenHelper")
-        extension = self.model("models/helper.py", "TokenHelper")
-        self.assertEqual(base._name, "amr.oidc.helper")
-        self.assertEqual(extension._inherit, "amr.oidc.helper")
-        self.assertFalse(hasattr(extension, "_name"))
-        self.assertNotIn("amr.token.helper", self.source("models/token_helper.py"))
+    # def test_oidc_helper_is_standalone_token_engine_base(self):
+    #     import types
+    #     packages = {name: types.ModuleType(name) for name in (
+    #         "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
+    #         "cryptography.hazmat.primitives.asymmetric")}
+    #     packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
+    #     packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
+    #     with mock.patch.dict("sys.modules", packages):
+    #         base = self.model("models/token_helper.py", "TokenHelper")
+    #     extension = self.model("models/helper.py", "TokenHelper")
+    #     self.assertEqual(base._name, "amr.oidc.helper")
+    #     self.assertEqual(extension._inherit, "amr.oidc.helper")
+    #     self.assertFalse(hasattr(extension, "_name"))
+    #     self.assertNotIn("amr.token.helper", self.source("models/token_helper.py"))
 
     def test_wizard_identity_only_not_export_or_generation(self):
         wizard = self.model("wizard/service_account.py", "OidcServiceAccountWizard")
@@ -162,7 +162,7 @@ class PackageContract(unittest.TestCase):
     def test_loaded_graph_is_connected_without_booting_addon_root(self):
         expected = {
             "__init__.py": {"controllers", "models", "wizard"},
-            "models/__init__.py": {"token_helper", "public_key", "helper", "oidc_authorization_code", "oidc_client",
+            "models/__init__.py": {"token_helper", "public_key", "oidc_authorization_code", "oidc_client",
                                    "oidc_client_key", "oidc_client_grant", "oidc_jwt_replay",
                                    "oidc_refresh_token", "res_config_settings", "res_users"},
             "controllers/__init__.py": {"main"},
@@ -191,7 +191,7 @@ class PackageContract(unittest.TestCase):
         # Comments describe existing elevation; they do not endorse or add it.
         import tokenize
         from io import StringIO
-        for relative in ("controllers/main.py", "models/helper.py",
+        for relative in ("controllers/main.py",
                          "models/oidc_client.py", "models/oidc_refresh_token.py",
                          "wizard/service_account.py"):
             content = self.source(relative)

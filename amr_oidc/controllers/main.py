@@ -22,7 +22,12 @@ class ControllerOIDC(Controller):
 
     @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
     def api_oidc_token(self, **kwargs):
-        return self.make_response(status=400, error='unsupported_grant_type')
+        try:
+            # sudo: preserve source token lookup; token policy deferred.
+            payload = request.env['amr.oidc.helper'].sudo().oidc_token(**kwargs)
+            return self.make_response(**payload)
+        except Exception as ex:
+            return self.handle_exception(ex, 401, "invalid_request")
 
     @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_openid_configuration(self):

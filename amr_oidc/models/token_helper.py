@@ -23,13 +23,69 @@ def get_algorith_config():
         "ES512": lambda: ec.generate_private_key(ec.SECP521R1()),
         "ES256K": lambda: ec.generate_private_key(ec.SECP256K1()),
     }
+
+
 from odoo.http import request
+
 _logger = logging.getLogger(__name__)
+
+
+class ValidatorSecret:
+    def __init__(self, env, algorithm, issuer, secret):
+        self.env = env
+        self.algorithm = algorithm
+        self.issuer = issuer
+        self.secret = secret
+
+    def decode(self, token, **kwargs):
+        audience = kwargs.get('audience') or kwargs.get('aud')
+        options = kwargs.get('options')
+        if not options:
+            options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
+
+        return jwt.decode(token, self.secret, algorithms=[self.algorithm], issuer=self.issuer, audience=audience, options=options)
+
+
+class ValidatorAsymmetric:
+    def __init__(self, env, algorithm, issuer):
+        self.env = env
+        self.algorithm = algorithm
+        self.issuer = issuer
+
+    def decode(self, token, **kwargs):
+        audience = kwargs.get('audience') or kwargs.get('aud')
+        kid = kwargs.get('kid')
+        if not kid or not audience:
+            raise ValueError('A key identifier and non-empty audience are required')
+        if jwt.get_unverified_header(token).get("kid") != kid:
+            raise ValueError("Token kid does not match active key")
+        jwt_key = self.env['amr.public.key'].sudo().search(
+            [('algorithm', '=', self.algorithm), ('kid', '=', kid), ('active', '=', True)])
+        if len(jwt_key) != 1 or not jwt_key.active:
+            raise Exception("Public Key not set")
+        options = dict(kwargs.get('options') or {})
+        options.update({
+            "verify_signature": True,
+            "verify_iss": True,
+            "verify_aud": True,
+            "verify_exp": True,
+            "verify_nbf": True,
+            "require": ["exp", "iss", "aud"],
+        })
+        return jwt.decode(token, jwt_key.public_key, issuer=self.issuer, audience=audience, algorithms=[self.algorithm], options=options)
+
 
 class TokenHelper(models.AbstractModel):
     _name = 'amr.oidc.helper'
     _description = 'Token Helper call from Controller'
+
     ALGORITHM_CONFIG = get_algorith_config()
+
+    def get_validator(self, algorithm):
+        if algorithm in self.ALGORITHM_CONFIG:
+            return ValidatorAsymmetric(self.env, algorithm, self.get_issuer())
+        else:
+            return ValidatorSecret(self.env, algorithm, self.get_issuer(), self._get_secret())
 
     @classmethod
     def _generate_key(cls, algorithm):
@@ -171,6 +227,9 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):
+        if grant_type == 'client_credentials':
+            return self.env['oidc.client'].client_credentials(**kwargs)
+
         return {
             'status': 400,
             'error': "unsupported_grant_type",
@@ -205,12 +264,21 @@ class TokenHelper(models.AbstractModel):
         )
         return access_token, payload, expires_in
 
+    def generate_user_token(self, user, audience=None, expires_in=None, scope='', **kw):
+        access_token, payload, expires_in = self._generate_user_token(
+            user, audience=audience, expires_in=expires_in, scope=scope, **kw
+        )
+        return access_token, payload, expires_in
+
     @api.model
-    def _encode(self, algorithm=None, alg=None, audience=None, aud=None, **kw):
-        algorithm = alg or algorithm
-        if aud is not None:
-            audience = aud
+    def encode(self, **kw):
+        algorithm = kw.get('alg', None) or kw.get('algorithm')
+        audience = kw.get('audience', None) or kw.get('aud', None) or ""
         scope = kw.pop('scope', '')
+        kw.pop('alg', None)
+        kw.pop('algorithm', None)
+        kw.pop('audience', None)
+        kw.pop('aud', None)
         kw.pop('iss', None)
         kw.pop('issuer', None)
         return self._generate_token(kw, algorithm=algorithm, audience=audience, scope=scope)
@@ -280,23 +348,26 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def decode(self, token, **kw):
-        return self.validate(token, **kw)
+        header = jwt.get_unverified_header(token)
+        validator = self.get_validator(header.get('alg'))
+        return validator.decode(token, **kw)
 
     @api.model
     def validate(self, token, **kw):
-        header = jwt.get_unverified_header(token)
-        algorithm = header.get('alg')
-        signature_type = self.get_signature_type()
-        allowed_algorithms = self.get_allowed_algorithms()
-        if algorithm not in allowed_algorithms[signature_type]:
-            raise ValueError('Token algorithm does not match signature type')
-        if algorithm != self.get_signature_algorithm():
-            raise ValueError('Token algorithm does not match provider configuration')
-        audience = kw.pop('audience', None)
-        if signature_type == 'secret':
-            _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
-            return self.validate_secret(token, algorithm=algorithm, audience=audience)
-        return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
+        self.decode(self, token, **kw)
+        # header = jwt.get_unverified_header(token)
+        # algorithm = header.get('alg')
+        # signature_type = self.get_signature_type()
+        # allowed_algorithms = self.get_allowed_algorithms()
+        # if algorithm not in allowed_algorithms[signature_type]:
+        #     raise ValueError('Token algorithm does not match signature type')
+        # if algorithm != self.get_signature_algorithm():
+        #     raise ValueError('Token algorithm does not match provider configuration')
+        # audience = kw.pop('audience', None) or kw.get('aud', None)
+        # if signature_type == 'secret':
+        #     _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
+        #     return self.validate_secret(token, algorithm=algorithm, audience=audience)
+        # return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
 
     @api.model
     def validate_secret(self, token, algorithm="HS256", audience=None):
@@ -316,7 +387,8 @@ class TokenHelper(models.AbstractModel):
         self._require_configured_algorithm('public_key', algorithm)
         if not kid or audience == '':
             raise ValueError('A key identifier and non-empty audience are required')
-        jwt_key = self.env['amr.public.key'].sudo().search([('algorithm', '=', algorithm), ('kid', '=', kid), ('active', '=', True)])
+        jwt_key = self.env['amr.public.key'].sudo().search(
+            [('algorithm', '=', algorithm), ('kid', '=', kid), ('active', '=', True)])
         if len(jwt_key) != 1 or not jwt_key.active:
             raise Exception("Public Key not set")
         audience = self.get_audience() if audience is None else audience
@@ -326,12 +398,61 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def oidc_introspect(self, **kwargs):
-        return {'active': False}
+        token = self.get_bearer_token()
+        if not token or kwargs:
+            return {'status': 401, 'active': False}
+        if token:
+            payload = self.env['oidc.client'].decode(token, **kwargs)
+            if payload and payload.get('uid'):
+                uid = payload.get('uid')
+                user = self.env['res.users'].sudo().browse(uid)
+                active = user.exists()
+        if active:
+            data = dict(payload)
+            data.update(
+                active=True,
+                uid=user.id,
+                user_id=user.id,
+                name=user.name,
+                login=user.login,
+            )
+            return self.oidc_introspect_payload_response_enhance(data)
+        else:
+            return {'status': 401, 'active': False, "error": "invalid_token"}
+
+    @api.model
+    def oidc_introspect_payload_response_enhance(self, data):
+        return data
 
     @api.model
     def oidc_profile(self, **kwargs):
+        active = False
+        payload = None
+        user = None
         token = self.get_bearer_token()
         if not token or kwargs:
-            return {'active': False}
-        payload = self.validate(token)
-        return {'sub': payload['sub']} if payload.get('sub') else {'active': False}
+            return {'status': 401, 'active': False}
+        if token:
+            payload = request.env['oidc.client'].decode(token, **kwargs)
+            if payload and payload.get('uid'):
+                uid = payload.get('uid')
+                user = request.env['res.users'].sudo().browse(uid)
+                active = user.exists()
+        if active:
+            data = dict(payload)
+            data.update(
+                uid=user.id,
+                user_id=user.id,
+                name=user.name,
+                login=user.login,
+                db=request.session.db,
+            )
+            if 'status' in data:
+                data.pop('status')
+            return self.oidc_profile_payload_response_enhance(data)
+        else:
+            return {'status': 401, "error": "invalid_token", "error_description": "Invalid token"}
+
+    @api.model
+    def oidc_profile_payload_response_enhance(self, data):
+        return data

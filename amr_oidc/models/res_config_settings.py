@@ -72,4 +72,5 @@ class ResConfigSettings(models.TransientModel):
     # will remove
 
     def action_create_public_key(self):
+        # sudo: preserve source refresh lookup; refresh policy deferred.
         self.env['amr.oidc.helper'].sudo().create_public_key(self.amr_token_public_key_algorithm)
