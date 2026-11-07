@@ -10,7 +10,7 @@ This static source-to-decision crosswalk is not a UAT result. **UAT-19 remains N
 |---|---|---|
 | OD-01 | Reject persistent `amr.token`; persistent `res.users.create_access_token` fails with controlled `UserError`. | No `amr.token` model in `amr_token/models/` or `amr_oidc/models/`; `amr_token/models/helper.py` is only an alias to `amr.oidc.helper`. `amr_oidc/models/res_users.py::ResUsers.create_access_token` raises `UserError`. |
 | OD-02 | Preserve endpoint/authentication/response rules; grants unsupported. | Routes in `amr_oidc/controllers/main.py`; token helper `amr_oidc/models/token_helper.py::TokenHelper.oidc_token` fails closed. Adapter adds no grant implementation. |
-| OD-03 | Database UUID only defaults when audience is absent (`None`); explicit empty is rejected. | `amr_oidc/models/token_helper.py::TokenHelper.get_audience`, `generate_token`, `generate_user_token`; `amr_oidc/models/res_users.py::ResUsers.get_access_token` defaults `audience=None`. URL helpers derive only for `None`. |
+| OD-03 | Database UUID only defaults when audience is absent (`None`); explicit audience must be a non-empty string or a non-empty string array; invalid explicit/default values are rejected. | `amr_oidc/models/token_helper.py::TokenHelper.get_audience`, `_validate_audience`, `generate_token`, `generate_user_token`; `amr_oidc/models/res_users.py::ResUsers.get_access_token` defaults `audience=None`. URL helpers derive only for `None`. |
 | OD-04 | Keep legacy `token_views.xml` unregistered or discard it. | `amr_token/views/token_views.xml` is not in `amr_token/__manifest__.py::data`; adapter manifest data is empty. |
 | OD-05 | No response-enrichment hook/cross-addon response glue. | Adapter `amr_token/models/helper.py::TokenHelper` is an inheritance alias; legacy response hook names are absent. Controller response projection is local to `amr_oidc/controllers/main.py`. |
 | OD-06 | Local fail-closed validation; asymmetric JWT `kid` resolves to active OIDC key. Do not claim live crypto verification. | `amr_oidc/models/token_helper.py::TokenHelper.validate`, `validate_secret`, `validate_asymmetric`; `amr_oidc/models/public_key.py::PublicKey.validate_token` rejects inactive/missing active key and JWT header `kid` mismatch. |
@@ -32,7 +32,7 @@ The bound inventory lists 34 class helper methods **and** module-level `get_algo
 | `oidc_jwks` | `TokenHelper.oidc_jwks` in `amr_oidc/models/token_helper.py`; route handler `ControllerOIDC.well_known_jwks`. |
 | `oidc_token` | `TokenHelper.oidc_token` in `amr_oidc/models/token_helper.py`; unsupported under OD-02. |
 | `_do_password_grant`, `_do_challenge_grant`, `_do_digital_signature_grant` | Explicit OD-02 disposition: no callable grant implementation retained in provider or adapter. |
-| `generate_user_token`, `encode`, `generate_token`, `generate_token_asymmetric`, `generate_token_secret` | Corresponding `TokenHelper` methods in `amr_oidc/models/token_helper.py`; configured algorithms and OD-03 apply. |
+| `generate_user_token`, `encode`, `generate_token`, `generate_token_asymmetric`, `generate_token_secret` | Corresponding `TokenHelper` methods in `amr_oidc/models/token_helper.py`; configured algorithms and OD-03 apply. `generate_user_token` does not call `amr_resource` user-category methods; the resource-specific `type` claim is omitted because provider category policy is not defined (OD-05). |
 | `decode`, `validate`, `validate_secret`, `validate_asymmetric` | Corresponding `TokenHelper` methods in `amr_oidc/models/token_helper.py`; asymmetric lookup/validation is local and fail-closed (OD-06). |
 | `oidc_introspect` | Base `TokenHelper.oidc_introspect` in `amr_oidc/models/token_helper.py`; effective provider extension override `amr_oidc/models/helper.py::TokenHelper.oidc_introspect` returns inactive. Route logic is in controller. |
 | `oidc_profile` | Base `TokenHelper.oidc_profile` in `amr_oidc/models/token_helper.py`; effective provider extension override `amr_oidc/models/helper.py::TokenHelper.oidc_profile` returns inactive. Route logic is in controller. |
@@ -96,6 +96,8 @@ Exact `amr_oidc/__manifest__.py` data registrations, in declared order: `securit
 
 ### Provider (`amr_oidc`) current candidate tests
 
+`amr_oidc/tests/test_introspect_query_rejection.py` is registered as an Odoo `HttpCase` and asserts cleartext rejection only; it does not prove HTTPS success or query rejection. Secure handler behavior and query rejection are covered by isolated controller tests in `tests/unit/test_standalone_package.py`, using Odoo 13's query/form-to-route-kwargs mapping. Actual HTTPS transport/dispatch remains NOT RUN.
+
 `amr_oidc/tests/__init__.py` imports exactly these eight Odoo integration modules (registered for Odoo discovery, not run as integration tests here): `amr_oidc/tests/test_public_key_ownership.py`, `amr_oidc/tests/test_public_key_orm.py`, `amr_oidc/tests/test_jwks_route.py`, `amr_oidc/tests/test_introspect_query_rejection.py`, `amr_oidc/tests/test_replay_acl.py`, `amr_oidc/tests/test_oidc_client_identity.py`, `amr_oidc/tests/test_client_secret_verifier.py`, and `amr_oidc/tests/test_client_registration.py`.
 
 | Exact path | Disposition / runner |
@@ -130,6 +132,6 @@ The accepted addendum's source-test anchors `amr_oidc/tests/test_capability_fail
 | ACL, data, manifest | Exact provider data/demo registrations are itemized above; adapter data empty; source adapter ACL CSV was header-only. Declarations do not establish effective ACL/install state. |
 | No glue / no Resource Server dependency | OD-05 adapter lacks hooks; OD-08 resource addon unchanged and omitted from provider/adapter dependency lists. |
 
-Offline runner verification for this reconciliation: skill runner `scripts/run_tests.py --addon amr_oidc` completed **45 passed**; the same runner with `--addon amr_token` completed **2 passed** (Python 3.7.9). These are isolated unit/contract suite results only.
+Offline runner verification for this reconciliation: skill runner `scripts/run_tests.py --addon amr_oidc` completed **50 passed**; the same runner with `--addon amr_token` completed **2 passed** (Python 3.7.9). These are isolated unit/contract suite results only.
 
 **UAT-19 status: NOT RUN.** This crosswalk maps source items and dispositions and records isolated suite execution separately; it does not convert those test runs into UAT-19, Odoo integration, runtime, cryptographic, registry, HTTP, ACL, or installation evidence.

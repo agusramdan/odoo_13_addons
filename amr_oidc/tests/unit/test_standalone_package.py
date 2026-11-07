@@ -20,7 +20,7 @@ class StandalonePackageTests(unittest.TestCase):
         self.assertNotIn("amr_token", dependencies)
         self.assertNotIn("amr_resource", dependencies)
 
-    def test_introspection_rejects_non_post_and_query_token_before_lookup(self):
+    def test_introspection_rejects_non_post_before_lookup(self):
         import importlib.util
         support_path = ADDON_ROOT / "tests" / "support.py"
         spec = importlib.util.spec_from_file_location("oidc_test_support", str(support_path))
@@ -29,12 +29,32 @@ class StandalonePackageTests(unittest.TestCase):
         module = support.load_controller()
         controller = module.ControllerOIDC()
         module.request.httprequest = SimpleNamespace(
-            method="GET", args={"token": "[REDACTED]"}, is_secure=True,
-            form={}, headers={},
+            method="GET", args={}, is_secure=True, form={}, headers={},
         )
         helper = mock.Mock()
         module.request.env = {"amr.oidc.helper": helper}
         response = controller.api_oidc_introspect()
+        self.assertEqual(response.status_code, 400)
+        helper.validate.assert_not_called()
+
+    def test_introspection_rejects_query_token_even_when_form_overrides_route_kwarg(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_query", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        module = support.load_controller()
+        controller = module.ControllerOIDC()
+        helper = mock.Mock()
+        module.request.env = {"amr.oidc.helper": helper}
+        module.request.httprequest = SimpleNamespace(
+            method="POST", args={"token": "[REDACTED]"}, is_secure=True,
+            form={"token": "[REDACTED]"}, headers={},
+        )
+
+        # Odoo 13 merges form params over query params before calling **kwargs.
+        response = controller.api_oidc_introspect(token="[REDACTED]")
+
         self.assertEqual(response.status_code, 400)
         helper.validate.assert_not_called()
 
@@ -225,6 +245,38 @@ class StandalonePackageTests(unittest.TestCase):
         _, client_payload = helper.generate_token({}, expires_in=60, audience="client-audience")
         self.assertEqual(client_payload["aud"], "client-audience")
 
+    def test_generation_rejects_malformed_audience_values(self):
+        helper = self._audience_alias_helper()
+        invalid_audiences = (False, 0, [], ["client-audience", False], {})
+        for audience in invalid_audiences:
+            with self.subTest(audience_type=type(audience).__name__):
+                with self.assertRaisesRegex(ValueError, "audience"):
+                    helper.generate_token({}, expires_in=60, audience=audience)
+
+    def test_generation_rejects_empty_configured_audience(self):
+        helper = self._audience_alias_helper()
+        helper.get_audience = lambda: ""
+        with self.assertRaisesRegex(ValueError, "audience"):
+            helper.generate_token({}, expires_in=60)
+
+    def test_generation_accepts_audience_array_of_strings(self):
+        helper = self._audience_alias_helper()
+        audience = ["client-one", "client-two"]
+        _, payload = helper.generate_token({}, expires_in=60, audience=audience)
+        self.assertEqual(payload["aud"], audience)
+
+    def test_user_token_generation_does_not_require_resource_user_types(self):
+        helper = self._audience_alias_helper()
+        user = SimpleNamespace(id=7, login="user", email="u@example.invalid")
+
+        _, payload, _ = helper.generate_user_token(
+            user, audience="client-audience", expires_in=60
+        )
+
+        self.assertEqual(payload["uid"], 7)
+        self.assertEqual(payload["aud"], "client-audience")
+        self.assertNotIn("type", payload)
+
     def test_generate_user_token_alias_preserves_explicit_empty_audience(self):
         self._assert_empty_user_audience_rejected()
 
@@ -257,10 +309,7 @@ class StandalonePackageTests(unittest.TestCase):
 
     def _assert_empty_user_audience_rejected(self):
         helper = self._audience_alias_helper()
-        user = SimpleNamespace(id=1, login="user", email="u@example.invalid",
-                               is_user_machine=lambda: False,
-                               is_user_business=lambda: False,
-                               is_user_technical=lambda: False)
+        user = SimpleNamespace(id=1, login="user", email="u@example.invalid")
         with self.assertRaisesRegex(ValueError, "audience"):
             helper.generate_user_token(user, audience="")
 
@@ -323,9 +372,6 @@ class StandalonePackageTests(unittest.TestCase):
         helper.generate_token_secret = lambda payload, algorithm: (
             captured.update(payload) or "synthetic-token", payload)
         model.id, model.login, model.email = 7, "user", "u@example.invalid"
-        model.is_user_machine = lambda: False
-        model.is_user_business = lambda: False
-        model.is_user_technical = lambda: False
         model.env = {"amr.oidc.helper": helper}
 
         result = model.get_access_token()
@@ -342,9 +388,6 @@ class StandalonePackageTests(unittest.TestCase):
         model = support.load("models/res_users.py").ResUsers()
         helper = self._audience_alias_helper()
         model.id, model.login, model.email = 7, "user", "u@example.invalid"
-        model.is_user_machine = lambda: False
-        model.is_user_business = lambda: False
-        model.is_user_technical = lambda: False
         model.env = {"amr.oidc.helper": helper}
 
         with self.assertRaisesRegex(ValueError, "audience"):

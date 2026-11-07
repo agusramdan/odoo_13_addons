@@ -174,13 +174,7 @@ class TokenHelper(models.AbstractModel):
         if audience is None:
             audience = kw.pop('aud', None)
         payload = dict(kw)
-        if user.is_user_machine():
-            payload['type'] = 'machine'
-        elif user.is_user_business():
-            payload['type'] = 'user'
-        elif user.is_user_technical():
-            payload['type'] = 'technical'
-
+        # User categories belong to amr_resource; the provider has no category policy.
         payload.update({
             'uid': user.id,
             'user_id': user.login,
@@ -208,6 +202,15 @@ class TokenHelper(models.AbstractModel):
         return self.generate_token(kw, algorithm=algorithm, audience=audience, scope=scope)
 
     @api.model
+    def _validate_audience(self, audience):
+        if isinstance(audience, str) and audience.strip():
+            return audience
+        if (isinstance(audience, list) and audience
+                and all(isinstance(value, str) and value.strip() for value in audience)):
+            return audience
+        raise ValueError('A valid audience is required')
+
+    @api.model
     def generate_token(self, payload, algorithm=None, issuer=None, expires_in=None, audience=None, scope=''):
         signature_type = self.get_signature_type()
         configured_algorithm = self.get_signature_algorithm()
@@ -225,9 +228,8 @@ class TokenHelper(models.AbstractModel):
             raise ValueError('JWT Secret not set')
         expires_in = expires_in or self.get_expires_in()
         expire = int(time.time()) + expires_in
-        if audience == '':
-            raise ValueError('An explicit audience cannot be empty')
         audience = self.get_audience() if audience is None else audience
+        audience = self._validate_audience(audience)
         payload.update({
             'iss': self.get_issuer() or issuer,
             'aud': audience,
