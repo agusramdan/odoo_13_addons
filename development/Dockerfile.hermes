@@ -1,0 +1,23 @@
+FROM python:3.10-slim
+
+# Install system dependencies yang dibutuhkan git, curl, build-essential, dan code-server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install code-server secara otomatis dari script resmi
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
+WORKDIR /workspace
+
+# Install dependencies umum untuk agen AI / Hermes
+RUN pip install --no-cache-dir requests pydantic
+
+# Expose port code-server (default port: 8080)
+EXPOSE 8080
+
+# Menjalankan code-server di latar belakang (tanpa password untuk kemudahan dev lokal, atau atur sesuai kebutuhan)
+# sekaligus menjalankan agen atau menjaga container tetap hidup
+CMD ["sh", "-c", "code-server --bind-addr 0.0.0.0:8080 --auth none & python3 -c 'print(\"Hermes Agent & Code-Server Sandbox Ready.\")' && sleep infinity"]
