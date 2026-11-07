@@ -78,7 +78,7 @@ class PublicKey(models.Model):
         public_key = serialization.load_pem_public_key(self.public_key.encode('utf-8'))
         return public_key
 
-    def get_private_key(self):
+    def _get_private_key(self):
         record = self
         source = record.source
         if source == "database":
@@ -127,7 +127,7 @@ class PublicKey(models.Model):
             list_key.append(jwk_dict)
         return list_key
 
-    def generate_token(self, payload):
+    def _generate_token(self, payload):
         return jwt.encode(payload, self.private_key, algorithm=self.algorithm, headers={'kid': self.kid})
 
     def validate_token(self, token, issuer=None, audience=None, options=None):
@@ -155,6 +155,6 @@ class PublicKey(models.Model):
             raise
 
     def action_generate_key(self):
-        data = self.env['amr.oidc.helper'].generate_key(self.algorithm)
+        data = self.env['amr.oidc.helper']._generate_key(self.algorithm)
         data.pop('source', None)
         self.write(data)

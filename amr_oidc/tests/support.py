@@ -31,6 +31,10 @@ class StubResponse:
         self.response = response
 
 
+class AccessError(Exception):
+    """Minimal Odoo access-denial exception for isolated model tests."""
+
+
 class StubNotFound(Exception):
     code = 404
     description = "Not Found"
@@ -61,6 +65,8 @@ def load(relative, parent_helper=None):
     exceptions = ModuleType('odoo.exceptions')
     setattr(exceptions, 'UserError', type('UserError', (Exception,), {}))
     setattr(exceptions, 'ValidationError', type('ValidationError', (Exception,), {}))
+    setattr(exceptions, 'AccessError', AccessError)
+    setattr(odoo, 'exceptions', exceptions)
     tools = ModuleType('odoo.tools')
     setattr(tools, 'ormcache', lambda *_keys: (lambda function: function))
     setattr(tools, 'config', {})

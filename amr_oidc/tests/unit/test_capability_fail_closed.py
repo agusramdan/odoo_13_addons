@@ -63,8 +63,8 @@ class TestFailClosedOidcSurface(unittest.TestCase):
 
     def test_service_account_export_keeps_its_internal_endpoint_consumer(self):
         module = load("models/oidc_client.py")
-        helper = mock.Mock(spec=["generate_key", "_service_account_endpoint_defaults"])
-        helper.generate_key.return_value = {
+        helper = mock.Mock(spec=["_generate_key", "_service_account_endpoint_defaults"])
+        helper._generate_key.return_value = {
             "kid": "synthetic-kid",
             "private_key": "synthetic-private-key",
             "public_key": "synthetic-public-key",

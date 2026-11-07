@@ -175,7 +175,7 @@ class OidcClient(models.Model):
 
     def export_service_account(self, algorithm):
         self.ensure_one()
-        key_pair = self.env['amr.oidc.helper'].generate_key(algorithm)
+        key_pair = self.env['amr.oidc.helper']._generate_key(algorithm)
         result = self.env['amr.oidc.helper']._service_account_endpoint_defaults()
         # "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         # "token_uri": "https://oauth2.googleapis.com/token",

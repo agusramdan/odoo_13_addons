@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from odoo import api, models
-from odoo.exceptions import UserError
+from odoo.exceptions import AccessError, UserError
 from odoo.tools import ormcache
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import werkzeug
@@ -28,9 +28,12 @@ class ResUsers(models.Model):
     @ormcache('uid', 'audience', 'bucket')
     def _get_access_token(self, uid, audience, bucket):
         user = self if uid == self.id else self.browse(uid)
-        return self.env['amr.oidc.helper'].generate_user_token(user, audience=audience)[0]
+        return self.env['amr.oidc.helper']._generate_user_token(user, audience=audience)[0]
 
     def get_access_token(self, create=False, audience=None, **kw):
+        self.ensure_one()
+        if self.id != self.env.uid and not self.env.user.has_group('base.group_system'):
+            raise AccessError('You may only issue an access token for yourself.')
         if not self.is_user_allow_create_token():
             raise UserError('User not allowed to create access token')
         import time

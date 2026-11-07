@@ -10,6 +10,11 @@ from unittest import mock
 ADDON_ROOT = Path(__file__).resolve().parents[2]
 
 
+class UnitEnv(dict):
+    uid = 7
+    user = SimpleNamespace(has_group=lambda group: False)
+
+
 class StandalonePackageTests(unittest.TestCase):
     def test_provider_manifest_does_not_require_token_or_resource_addons(self):
         manifest = ast.literal_eval(
@@ -212,7 +217,7 @@ class StandalonePackageTests(unittest.TestCase):
         helper.get_audience = lambda: "database-id"
 
         with self.assertRaisesRegex(ValueError, "signature type"):
-            helper.generate_token({}, expires_in=60)
+            helper._generate_token({}, expires_in=60)
 
     def test_empty_generation_audience_fails_and_absent_uses_database_audience(self):
         import importlib.util
@@ -232,17 +237,17 @@ class StandalonePackageTests(unittest.TestCase):
         helper = module.TokenHelper()
         helper.get_signature_type = lambda: "secret"
         helper.get_signature_algorithm = lambda: "HS256"
-        helper.get_secret = lambda: "synthetic-secret"
+        helper._get_secret = lambda: "synthetic-secret"
         helper.get_expires_in = lambda: 60
         helper.get_issuer = lambda: "https://issuer.invalid"
         helper.get_audience = lambda: "database-audience"
         module.jwt.encode = lambda payload, secret, algorithm: ("opaque", payload)
 
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper.generate_token({}, expires_in=60, audience="")
-        _, default_payload = helper.generate_token({}, expires_in=60)
+            helper._generate_token({}, expires_in=60, audience="")
+        _, default_payload = helper._generate_token({}, expires_in=60)
         self.assertEqual(default_payload["aud"], "database-audience")
-        _, client_payload = helper.generate_token({}, expires_in=60, audience="client-audience")
+        _, client_payload = helper._generate_token({}, expires_in=60, audience="client-audience")
         self.assertEqual(client_payload["aud"], "client-audience")
 
     def test_generation_rejects_malformed_audience_values(self):
@@ -251,25 +256,25 @@ class StandalonePackageTests(unittest.TestCase):
         for audience in invalid_audiences:
             with self.subTest(audience_type=type(audience).__name__):
                 with self.assertRaisesRegex(ValueError, "audience"):
-                    helper.generate_token({}, expires_in=60, audience=audience)
+                    helper._generate_token({}, expires_in=60, audience=audience)
 
     def test_generation_rejects_empty_configured_audience(self):
         helper = self._audience_alias_helper()
         helper.get_audience = lambda: ""
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper.generate_token({}, expires_in=60)
+            helper._generate_token({}, expires_in=60)
 
     def test_generation_accepts_audience_array_of_strings(self):
         helper = self._audience_alias_helper()
         audience = ["client-one", "client-two"]
-        _, payload = helper.generate_token({}, expires_in=60, audience=audience)
+        _, payload = helper._generate_token({}, expires_in=60, audience=audience)
         self.assertEqual(payload["aud"], audience)
 
     def test_user_token_generation_does_not_require_resource_user_types(self):
         helper = self._audience_alias_helper()
         user = SimpleNamespace(id=7, login="user", email="u@example.invalid")
 
-        _, payload, _ = helper.generate_user_token(
+        _, payload, _ = helper._generate_user_token(
             user, audience="client-audience", expires_in=60
         )
 
@@ -300,23 +305,24 @@ class StandalonePackageTests(unittest.TestCase):
         helper = module.TokenHelper()
         helper.get_signature_type = lambda: "secret"
         helper.get_signature_algorithm = lambda: "HS256"
-        helper.get_secret = lambda: "synthetic-secret"
+        helper._get_secret = lambda: "synthetic-secret"
         helper.get_expires_in = lambda: 60
         helper.get_issuer = lambda: "https://issuer.invalid"
         helper.get_audience = lambda: "database-audience"
-        helper.env = SimpleNamespace(cr=SimpleNamespace(dbname="unit-db"))
+        helper.env = SimpleNamespace(uid=7, user=SimpleNamespace(has_group=lambda group: False),
+                                     cr=SimpleNamespace(dbname="unit-db"))
         return helper
 
     def _assert_empty_user_audience_rejected(self):
         helper = self._audience_alias_helper()
-        user = SimpleNamespace(id=1, login="user", email="u@example.invalid")
+        user = SimpleNamespace(id=7, login="user", email="u@example.invalid")
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper.generate_user_token(user, audience="")
+            helper._generate_user_token(user, audience="")
 
     def _assert_empty_encode_audience_rejected(self):
         helper = self._audience_alias_helper()
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper.encode(aud="")
+            helper._encode(aud="")
 
     def test_public_provider_helpers_reject_unconfigured_algorithms(self):
         import importlib.util
@@ -337,7 +343,7 @@ class StandalonePackageTests(unittest.TestCase):
         helper = module.TokenHelper()
         helper.get_signature_type = lambda: "secret"
         helper.get_signature_algorithm = lambda: "HS256"
-        helper.get_secret = lambda: "synthetic-secret"
+        helper._get_secret = lambda: "synthetic-secret"
         helper.get_issuer = lambda: "https://issuer.invalid"
         helper.get_audience = lambda: "database-audience"
         key = mock.Mock(active=True)
@@ -352,8 +358,8 @@ class StandalonePackageTests(unittest.TestCase):
         helper.env = {"amr.public.key": key_model}
 
         for call in (
-                lambda: helper.generate_token_secret({}, "HS512"),
-                lambda: helper.generate_token_asymmetric({}, "RS256"),
+                lambda: helper._generate_token_secret({}, "HS512"),
+                lambda: helper._generate_token_asymmetric({}, "RS256"),
                 lambda: helper.validate_secret("opaque", "HS512"),
                 lambda: helper.validate_asymmetric("opaque", "kid", "RS256")):
             with self.subTest(call=call):
@@ -369,10 +375,11 @@ class StandalonePackageTests(unittest.TestCase):
         model = support.load("models/res_users.py").ResUsers()
         helper = self._audience_alias_helper()
         captured = {}
-        helper.generate_token_secret = lambda payload, algorithm: (
+        helper._generate_token_secret = lambda payload, algorithm: (
             captured.update(payload) or "synthetic-token", payload)
         model.id, model.login, model.email = 7, "user", "u@example.invalid"
-        model.env = {"amr.oidc.helper": helper}
+        model.ensure_one = lambda: None
+        model.env = UnitEnv({"amr.oidc.helper": helper})
 
         result = model.get_access_token()
 
@@ -388,7 +395,8 @@ class StandalonePackageTests(unittest.TestCase):
         model = support.load("models/res_users.py").ResUsers()
         helper = self._audience_alias_helper()
         model.id, model.login, model.email = 7, "user", "u@example.invalid"
-        model.env = {"amr.oidc.helper": helper}
+        model.ensure_one = lambda: None
+        model.env = UnitEnv({"amr.oidc.helper": helper})
 
         with self.assertRaisesRegex(ValueError, "audience"):
             model.add_url_access_token("https://app.example.invalid", audience="")
@@ -537,7 +545,7 @@ class StandalonePackageTests(unittest.TestCase):
                 helper.get_expires_in = lambda: 60
                 helper.get_issuer = lambda: "https://issuer.invalid"
                 helper.get_audience = lambda: "database-id"
-                helper.get_secret = lambda: None
+                helper._get_secret = lambda: None
 
                 with self.assertRaises(Exception):
-                    helper.generate_token({}, expires_in=60)
+                    helper._generate_token({}, expires_in=60)
