@@ -30,12 +30,15 @@ from odoo.http import request
 _logger = logging.getLogger(__name__)
 
 
-class ValidatorSecret:
+class TokenSecret:
     def __init__(self, env, algorithm, issuer, secret):
         self.env = env
         self.algorithm = algorithm
         self.issuer = issuer
         self.secret = secret
+
+    def encode(self, payload):
+        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     def decode(self, token, **kwargs):
         audience = kwargs.get('audience') or kwargs.get('aud')
@@ -43,14 +46,21 @@ class ValidatorSecret:
         if not options:
             options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
 
-        return jwt.decode(token, self.secret, algorithms=[self.algorithm], issuer=self.issuer, audience=audience, options=options)
+        return jwt.decode(token, self.secret, algorithms=[self.algorithm], issuer=self.issuer, audience=audience,
+                          options=options)
 
 
-class ValidatorAsymmetric:
+class TokenAsymmetric:
     def __init__(self, env, algorithm, issuer):
         self.env = env
         self.algorithm = algorithm
         self.issuer = issuer
+
+    def encode(self, payload):
+        jwt_key = self.env['amr.public.key'].sudo().search([('algorithm', '=', self.algorithm), ('active', '=', True)])
+        if len(jwt_key) != 1:
+            raise Exception("Private Key not set")
+        return jwt.encode(payload, jwt_key.private_key, algorithm=self.algorithm, headers={'kid': jwt_key.kid})
 
     def decode(self, token, **kwargs):
         audience = kwargs.get('audience') or kwargs.get('aud')
@@ -72,7 +82,8 @@ class ValidatorAsymmetric:
             "verify_nbf": True,
             "require": ["exp", "iss", "aud"],
         })
-        return jwt.decode(token, jwt_key.public_key, issuer=self.issuer, audience=audience, algorithms=[self.algorithm], options=options)
+        return jwt.decode(token, jwt_key.public_key, issuer=self.issuer, audience=audience, algorithms=[self.algorithm],
+                          options=options)
 
 
 class TokenHelper(models.AbstractModel):
@@ -81,11 +92,14 @@ class TokenHelper(models.AbstractModel):
 
     ALGORITHM_CONFIG = get_algorith_config()
 
-    def get_validator(self, algorithm):
+    def get_token_strategy(self, algorithm):
         if algorithm in self.ALGORITHM_CONFIG:
-            return ValidatorAsymmetric(self.env, algorithm, self.get_issuer())
+            return TokenAsymmetric(self.env, algorithm, self.get_issuer())
         else:
-            return ValidatorSecret(self.env, algorithm, self.get_issuer(), self._get_secret())
+            secret = self._get_secret()
+            if not secret:
+                raise ValueError('JWT Secret not set')
+            return TokenSecret(self.env, algorithm, self.get_issuer(), secret)
 
     @classmethod
     def _generate_key(cls, algorithm):
@@ -124,7 +138,7 @@ class TokenHelper(models.AbstractModel):
     def create_public_key(self, algorithm):
         data = self._generate_key(algorithm)
         data['name'] = data['kid']
-        self.env["amr.public.key"].create(data)
+        return self.env["amr.public.key"].create(data)
 
     # helper will call from Controller
     @api.model
@@ -256,7 +270,7 @@ class TokenHelper(models.AbstractModel):
         if resource:
             payload['aud'] = resource
         expires_in = expires_in or self.get_expires_in()
-        access_token, payload = self._generate_token(
+        access_token, payload, expires_in = self._generate_token(
             payload, audience=audience, expires_in=expires_in, scope=scope
         )
         return access_token, payload, expires_in
@@ -266,19 +280,6 @@ class TokenHelper(models.AbstractModel):
             user, audience=audience, expires_in=expires_in, scope=scope, **kw
         )
         return access_token, payload, expires_in
-
-    @api.model
-    def encode(self, **kw):
-        algorithm = kw.get('alg', None) or kw.get('algorithm')
-        audience = kw.get('audience', None) or kw.get('aud', None) or ""
-        scope = kw.pop('scope', '')
-        kw.pop('alg', None)
-        kw.pop('algorithm', None)
-        kw.pop('audience', None)
-        kw.pop('aud', None)
-        kw.pop('iss', None)
-        kw.pop('issuer', None)
-        return self._generate_token(kw, algorithm=algorithm, audience=audience, scope=scope)
 
     @api.model
     def _validate_audience(self, audience):
@@ -291,32 +292,35 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def _generate_token(self, payload, algorithm=None, issuer=None, expires_in=None, audience=None, scope=''):
-        signature_type = self.get_signature_type()
-        configured_algorithm = self.get_signature_algorithm()
-        allowed_algorithms = self.get_allowed_algorithms()
-        if configured_algorithm not in allowed_algorithms[signature_type]:
-            raise ValueError('Token algorithm does not match signature type')
-        if algorithm and algorithm != configured_algorithm:
-            raise ValueError('Token algorithm does not match provider configuration')
-        algorithm = configured_algorithm
-        if signature_type == 'secret' and not self._get_secret():
-            raise ValueError('JWT Secret not set')
+        # signature_type = self.get_signature_type()
+        # configured_algorithm = self.get_signature_algorithm()
+        # allowed_algorithms = self.get_allowed_algorithms()
+        # if configured_algorithm not in allowed_algorithms[signature_type]:
+        #     raise ValueError('Token algorithm does not match signature type')
+        # if algorithm and algorithm != configured_algorithm:
+        #     raise ValueError('Token algorithm does not match provider configuration')
+        # algorithm = configured_algorithm
+        # if signature_type == 'secret' and not self._get_secret():
+        #     raise ValueError('JWT Secret not set')
         expires_in = expires_in or self.get_expires_in()
         expire = int(time.time()) + expires_in
-        audience = self.get_audience() if audience is None else audience
-        audience = self._validate_audience(audience)
+        # audience = self.get_audience() if audience is None else audience
+        audience = self._validate_audience(self.get_audience() if audience is None else audience)
         payload.update({
             'iss': self.get_issuer() or issuer,
             'aud': audience,
             'exp': expire,
             'scope': scope,
         })
-        if algorithm not in allowed_algorithms[signature_type]:
-            raise ValueError('Unsupported token algorithm')
-        if algorithm.startswith('HS'):
-            _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
-            return self._generate_token_secret(payload, algorithm)
-        return self._generate_token_asymmetric(payload, algorithm)
+        algorithm = self.get_signature_algorithm()
+        token_strategy = self.get_token_strategy(algorithm)
+        return token_strategy.encode(payload), payload, expires_in
+        # if algorithm not in allowed_algorithms[signature_type]:
+        #     raise ValueError('Unsupported token algorithm')
+        # if algorithm.startswith('HS'):
+        #     _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
+        #     return self._generate_token_secret(payload, algorithm)
+        # return self._generate_token_asymmetric(payload, algorithm)
 
     @api.model
     def _require_configured_algorithm(self, signature_type, algorithm):
@@ -327,71 +331,43 @@ class TokenHelper(models.AbstractModel):
         if configured not in allowed[signature_type] or algorithm != configured:
             raise ValueError('Token algorithm does not match provider configuration')
 
+    # @api.model
+    # def _generate_token_asymmetric(self, payload, algorithm="RS256"):
+    #     self._require_configured_algorithm('public_key', algorithm)
+    #     jwt_key = self.env['amr.public.key'].sudo().search([('algorithm', '=', algorithm), ('active', '=', True)])
+    #     if len(jwt_key) != 1:
+    #         raise Exception("Private Key not set")
+    #     return jwt_key._generate_token(payload), payload
+    #
+    # @api.model
+    # def _generate_token_secret(self, payload, algorithm="HS256"):
+    #     self._require_configured_algorithm('secret', algorithm)
+    #     jwt_secret = self._get_secret()
+    #     if not jwt_secret:
+    #         raise Exception("JWT Secret not set")
+    #     return jwt.encode(payload, jwt_secret, algorithm=algorithm), payload
     @api.model
-    def _generate_token_asymmetric(self, payload, algorithm="RS256"):
-        self._require_configured_algorithm('public_key', algorithm)
-        jwt_key = self.env['amr.public.key'].sudo().search([('algorithm', '=', algorithm), ('active', '=', True)])
-        if len(jwt_key) != 1:
-            raise Exception("Private Key not set")
-        return jwt_key._generate_token(payload), payload
-
-    @api.model
-    def _generate_token_secret(self, payload, algorithm="HS256"):
-        self._require_configured_algorithm('secret', algorithm)
-        jwt_secret = self._get_secret()
-        if not jwt_secret:
-            raise Exception("JWT Secret not set")
-        return jwt.encode(payload, jwt_secret, algorithm=algorithm), payload
+    def encode(self, **kw):
+        algorithm = kw.get('alg', None) or kw.get('algorithm')
+        audience = kw.get('audience', None) or kw.get('aud', None) or ""
+        scope = kw.pop('scope', '')
+        kw.pop('alg', None)
+        kw.pop('algorithm', None)
+        kw.pop('audience', None)
+        kw.pop('aud', None)
+        kw.pop('iss', None)
+        kw.pop('issuer', None)
+        return self._generate_token(kw, algorithm=algorithm, audience=audience, scope=scope)[0]
 
     @api.model
     def decode(self, token, **kw):
         header = jwt.get_unverified_header(token)
-        validator = self.get_validator(header.get('alg'))
+        validator = self.get_token_strategy(header.get('alg'))
         return validator.decode(token, **kw)
 
     @api.model
     def validate(self, token, **kw):
-        self.decode(self, token, **kw)
-        # header = jwt.get_unverified_header(token)
-        # algorithm = header.get('alg')
-        # signature_type = self.get_signature_type()
-        # allowed_algorithms = self.get_allowed_algorithms()
-        # if algorithm not in allowed_algorithms[signature_type]:
-        #     raise ValueError('Token algorithm does not match signature type')
-        # if algorithm != self.get_signature_algorithm():
-        #     raise ValueError('Token algorithm does not match provider configuration')
-        # audience = kw.pop('audience', None) or kw.get('aud', None)
-        # if signature_type == 'secret':
-        #     _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
-        #     return self.validate_secret(token, algorithm=algorithm, audience=audience)
-        # return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
-
-    @api.model
-    def validate_secret(self, token, algorithm="HS256", audience=None):
-        self._require_configured_algorithm('secret', algorithm)
-        if audience == '':
-            raise ValueError('An explicit audience cannot be empty')
-        jwt_secret = self._get_secret()
-        audience = self.get_audience() if audience is None else audience
-        options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
-        if not jwt_secret:
-            raise Exception("JWT Secret not set")
-        issuer = self.get_issuer()
-        return jwt.decode(token, jwt_secret, algorithms=[algorithm], issuer=issuer, audience=audience, options=options)
-
-    @api.model
-    def validate_asymmetric(self, token, kid, algorithm="RS256", audience=None):
-        self._require_configured_algorithm('public_key', algorithm)
-        if not kid or audience == '':
-            raise ValueError('A key identifier and non-empty audience are required')
-        jwt_key = self.env['amr.public.key'].sudo().search(
-            [('algorithm', '=', algorithm), ('kid', '=', kid), ('active', '=', True)])
-        if len(jwt_key) != 1 or not jwt_key.active:
-            raise Exception("Public Key not set")
-        audience = self.get_audience() if audience is None else audience
-        options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
-        issuer = self.get_issuer()
-        return jwt_key.validate_token(token, issuer=issuer, audience=audience, options=options)
+        return self.decode(token, **kw)
 
     @api.model
     def oidc_introspect(self, **kwargs):
