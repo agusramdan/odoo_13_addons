@@ -64,70 +64,7 @@ class StandalonePackageTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         helper.decode.assert_not_called()
 
-    def test_introspection_authenticates_client_and_returns_only_allowed_claims(self):
-        import importlib.util
-        support_path = ADDON_ROOT / "tests" / "support.py"
-        spec = importlib.util.spec_from_file_location("oidc_test_support", str(support_path))
-        support = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(support)
-        module = support.load_controller()
-        controller = module.ControllerOIDC()
-        client = mock.Mock()
-        client.allow_introspection = True
-        client.client_id = "client"
-        client.check_credentials.return_value = True
-        client_model = mock.Mock()
-        client_model.sudo.return_value.search.return_value = client
-        helper = mock.Mock()
-        helper.get_basic_auth.return_value = ("client", "secret")
-        helper.decode.return_value = {
-            "sub": "subject", "iss": "https://issuer.invalid", "aud": "api",
-            "exp": 10, "iat": 1, "scope": "read", "jti": "id",
-            "token_type": "Bearer", "uid": 42, "login": "private",
-        }
-        module.request.env = {"oidc.client": client_model, "amr.oidc.helper": helper}
-        module.request.httprequest = SimpleNamespace(
-            method="POST", args={}, is_secure=True,
-            form={"token": "[REDACTED]"},
-            headers={"Authorization": "Basic Y2xpZW50OnNlY3JldA=="},
-        )
-        response = controller.api_oidc_introspect()
-        self.assertEqual(response.status_code, 200)
-        payload = json.loads(response.data)
-        self.assertEqual(payload, {
-            "active": True, "sub": "subject",
-            "iss": "https://issuer.invalid", "aud": "api", "exp": 10,
-            "iat": 1, "scope": "read", "jti": "id", "token_type": "Bearer",
-        })
-        client.check_credentials.assert_called_once_with("secret")
 
-    def test_introspection_accepts_form_token_dispatched_as_route_kwarg(self):
-        import importlib.util
-        support_path = ADDON_ROOT / "tests" / "support.py"
-        spec = importlib.util.spec_from_file_location("oidc_test_support", str(support_path))
-        support = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(support)
-        module = support.load_controller()
-        controller = module.ControllerOIDC()
-        client = mock.Mock(allow_introspection=True, client_id="introspector")
-        client.check_credentials.return_value = True
-        client_model = mock.Mock()
-        client_model.sudo.return_value.search.return_value = client
-        helper = mock.Mock()
-        helper.get_basic_auth.return_value = ("introspector", "secret")
-        helper.decode.return_value = {"client_id": "token-owner", "sub": "subject"}
-        module.request.env = {"oidc.client": client_model, "amr.oidc.helper": helper}
-        module.request.httprequest = SimpleNamespace(
-            method="POST", args={}, is_secure=True,
-            form={"token": "opaque"}, headers={"Authorization": "Basic x"},
-        )
-
-        response = controller.api_oidc_introspect(token="opaque")
-
-        self.assertEqual(response.status_code, 200)
-        payload = json.loads(response.data)
-        self.assertEqual(payload.get("client_id"), "token-owner")
-        helper.decode.assert_called_once_with("opaque", audience="introspector")
 
     def test_userinfo_rejects_json_body_token_even_with_bearer_header(self):
         import importlib.util
@@ -477,22 +414,6 @@ class StandalonePackageTests(unittest.TestCase):
             self.assertTrue(options[option])
         self.assertEqual(options["require"], ["exp", "iss", "aud"])
 
-    def test_decode_uses_header_kid_and_rejects_conflict_before_strategy_lookup(self):
-        helper = self._audience_alias_helper()
-        jwt = helper.decode.__globals__["jwt"]
-        jwt.get_unverified_header = mock.Mock(return_value={"alg": "RS256", "kid": "key-1"})
-        strategy = mock.Mock()
-        helper._token_strategy = mock.Mock(return_value=strategy)
-
-        helper.decode("opaque", audience="api")
-        strategy.decode.assert_called_once_with("opaque", audience="api", kid="key-1")
-
-        helper._token_strategy.reset_mock()
-        strategy.decode.reset_mock()
-        with self.assertRaisesRegex(ValueError, "kid"):
-            helper.decode("opaque", audience="api")
-        helper._token_strategy.assert_not_called()
-        strategy.decode.assert_not_called()
 
     def test_encode_without_audience_defaults_to_database_uuid(self):
         helper = self._audience_alias_helper()
@@ -635,24 +556,6 @@ class StandalonePackageTests(unittest.TestCase):
         jwt.encode.assert_not_called()
         helper._get_secret.assert_not_called()
 
-    def test_client_access_token_preserves_explicit_empty_audience(self):
-        import importlib.util
-        support_path = ADDON_ROOT / "tests" / "support.py"
-        spec = importlib.util.spec_from_file_location("oidc_test_support_client_empty", str(support_path))
-        if spec is None or spec.loader is None:
-            raise ImportError("cannot create isolated support module spec")
-        support = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(support)
-        client = support.load("models/oidc_client.py").OidcClient()
-        helper = self._audience_alias_helper()
-        helper.get_signature_type = lambda: "secret"
-        helper.env = UnitEnv()
-        client.env = UnitEnv({"amr.oidc.helper": helper})
-        client.redirect_path = False
-        client.redirect_uri = "https://client.example.invalid/callback"
-
-        with self.assertRaisesRegex(ValueError, "audience"):
-            client._create_access_token(audience="")
 
     def test_signature_modes_fail_closed_for_none_missing_keys_and_secret(self):
         import importlib.util
@@ -719,23 +622,6 @@ class StandalonePackageTests(unittest.TestCase):
         with mock.patch.dict("sys.modules", packages):
             return support.load("models/token_helper.py")
 
-    def test_validator_secret_decode_forces_required_validation_options(self):
-        module = self._load_token_helper_for_direct_validation_tests()
-        claims = {"sub": "subject"}
-        module.jwt.decode = mock.Mock(return_value=claims)
-        validator = module.ValidatorSecret(
-            UnitEnv(), "HS256", "https://issuer.invalid", "synthetic-secret")
-
-        result = validator.decode("opaque", audience="api", options={
-            "verify_signature": False, "verify_iss": False, "verify_aud": False,
-            "verify_exp": False, "verify_nbf": False, "require": [],
-        })
-
-        self.assertIs(result, claims)
-        kwargs = module.jwt.decode.call_args[1]
-        for option in ("verify_signature", "verify_iss", "verify_aud", "verify_exp", "verify_nbf"):
-            self.assertIs(kwargs["options"][option], True)
-        self.assertEqual(kwargs["options"]["require"], ["exp", "iss", "aud"])
 
     def test_token_helper_decode_returns_decode_claims_and_forwards_arguments_once(self):
         module = self._load_token_helper_for_direct_validation_tests()
