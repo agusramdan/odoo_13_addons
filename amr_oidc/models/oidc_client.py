@@ -140,7 +140,7 @@ class OidcClient(models.Model):
         except:
             return None
 
-    def create_authorization_code(self, redirect_uri=None, scope=''):
+    def _create_authorization_code(self, redirect_uri=None, scope=''):
         if self.redirect_path:
             redirect_uri = self.web_base_url + REDIRECT_MODE.get(self.redirect_path)
         else:
@@ -154,7 +154,7 @@ class OidcClient(models.Model):
             'expired_at': fields.Datetime.now() + timedelta(minutes=5),
         })
 
-    def create_access_token(self, redirect_uri=None, scope='', **kw):
+    def _create_access_token(self, redirect_uri=None, scope='', **kw):
         client = self
         if not client:
             # sudo: preserve source credential lookup; access review deferred.
@@ -170,10 +170,10 @@ class OidcClient(models.Model):
         audience = kw.get('audience') or kw.get('aud') or None
         token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(
             self.env.user, audience=audience, scope=scope
-        )[0]
+        )
         return token, redirect_uri, expires_in
 
-    def client_credentials(self, **kw):
+    def _client_credentials(self, client_secret=None, **kw):
         client = self
         if not client:
             # sudo: preserve source credential lookup; access review deferred.
@@ -182,7 +182,10 @@ class OidcClient(models.Model):
         if not client:
             raise ValueError("Client Not Register")
 
-        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(self.env.user, **kw)
+        client.check_credentials(client_secret)
+        token, payload, expires_in = self.env['amr.oidc.helper'].generate_user_token(
+            self.env.user, **kw
+        )
 
         return {
             'access_token': token,

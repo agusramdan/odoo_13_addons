@@ -62,6 +62,57 @@ class FakeUser(object):
 
 
 class TokenIssuerSecurityTests(unittest.TestCase):
+    def test_create_authorization_code_is_private(self):
+        methods = _method_names("models/oidc_client.py", "OidcClient")
+        self.assertNotIn("create_authorization_code", methods)
+        self.assertIn("_create_authorization_code", methods)
+
+    def _client_credentials_fixture(self):
+        support = _load_support()
+        module = support.load("models/oidc_client.py")
+        record = module.OidcClient()
+        record.env = FakeEnv(uid=7)
+        record.sudo = lambda: record
+        record.search = mock.Mock(return_value=record)
+        client = mock.Mock()
+        client.check_credentials.side_effect = lambda secret: (
+            True if secret else (_ for _ in ()).throw(ValueError("Invalid secret")))
+        record.check_credentials = client.check_credentials
+        helper = mock.Mock()
+        helper.generate_user_token.return_value = ("opaque-token", {}, 60)
+        record.env["amr.oidc.helper"] = helper
+        return record, client.check_credentials, helper
+
+    def test_client_credentials_is_private_and_missing_secret_fails_before_signing(self):
+        methods = _method_names("models/oidc_client.py", "OidcClient")
+        self.assertNotIn("client_credentials", methods)
+        self.assertIn("_client_credentials", methods)
+        record, check, helper = self._client_credentials_fixture()
+        with self.assertRaises(ValueError):
+            record._client_credentials(client_id="client-a", audience="aud-a")
+        check.assert_called_once_with(None)
+        helper.generate_user_token.assert_not_called()
+
+    def test_client_credentials_rejects_empty_and_invalid_secrets_before_signing(self):
+        for secret, error in (("", ValueError("bad")), ("wrong", ValueError("bad"))):
+            with self.subTest(secret=secret):
+                record, check, helper = self._client_credentials_fixture()
+                check.side_effect = error
+                with self.assertRaises(ValueError):
+                    record._client_credentials(client_secret=secret, scope="read")
+                check.assert_called_once_with(secret)
+                helper.generate_user_token.assert_not_called()
+
+    def test_client_credentials_valid_secret_is_not_forwarded_and_shape_is_preserved(self):
+        record, check, helper = self._client_credentials_fixture()
+        result = record._client_credentials(client_secret="correct", client_id="client-a",
+                                            audience="aud-a", scope="read")
+        check.assert_called_once_with("correct")
+        helper.generate_user_token.assert_called_once_with(
+            mock.ANY, client_id="client-a", audience="aud-a", scope="read")
+        self.assertEqual(result, {"access_token": "opaque-token", "token_type": "Bearer",
+                                 "expires_in": 60})
+
     def test_token_helper_secret_and_signing_methods_are_private(self):
         methods = _method_names("models/token_helper.py", "TokenHelper")
         for public_name, internal_name in (
