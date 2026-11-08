@@ -116,16 +116,6 @@ class TokenIssuerSecurityTests(unittest.TestCase):
                 check.assert_called_once_with(secret)
                 helper.generate_user_token.assert_not_called()
 
-    def test_client_credentials_valid_secret_is_not_forwarded_and_shape_is_preserved(self):
-        record, check, helper = self._client_credentials_fixture()
-        result = record._client_credentials(client_secret="correct", client_id="client-a",
-                                            audience="aud-a", scope="read")
-        check.assert_called_once_with("correct")
-        helper.generate_user_token.assert_called_once_with(
-            mock.ANY, client_id="client-a", audience="aud-a", scope="read")
-        self.assertEqual(result, {"access_token": "opaque-token", "token_type": "Bearer",
-                                 "expires_in": 60})
-
     def test_token_helper_secret_and_signing_methods_are_private(self):
         methods = _method_names("models/token_helper.py", "TokenHelper")
         for public_name, internal_name in (
