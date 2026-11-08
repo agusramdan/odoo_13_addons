@@ -8,9 +8,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 if __package__:
-    from .support import load_helper_module
+    from .support import load_helper_module, load_oidc_helper_module
 else:
-    from support import load_helper_module
+    from support import load_helper_module, load_oidc_helper_module
 
 
 class TestTokenHelperLifecycle(unittest.TestCase):
@@ -157,15 +157,18 @@ class TestTokenHelperLifecycle(unittest.TestCase):
         self.helper.validate.assert_called_once_with("synthetic-token", audience="client")
 
     def test_encode_normalizes_aliases_and_removes_issuer_claim_inputs(self):
-        self._require("encode")
-        self.helper.generate_token = mock.Mock(return_value=("synthetic-token", {}))
-        result = self.module.TokenHelper.encode(
-            self.helper, alg="RS256", aud="service-a", iss="forged-issuer", issuer="also-forged",
+        provider = load_oidc_helper_module()
+        self.assertTrue(callable(provider.TokenHelper.__dict__.get("_encode")))
+        self.assertFalse(hasattr(provider.TokenHelper, "encode"))
+        provider_helper = object.__new__(provider.TokenHelper)
+        provider_helper._generate_token = mock.Mock(return_value=("synthetic-token", {}))
+        result = provider.TokenHelper._encode(
+            provider_helper, alg="RS256", aud="service-a", iss="forged-issuer", issuer="also-forged",
             scope="profile", sub="synthetic-user",
         )
 
         self.assertEqual(result, ("synthetic-token", {}))
-        self.helper.generate_token.assert_called_once_with(
+        provider_helper._generate_token.assert_called_once_with(
             {"sub": "synthetic-user"}, algorithm="RS256", audience="service-a", scope="profile",
         )
 

@@ -46,7 +46,10 @@ def test_provider_validation_pins_algorithm_and_projects_only_contract_claims():
     token_helper = (addon / "models" / "token_helper.py").read_text()
     controller = (addon / "controllers" / "main.py").read_text()
 
-    assert "algorithm != self.get_signature_algorithm()" in token_helper
+    assert "def _require_configured_algorithm(self, signature_type, algorithm):" in token_helper
+    assert "configured not in allowed[signature_type] or algorithm != configured" in token_helper
+    assert "self._require_configured_algorithm('secret', algorithm)" in token_helper
+    assert "self._require_configured_algorithm('public_key', algorithm)" in token_helper
     assert "return self.make_response(active=False)" in controller
     assert "allowed = ('sub', 'aud', 'iss', 'exp', 'iat', 'scope', 'jti', 'token_type', 'client_id')" in controller
     assert "payload.update((key, claims[key]) for key in allowed if key in claims)" in controller

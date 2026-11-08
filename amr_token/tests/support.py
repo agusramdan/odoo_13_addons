@@ -107,6 +107,7 @@ def odoo_stubs():
 
     exceptions = types.ModuleType("odoo.exceptions")
     setattr(exceptions, "ValidationError", ValidationError)
+    setattr(exceptions, "AccessError", type("AccessError", (Exception,), {}))
     setattr(exceptions, "UserError", UserError)
 
     tools = types.ModuleType("odoo.tools")
@@ -176,6 +177,10 @@ def _load_candidate(relative_path, module_name, addon=ADDON):
 
 def load_helper_module():
     return _load_candidate("models/helper.py", "_amr_token_candidate_helper")
+
+
+def load_oidc_helper_module():
+    return _load_candidate("models/token_helper.py", "_amr_oidc_candidate_token_helper", addon=OIDC_ADDON)
 
 
 def load_public_key_model():

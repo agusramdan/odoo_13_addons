@@ -39,10 +39,15 @@ class ValidatorSecret:
 
     def decode(self, token, **kwargs):
         audience = kwargs.get('audience') or kwargs.get('aud')
-        options = kwargs.get('options')
-        if not options:
-            options = {"verify_aud": True, "require": ["exp", "iss", "aud"]}
-
+        options = dict(kwargs.get('options') or {})
+        options.update({
+                    "verify_signature": True,
+                    "verify_iss": True,
+                    "verify_aud": True,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "require": ["exp", "iss", "aud"],
+                })
         return jwt.decode(token, self.secret, algorithms=[self.algorithm], issuer=self.issuer, audience=audience, options=options)
 
 
@@ -82,10 +87,11 @@ class TokenHelper(models.AbstractModel):
     ALGORITHM_CONFIG = get_algorith_config()
 
     def get_validator(self, algorithm):
-        if algorithm in self.ALGORITHM_CONFIG:
+        signature_type = self.get_signature_type()
+        self._require_configured_algorithm(signature_type, algorithm)
+        if signature_type == 'public_key':
             return ValidatorAsymmetric(self.env, algorithm, self.get_issuer())
-        else:
-            return ValidatorSecret(self.env, algorithm, self.get_issuer(), self._get_secret())
+        return ValidatorSecret(self.env, algorithm, self.get_issuer(), self._get_secret())
 
     @classmethod
     def _generate_key(cls, algorithm):
@@ -268,7 +274,7 @@ class TokenHelper(models.AbstractModel):
         return access_token, payload, expires_in
 
     @api.model
-    def encode(self, **kw):
+    def _encode(self, **kw):
         algorithm = kw.get('alg', None) or kw.get('algorithm')
         audience = kw.get('audience', None) or kw.get('aud', None) or ""
         scope = kw.pop('scope', '')
@@ -346,25 +352,19 @@ class TokenHelper(models.AbstractModel):
     @api.model
     def decode(self, token, **kw):
         header = jwt.get_unverified_header(token)
-        validator = self.get_validator(header.get('alg'))
+        configured_algorithm = self.get_signature_algorithm()
+        token_algorithm = header.get('alg')
+        for argument in ('alg', 'algorithm'):
+            if argument in kw and kw[argument] != configured_algorithm:
+                raise ValueError('Caller algorithm does not match configured algorithm')
+            if argument in kw and kw[argument] != token_algorithm:
+                raise ValueError('Caller algorithm does not match token algorithm')
+        validator = self.get_validator(token_algorithm)
         return validator.decode(token, **kw)
 
     @api.model
     def validate(self, token, **kw):
-        self.decode(self, token, **kw)
-        # header = jwt.get_unverified_header(token)
-        # algorithm = header.get('alg')
-        # signature_type = self.get_signature_type()
-        # allowed_algorithms = self.get_allowed_algorithms()
-        # if algorithm not in allowed_algorithms[signature_type]:
-        #     raise ValueError('Token algorithm does not match signature type')
-        # if algorithm != self.get_signature_algorithm():
-        #     raise ValueError('Token algorithm does not match provider configuration')
-        # audience = kw.pop('audience', None) or kw.get('aud', None)
-        # if signature_type == 'secret':
-        #     _logger.warning("Token signed with HS algorithm, validating via introspection endpoint")
-        #     return self.validate_secret(token, algorithm=algorithm, audience=audience)
-        # return self.validate_asymmetric(token, header.get('kid'), algorithm=algorithm, audience=audience)
+        return self.decode(token, **kw)
 
     @api.model
     def validate_secret(self, token, algorithm="HS256", audience=None):

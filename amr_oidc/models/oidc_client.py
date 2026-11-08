@@ -193,7 +193,7 @@ class OidcClient(models.Model):
             'expires_in': expires_in,
         }
 
-    def encode(self, **kwargs):
+    def _encode(self, **kwargs):
         client = self
         if not client:
             # sudo: preserve source credential lookup; access review deferred.
@@ -202,7 +202,7 @@ class OidcClient(models.Model):
         if not client:
             raise ValueError("Client Not Register")
 
-        return self.env['amr.oidc.helper'].with_user(client.user_id).encode(**kwargs)
+        return self.env['amr.oidc.helper'].with_user(client.user_id)._encode(**kwargs)
 
     def decode(self, token, **kwargs):
         client = self

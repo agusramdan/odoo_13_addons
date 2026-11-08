@@ -323,7 +323,7 @@ class StandalonePackageTests(unittest.TestCase):
     def _assert_empty_encode_audience_rejected(self):
         helper = self._audience_alias_helper()
         with self.assertRaisesRegex(ValueError, "audience"):
-            helper.encode(aud="")
+            helper._encode(aud="")
 
     def test_public_provider_helpers_reject_unconfigured_algorithms(self):
         import importlib.util
@@ -550,3 +550,119 @@ class StandalonePackageTests(unittest.TestCase):
 
                 with self.assertRaises(Exception):
                     helper._generate_token({}, expires_in=60)
+
+
+    def _load_token_helper_for_direct_validation_tests(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_token_fixes", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        packages = {name: types.ModuleType(name) for name in (
+            "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
+            "cryptography.hazmat.primitives.asymmetric")}
+        packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
+        packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
+        with mock.patch.dict("sys.modules", packages):
+            return support.load("models/token_helper.py")
+
+    def test_validator_secret_decode_forces_required_validation_options(self):
+        module = self._load_token_helper_for_direct_validation_tests()
+        claims = {"sub": "subject"}
+        module.jwt.decode = mock.Mock(return_value=claims)
+        validator = module.ValidatorSecret(
+            UnitEnv(), "HS256", "https://issuer.invalid", "synthetic-secret")
+
+        result = validator.decode("opaque", audience="api", options={
+            "verify_signature": False, "verify_iss": False, "verify_aud": False,
+            "verify_exp": False, "verify_nbf": False, "require": [],
+        })
+
+        self.assertIs(result, claims)
+        kwargs = module.jwt.decode.call_args[1]
+        for option in ("verify_signature", "verify_iss", "verify_aud", "verify_exp", "verify_nbf"):
+            self.assertIs(kwargs["options"][option], True)
+        self.assertEqual(kwargs["options"]["require"], ["exp", "iss", "aud"])
+
+    def test_token_helper_validate_returns_decode_claims_and_forwards_arguments_once(self):
+        module = self._load_token_helper_for_direct_validation_tests()
+        helper = module.TokenHelper()
+        claims = {"sub": "subject"}
+        helper.decode = mock.Mock(return_value=claims)
+
+        result = helper.validate("opaque", audience="api", leeway=3)
+
+        self.assertIs(result, claims)
+        helper.decode.assert_called_once_with("opaque", audience="api", leeway=3)
+
+    def test_token_helper_validate_propagates_decode_validation_errors(self):
+        module = self._load_token_helper_for_direct_validation_tests()
+        helper = module.TokenHelper()
+        invalid_token_error = module.jwt.InvalidTokenError("invalid token")
+        for error in (ValueError("invalid claims"), invalid_token_error):
+            with self.subTest(error_type=type(error).__name__):
+                helper.decode = mock.Mock(side_effect=error)
+                with self.assertRaises(type(error)) as raised:
+                    helper.validate("opaque", audience="api")
+                helper.decode.assert_called_once_with("opaque", audience="api")
+                self.assertIs(raised.exception, error)
+
+    def test_consumer_validate_enforces_configured_signature_policy_with_real_hmac(self):
+        import jwt as real_jwt
+        module = self._load_token_helper_for_direct_validation_tests()
+        module.jwt.encode = real_jwt.encode
+        module.jwt.decode = real_jwt.decode
+        module.jwt.get_unverified_header = real_jwt.get_unverified_header
+        helper = module.TokenHelper()
+        helper.env = UnitEnv()
+        claims = {"iss": "https://issuer.invalid", "aud": "synthetic-audience",
+                  "exp": 4102444800, "nbf": 0, "sub": "synthetic-subject"}
+        secret = "synthetic-only-hmac-key"
+        helper.get_signature_type = lambda: "secret"
+        helper.get_signature_algorithm = lambda: "HS256"
+        helper.get_allowed_algorithms = lambda: {"secret": ["HS256"], "public_key": ["RS256"]}
+        helper.get_issuer = lambda: "https://issuer.invalid"
+        helper._get_secret = mock.Mock(return_value=secret)
+
+        valid = module.jwt.encode(claims, secret, algorithm="HS256")
+        self.assertEqual(helper.validate(valid, audience="synthetic-audience"), claims)
+        helper._get_secret.assert_called_once_with()
+
+        mismatched = module.jwt.encode(claims, secret, algorithm="HS384")
+        helper._get_secret.reset_mock()
+        with self.assertRaises(ValueError):
+            helper.validate(mismatched, audience="synthetic-audience")
+        helper._get_secret.assert_not_called()
+
+        helper.get_signature_type = lambda: "public_key"
+        helper.get_signature_algorithm = lambda: "RS256"
+        helper._get_secret.reset_mock()
+        with self.assertRaises(ValueError):
+            helper.validate(valid, audience="synthetic-audience")
+        helper._get_secret.assert_not_called()
+
+    def test_consumer_validate_rejects_caller_algorithm_overrides(self):
+        import jwt as real_jwt
+        module = self._load_token_helper_for_direct_validation_tests()
+        module.jwt.encode = real_jwt.encode
+        module.jwt.decode = real_jwt.decode
+        module.jwt.get_unverified_header = real_jwt.get_unverified_header
+        helper = module.TokenHelper()
+        helper.env = UnitEnv()
+        claims = {"iss": "https://issuer.invalid", "aud": "synthetic-audience",
+                  "exp": 4102444800, "nbf": 0, "sub": "synthetic-subject"}
+        secret = "synthetic-only-hmac-key"
+        helper.get_signature_type = lambda: "secret"
+        helper.get_signature_algorithm = lambda: "HS256"
+        helper.get_allowed_algorithms = lambda: {"secret": ["HS256"], "public_key": ["RS256"]}
+        helper.get_issuer = lambda: "https://issuer.invalid"
+        helper._get_secret = mock.Mock(return_value=secret)
+        token = real_jwt.encode(claims, secret, algorithm="HS256")
+
+        self.assertEqual(helper.validate(token, audience="synthetic-audience", algorithm="HS256"), claims)
+        with self.subTest(argument="alg"):
+            with self.assertRaises(ValueError):
+                helper.validate(token, audience="synthetic-audience", alg="HS384")
+        with self.subTest(argument="algorithm"):
+            with self.assertRaises(ValueError):
+                helper.validate(token, audience="synthetic-audience", algorithm="HS384")

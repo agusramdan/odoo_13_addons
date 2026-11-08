@@ -42,6 +42,16 @@ def _method_names(relative, class_name):
     raise AssertionError("class not found: " + class_name)
 
 
+class TestEncodePrivacyNames(unittest.TestCase):
+    def test_oidc_model_encode_methods_are_private(self):
+        self.assertNotIn("encode", _method_names("models/oidc_client.py", "OidcClient"))
+        self.assertIn("_encode", _method_names("models/oidc_client.py", "OidcClient"))
+
+    def test_token_helper_encode_methods_are_private(self):
+        self.assertNotIn("encode", _method_names("models/token_helper.py", "TokenHelper"))
+        self.assertIn("_encode", _method_names("models/token_helper.py", "TokenHelper"))
+
+
 class FakeEnv(dict):
     def __init__(self, uid, system=False):
         super(FakeEnv, self).__init__()
