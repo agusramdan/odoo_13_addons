@@ -5,6 +5,67 @@ from odoo.tests.common import TransactionCase
 
 
 class TestAccessTokenAudiencePresence(TransactionCase):
+    def test_client_create_access_token_accepts_aud_only_alias(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://oidc-regression.invalid")
+        client = self.env["oidc.client"].create({
+            "client_id": "aud-only-alias-regression-client",
+            "web_base_url": "https://oidc-regression.invalid",
+        })
+
+        token, _redirect_uri, _expires_in = client._create_access_token(
+            aud="alias-audience"
+        )
+        payload = self.env["amr.oidc.helper"].decode(
+            token, audience="alias-audience"
+        )
+        self.assertEqual(payload["aud"], "alias-audience")
+        self.assertNotIn("resource", payload)
+
+    def test_client_create_access_token_omitted_audience_uses_database_uuid(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://oidc-regression.invalid")
+        client = self.env["oidc.client"].create({
+            "client_id": "audience-omission-client",
+            "web_base_url": "https://oidc-regression.invalid",
+        })
+
+        try:
+            token, _redirect_uri, _expires_in = client._create_access_token()
+        except ValueError as error:
+            self.fail(
+                "_create_access_token() with audience omitted should use the "
+                "database UUID default; it raised ValueError: %s" % error
+            )
+
+        expected_audience = params.get_param("database.uuid")
+        self.assertTrue(expected_audience)
+        payload = self.env["amr.oidc.helper"].decode(token, audience=expected_audience)
+        self.assertEqual(payload["aud"], expected_audience)
+        self.assertNotIn("resource", payload)
+
+    def test_client_create_access_token_explicit_none_does_not_use_aud_alias(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://oidc-regression.invalid")
+        client = self.env["oidc.client"].create({
+            "client_id": "audience-none-alias-client",
+            "web_base_url": "https://oidc-regression.invalid",
+        })
+
+        with self.assertRaisesRegex(ValueError, "audience"):
+            client._create_access_token(
+                audience=None, aud="fallback-audience"
+            )
+
     def test_access_token_omission_defaults_but_explicit_none_is_rejected(self):
         params = self.env["ir.config_parameter"].sudo()
         params.set_param("amr_token.signature_type", "secret")
