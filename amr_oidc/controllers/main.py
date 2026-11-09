@@ -117,7 +117,8 @@ class ControllerOIDC(Controller):
                 or request.httprequest.form or request.httprequest.get_data(cache=True)):
             return self.invalid_response(400, 'invalid_request')
         try:
-            claims = request.env['amr.oidc.helper'].validate(auth[7:])
+            helper = request.env['amr.oidc.helper']
+            claims = helper.decode(auth[7:], audience=helper.get_audience())
         except Exception:
             return self.invalid_response(401, 'invalid_token')
         if not claims.get('sub'):
