@@ -59,8 +59,8 @@ class TestPublicKeyORM(SavepointCase):
         })
         oidc_helper = self.env["amr.oidc.helper"]
         with mock.patch.object(
-                type(oidc_helper), "generate_key",
-                wraps=type(oidc_helper).generate_key) as oidc_spy:
+                type(oidc_helper), "_generate_key",
+                wraps=type(oidc_helper)._generate_key) as oidc_spy:
             key.action_generate_key()
         self.assertEqual(oidc_spy.call_count, 1)
         self.assertEqual(oidc_spy.call_args[0][0], "ES256")

@@ -1,6 +1,6 @@
 # ADDONS13-81 source crosswalk (Step 1)
 
-**Decision binding:** original source inventory `SOURCE-INVENTORY.md`, SHA-256 `b78cd5f5d0a2f35a255e686fe8d6c977cefbe9a1718127d3cb5c57f42eac684c`; task-local OD-03/OD-06 supplement accepted in PRD v4.7 SHA-256 `a12f87a986b2205ab104f9ba6d2666a6a00853a2f782f93e6c994b2bcd1e9979` and UAT v4.7 SHA-256 `f627cfe132e065f7aba2bbbf79edaa892e8e892026bbaa79ed2ea08345df11e5`. Earlier v4.0/v4.1 decisions remain historical context; v4.5/v4.6 drafts are not represented as accepted.
+**Decision binding:** original source inventory `SOURCE-INVENTORY.md`, SHA-256 `b78cd5f5d0a2f35a255e686fe8d6c977cefbe9a1718127d3cb5c57f42eac684c`; current accepted PRD v4.7 SHA-256 `17a27cfaee80df92b6ad2481bd037ebf7f72c60065199e280e75be6d4daf360d` and UAT v4.7 SHA-256 `09508006e9a8e3ea2308d94a391e1fccbe035970bb17054a2e0ff7e05844cd4c`. Earlier supplement hashes `a12f87a986b2205ab104f9ba6d2666a6a00853a2f782f93e6c994b2bcd1e9979` (PRD) and `f627cfe132e065f7aba2bbbf79edaa892e8e892026bbaa79ed2ea08345df11e5` (UAT) are historical pre-sync bytes, not current accepted artifacts. Earlier v4.0/v4.1 decisions remain historical context; v4.5/v4.6 drafts are not represented as accepted.
 
 This static source-to-decision crosswalk is not a UAT result. **UAT-19 remains NOT RUN.** It does not establish installed registry/MRO, HTTP dispatch, ACL enforcement, database state, live cryptographic validation, installation, or production safety. The accepted inventory's snapshot is not replaced by nearby inventories. `amr_resource` is unchanged and outside candidate scope. The Step 1 unit coverage for internal signing boundaries and caller authorization is listed below; it does not prove Odoo RPC dispatch guards or runtime authorization.
 
@@ -34,7 +34,7 @@ The bound inventory lists 34 class helper methods **and** module-level `get_algo
 | `oidc_token` | `TokenHelper.oidc_token` in `amr_oidc/models/token_helper.py`; unsupported under OD-02. |
 | `_do_password_grant`, `_do_challenge_grant`, `_do_digital_signature_grant` | Explicit OD-02 disposition: no callable grant implementation retained in provider or adapter. |
 | `generate_user_token`, `encode`, `generate_token`, `generate_token_asymmetric`, `generate_token_secret` | Corresponding methods are internal (`_generate_user_token`, `_encode`, `_generate_token`, `_generate_token_asymmetric`, `_generate_token_secret`) in `amr_oidc/models/token_helper.py`. OD-03 resource-to-audience handling is encode-only; `_generate_token` removes the input `resource` before emitting claims. Configured algorithm controls signing; asymmetric verification dispatches from header alg/kid under OD-06. User issuance rejects a non-self target unless the actor has `base.group_system`, before signing. `_generate_user_token` does not call `amr_resource` user-category methods; the resource-specific `type` claim is omitted because provider category policy is not defined (OD-05). |
-| `decode`, `validate`, `validate_secret`, `validate_asymmetric` | Corresponding `TokenHelper` methods in `amr_oidc/models/token_helper.py`; asymmetric lookup/validation is local and fail-closed (OD-06). |
+| `decode`, `validate`, `validate_secret`, `validate_asymmetric` | Historical inventory names retained as provenance; current `TokenHelper` exposes `decode()` only, not same-named `validate`, `validate_secret`, or `validate_asymmetric`. Both HTTP controller paths call `TokenHelper.decode`: introspection passes the authenticated `client_id` as audience and profile passes the database UUID. `TokenSecret.decode` handles the secret strategy; `TokenAsymmetric.decode` performs its own trusted-key lookup and JWT verification. `PublicKey.validate_token` exists as a separate record method in `models/public_key.py` and is not called by `TokenHelper.decode`. Legacy `validate` is not retained as a method name. |
 | `oidc_introspect` | `TokenHelper.oidc_introspect` in `amr_oidc/models/token_helper.py`. The HTTP handler is separately implemented in `amr_oidc/controllers/main.py` and projects an allowlist; this source mapping does not claim Odoo RPC behavior was verified. |
 | `oidc_profile` | `TokenHelper.oidc_profile` in `amr_oidc/models/token_helper.py`. The HTTP handler is separately implemented in `amr_oidc/controllers/main.py` and returns `sub`; this source mapping does not claim Odoo RPC behavior was verified. |
 | `oidc_introspect_payload_response_enhance`, `oidc_profile_payload_response_enhance` | Both methods are present in `amr_oidc/models/token_helper.py` and currently return the input data unchanged; no adapter override is registered in this candidate. Their effective runtime dispatch remains unverified. |
@@ -54,9 +54,9 @@ Current provider registration: `amr_oidc/models/__init__.py` imports the helper 
 | `add_url_access_token` | `amr_oidc/models/res_users.py::ResUsers.add_url_access_token`; derives host only for `None`, preserves/rejects explicit empty. |
 | `get_auto_login_url` | `amr_oidc/models/res_users.py::ResUsers.get_auto_login_url`; same `None`-only URL audience derivation; an explicit resource forwarded through kwargs overrides that audience under OD-03. |
 
-## Routes and accepted disposition (declaration map, not HTTP execution)
+## Routes and accepted disposition
 
-Every route decorator declared by the current provider controller is enumerated below. These are source declarations and static handler behavior; **no HTTP route execution or dispatcher inheritance was verified**.
+Every route decorator declared by the current provider controller is enumerated below. The named 036fec4 native Odoo selector executed signed-token profile and introspection HTTP routes; its proxy-mode forwarded headers exercise Odoo's proxy-header secure-flag/route path, not a TLS socket or production proxy trust. Dispatcher inheritance beyond those exercised paths remains unverified.
 
 | Registered path | Handler | Accepted disposition / source behavior |
 |---|---|---|
@@ -69,8 +69,8 @@ Every route decorator declared by the current provider controller is enumerated 
 | `/oidc/login_form` | `ControllerOIDC.login_page` | Public website GET; renders `amr_oidc.custom_login_template`; UI path only. |
 | `/oidc/authorize_continue` | `ControllerOIDC.authorize_continue` | User-authenticated route; 400 `unsupported_response_type`. |
 | `/oidc/login/submit` | `ControllerOIDC.login_submit` | Public POST; 400 `unsupported_response_type`; no authorization issuance. |
-| `/oidc/introspect` | `ControllerOIDC.api_oidc_introspect` | GET/POST declaration, auth none; handler accepts only secure POST/form token, authenticates registered introspection client, returns inactive or an allowlisted claim projection. Declaration is not runtime route proof. |
-| `/oidc/profile` | `ControllerOIDC.api_oidc_profile` | GET/POST declaration, auth none; handler requires bearer header and empty query/body, validates token and returns `sub`; no profile enrichment. |
+| `/oidc/introspect` | `ControllerOIDC.api_oidc_introspect` | GET/POST declaration, auth none; handler accepts only secure POST/form token, authenticates registered introspection client, returns inactive or an allowlisted claim projection. Signed-token HTTP route exercised via Odoo proxy mode and synthetic forwarded headers; no TLS socket or production proxy-trust proof. |
+| `/oidc/profile` | `ControllerOIDC.api_oidc_profile` | GET/POST declaration, auth none; handler requires bearer header and empty query/body, validates token and returns `sub`; signed-token HTTP route exercised; no TLS socket proof. |
 | `/oidc/userinfo` | `ControllerOIDC.api_oidc_profile` | Alias of profile handler; same source behavior. |
 
 ## Settings and registered candidate resources
@@ -97,19 +97,19 @@ Exact `amr_oidc/__manifest__.py` data registrations, in declared order: `securit
 
 ### Provider (`amr_oidc`) current candidate tests
 
-`amr_oidc/tests/test_introspect_query_rejection.py` is registered as an Odoo `HttpCase` and asserts cleartext rejection only; it does not prove HTTPS success or query rejection. Secure handler behavior and query rejection are covered by isolated controller tests in `tests/unit/test_standalone_package.py`, using Odoo 13's query/form-to-route-kwargs mapping. Actual HTTPS transport/dispatch remains NOT RUN.
+`amr_oidc/tests/integration/test_introspect_query_rejection.py` is registered as an Odoo `HttpCase`. It includes cleartext rejection and signed-token introspection/profile HTTP cases. On 036fec4, the native Odoo selector executed the signed-token cases; introspection used `--proxy-mode` with synthetic `X-Forwarded-Proto/Host`, proving Odoo's proxy-header secure-flag/route path only—not TLS socket or production proxy trust. Query rejection also has isolated controller coverage in `tests/unit/test_standalone_package.py`, using Odoo 13's query/form-to-route-kwargs mapping. Formal UAT-19 remains NOT RUN.
 
-`amr_oidc/tests/__init__.py` imports exactly these eight Odoo integration modules (registered for Odoo discovery, not run as integration tests here): `amr_oidc/tests/test_public_key_ownership.py`, `amr_oidc/tests/test_public_key_orm.py`, `amr_oidc/tests/test_jwks_route.py`, `amr_oidc/tests/test_introspect_query_rejection.py`, `amr_oidc/tests/test_replay_acl.py`, `amr_oidc/tests/test_oidc_client_identity.py`, `amr_oidc/tests/test_client_secret_verifier.py`, and `amr_oidc/tests/test_client_registration.py`.
+Both `amr_oidc/tests/__init__.py` and `amr_oidc/tests/integration/__init__.py` import exactly these eight Odoo integration modules under `amr_oidc/tests/integration/`: `test_public_key_ownership.py`, `test_public_key_orm.py`, `test_jwks_route.py`, `test_introspect_query_rejection.py`, `test_replay_acl.py`, `test_oidc_client_identity.py`, `test_client_secret_verifier.py`, and `test_client_registration.py`. `test_helper_decode.py` is also under `tests/integration/` but is not in those imports.
 
 | Exact path | Disposition / runner |
 |---|---|
-| `amr_oidc/tests/unit/test_capability_fail_closed.py` | Offline `unittest.TestCase`; now in `tests/unit`, not imported by addon initializer; collected by isolated Python 3.8.20 unit runner. Moved from `amr_oidc/tests/test_capability_fail_closed.py`; imports support by explicit file path. |
+| `amr_oidc/tests/unit/test_capability_fail_closed.py` | Offline `unittest.TestCase`; now in `tests/unit`, not imported by addon initializer; collected by isolated Python 3.7.9 / pytest 7.4.4 unit runner. Moved from `amr_oidc/tests/test_capability_fail_closed.py`; imports support by explicit file path. |
 | `amr_oidc/tests/unit/test_package_contract.py` | Offline unit test; isolated unit runner; not addon-registered. Reconciles the former candidate filename `amr_oidc/tests/test_package_contract.py` named in source/addendum evidence. |
 | `amr_oidc/tests/unit/test_provider_ownership.py` | Offline unit test; isolated unit runner; not addon-registered. |
 | `amr_oidc/tests/unit/test_token_issuer_security.py` | Offline security unit test for internal signing/access boundaries; isolated unit runner; not addon-registered. Odoo RPC dispatch remains unverified. |
 | `amr_oidc/tests/unit/test_standalone_package.py` | Offline unit tests for resource precedence/propagation, audience-only claims, cache audience selection and defaults; isolated unit runner; not addon-registered. |
 | `amr_oidc/tests/unit/test_asymmetric_header_verification.py` | Offline component tests for header alg/kid dispatch, allowlist rejection and exact trusted-key lookup; mocks do not establish real signature cryptography; isolated unit runner; not addon-registered. |
-| `amr_oidc/tests/test_helper_decode.py` | `TransactionCase` referencing `amr.resource.helper`; excluded from the provider's eight imports and not part of the offline unit run. It is not the Resource Server's `test_helper.py`. |
+| `amr_oidc/tests/integration/test_helper_decode.py` | `TransactionCase` referencing `amr.resource.helper`; excluded from the provider's eight imports and not part of the offline unit run. It is not the Resource Server's `test_helper.py`. |
 | `amr_oidc/tests/support.py` | Shared isolated import doubles used by offline tests; not a test module/runner target and not imported through Odoo test initializer. |
 | `amr_oidc/tests/test_capability_fail_closed.py` | Former path; moved (not retained) to `tests/unit/test_capability_fail_closed.py`; source inventory/addendum cite this historical path. |
 | `amr_oidc/tests/test_package_contract.py` | Former path; candidate contract is now `tests/unit/test_package_contract.py`; source inventory/addendum cite the historical path. |
@@ -123,18 +123,18 @@ The following exact top-level files remain **legacy/unregistered** offline files
 
 `amr_token/tests/test_controller_contract.py`, `amr_token/tests/test_data_contract.py`, `amr_token/tests/test_demo_contract.py`, `amr_token/tests/test_generate_key_action.py`, `amr_token/tests/test_helper_configuration.py`, `amr_token/tests/test_helper_key_generation.py`, `amr_token/tests/test_jwks_contract.py`, `amr_token/tests/test_manifest_contract.py`, `amr_token/tests/test_module_registration.py`, `amr_token/tests/test_oidc_grants.py`, `amr_token/tests/test_oidc_user_responses.py`, `amr_token/tests/test_private_key_source_lookup.py`, `amr_token/tests/test_private_key_sources.py`, `amr_token/tests/test_public_key_contract.py`, `amr_token/tests/test_public_key_validation.py`, `amr_token/tests/test_res_users_contract.py`, `amr_token/tests/test_resource_helper_extension.py`, `amr_token/tests/test_settings_contract.py`, `amr_token/tests/test_token_helper_lifecycle.py`, and `amr_token/tests/test_token_methods.py`. None are imported in `amr_token/tests/__init__.py`; they are not asserted as executed.
 
-The accepted addendum's source-test anchors `amr_oidc/tests/test_capability_fail_closed.py`, `amr_oidc/tests/test_package_contract.py`, and `amr_oidc/tests/test_introspect_query_rejection.py` are accounted for above: the first two candidate offline tests are under `tests/unit`; current `test_introspect_query_rejection.py` is in the eight Odoo imports. The bound inventory's `amr_oidc/tests/test_helper_decode.py` is separately excluded as described. Source test references are contracts to reconcile, not test verdicts.
+The accepted addendum's source-test anchors `amr_oidc/tests/test_capability_fail_closed.py`, `amr_oidc/tests/test_package_contract.py`, and `amr_oidc/tests/test_introspect_query_rejection.py` are accounted for above: the first two candidate offline tests are under `tests/unit`; current `integration/test_introspect_query_rejection.py` is in the eight Odoo imports. The bound inventory's `amr_oidc/tests/test_helper_decode.py` is now at `amr_oidc/tests/integration/test_helper_decode.py` and separately excluded as described. Source test references are contracts to reconcile, not test verdicts.
 
 ### Other UAT-19 mappings
 
 | UAT-19 item | Candidate mapping / disposition |
 |---|---|
-| OIDC models | Provider declarations under `amr_oidc/models/`, imported by `amr_oidc/models/__init__.py`; asymmetric validation in `models/public_key.py::PublicKey.validate_token`. |
+| OIDC models | Provider declarations under `amr_oidc/models/`, imported by `amr_oidc/models/__init__.py`; the main asymmetric helper path is `TokenHelper.decode` → `TokenAsymmetric.decode` with trusted-key lookup on `amr.public.key`. `PublicKey.validate_token` is a separate record method, not called by `TokenHelper.decode`. |
 | Missing persistent token model | No candidate `_name = 'amr.token'`; OD-01 controlled `UserError`. Static source fact only. |
 | Legacy `token_views.xml` | `amr_token/views/token_views.xml` deliberately unregistered (`amr_token/__manifest__.py::data == []`), OD-04. |
 | ACL, data, manifest | Exact provider data/demo registrations are itemized above; adapter data empty; source adapter ACL CSV was header-only. Declarations do not establish effective ACL/install state. |
 | No glue / no Resource Server dependency | OD-05 adapter lacks hooks; OD-08 resource addon unchanged and omitted from provider/adapter dependency lists. |
 
-Step 1 unit-test execution evidence is recorded separately against the exact candidate SHA. This crosswalk is a static source mapping only; no Odoo server/RPC dispatch, ORM registry, ACL, database, HTTP or UAT result is claimed here.
+Step 1 native Odoo selector and offline unit results are recorded in a separate candidate-bound execution report. This crosswalk maps source-owned items to candidate paths and active test identities; it is not execution evidence and does not establish the aggregate UAT-19 oracle.
 
-**UAT-19 status: NOT RUN.** This crosswalk maps source items and dispositions and records isolated suite execution separately; it does not convert those test runs into UAT-19, Odoo integration, runtime, cryptographic, registry, HTTP, ACL, or installation evidence.
+**UAT-19 status: NOT RUN.** The separate Step 1 execution report records only the named Odoo HTTP/ORM test methods and offline unit suites that actually ran; those results do not cover or satisfy the full UAT-19 source inventory. Do not infer unexecuted registry, ACL, route, cryptographic, database, installation, or production behavior.
