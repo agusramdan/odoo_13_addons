@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import base64
 import unittest
 from unittest.mock import patch
 
@@ -40,6 +41,70 @@ class TestIntrospectHttpSecurity(HttpCase):
         self.assertEqual(response.json().get('error'), 'invalid_request')
         auth.assert_not_called()
         helper.assert_not_called()
+
+    def test_post_introspection_returns_allowlisted_signed_token_claims(self):
+        issuer = 'https://oidc-introspection.invalid'
+        signing_secret = 'synthetic-introspection-signing-secret'
+        client_id = 'synthetic-introspection-client'
+        client_secret = 'synthetic-introspection-credential'
+        internal_claim = 'synthetic-internal-claim-marker'
+        now = int(time.time())
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.signature_type', 'secret')
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.secret_algorithm', 'HS256')
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.secret', signing_secret)
+        self.env['ir.config_parameter'].sudo().set_param(
+            'web.base.url', issuer)
+        self.env['oidc.client'].sudo().create({
+            'name': 'Synthetic introspection client',
+            'client_id': client_id,
+            'active': True,
+            'allow_introspection': True,
+            'client_secret_hash': self.env['res.users']._crypt_context().hash(
+                client_secret),
+        })
+        token = jwt.encode({
+            'iss': issuer,
+            'exp': now + 300,
+            'aud': client_id,
+            'sub': 'synthetic-introspection-subject',
+            'iat': now,
+            'synthetic_internal_claim': internal_claim,
+        }, signing_secret, algorithm='HS256')
+        if not isinstance(token, str):
+            token = token.decode('ascii')
+        basic = 'Basic ' + base64.b64encode(
+            (client_id + ':' + client_secret).encode('utf-8')
+        ).decode('ascii')
+
+        response = self.url_open(
+            '/oidc/introspect',
+            data={'token': token},
+            headers={
+                'Authorization': basic,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Forwarded-Proto': 'https',
+                'X-Forwarded-Host': 'oidc-introspection.invalid',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(
+            payload.get('active'),
+            'active=%r response_keys=%r' % (payload.get('active'), sorted(payload)),
+        )
+        self.assertEqual(set(payload), {'active', 'sub', 'aud', 'iss', 'exp', 'iat'})
+        self.assertEqual(payload['sub'], 'synthetic-introspection-subject')
+        self.assertEqual(payload['aud'], client_id)
+        self.assertEqual(payload['iss'], issuer)
+        self.assertEqual(payload['exp'], now + 300)
+        self.assertEqual(payload['iat'], now)
+        self.assertNotIn('synthetic_internal_claim', payload)
+        self.assertNotIn(internal_claim, response.text)
+        self.assertNotIn(client_secret, response.text)
 
     def test_profile_returns_sub_for_real_signed_bearer_token(self):
         issuer = 'https://oidc-profile.invalid'

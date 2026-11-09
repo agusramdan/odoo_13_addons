@@ -102,7 +102,7 @@ class ControllerOIDC(Controller):
         except Exception:
             return self.invalid_response(401, 'invalid_client')
         try:
-            claims = request.env['amr.oidc.helper'].validate(token, audience=client.client_id)
+            claims = request.env['amr.oidc.helper'].decode(token, audience=client.client_id)
         except Exception:
             return self.make_response(active=False)
         allowed = ('sub', 'aud', 'iss', 'exp', 'iat', 'scope', 'jti', 'token_type', 'client_id')
