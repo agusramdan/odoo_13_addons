@@ -15,7 +15,9 @@ class TestPublicKeyOwnership(TransactionCase):
         model = self.env.ref("amr_oidc.model_amr_public_key")
         self.assertEqual(model.model, "amr.public.key")
         keys = self.env["amr.public.key"]
-        for method in ("_check_public_key", "load_pem_public_key", "get_private_key",
-                       "_read_file", "get_jwks", "generate_token", "validate_token",
+        for method in ("_check_public_key", "load_pem_public_key", "_get_private_key",
+                       "_read_file", "get_jwks", "_generate_token", "validate_token",
                        "action_generate_key"):
             self.assertTrue(hasattr(keys, method), method)
+        self.assertFalse(hasattr(keys, "get_private_key"))
+        self.assertFalse(hasattr(keys, "generate_token"))

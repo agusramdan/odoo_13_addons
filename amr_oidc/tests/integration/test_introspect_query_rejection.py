@@ -29,10 +29,9 @@ class TestIntrospectHttpSecurity(HttpCase):
 
     def test_cleartext_post_is_rejected_before_client_authentication(self):
         # This HttpCase request is cleartext: only the TLS guard is asserted.
-        # Secure handler logic has offline unit coverage; HTTPS transport remains unverified.
         helper_model = type(self.env['amr.oidc.helper'])
         with patch.object(helper_model, 'get_basic_auth') as auth, \
-                patch.object(helper_model, 'validate') as helper:
+                patch.object(helper_model, 'decode') as helper:
             response = self.url_open(
                 '/oidc/introspect', data={'token': '[REDACTED]'},
                 headers={'Content-Type': 'application/x-www-form-urlencoded'},
