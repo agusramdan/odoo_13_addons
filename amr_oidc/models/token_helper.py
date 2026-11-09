@@ -9,6 +9,9 @@ from odoo import _, api, models
 from odoo.exceptions import AccessError
 
 
+_AUDIENCE_UNSET = object()
+
+
 def get_algorith_config():
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
     return {
@@ -323,11 +326,11 @@ class TokenHelper(models.AbstractModel):
         return payload
 
     @api.model
-    def _generate_user_token(self, user, audience=None, expires_in=None, scope='', **kw):
+    def _generate_user_token(self, user, audience=_AUDIENCE_UNSET, expires_in=None, scope='', **kw):
         self._check_token_issuance_access(user)
-        if audience is None and 'aud' in kw:
+        if audience is _AUDIENCE_UNSET and 'aud' in kw:
             audience = kw.pop('aud')
-        if audience is not None and 'resource' not in kw:
+        if audience is not _AUDIENCE_UNSET and 'resource' not in kw:
             audience = self._validate_audience(audience)
         payload = self.update_user_payload(user, kw)
         expires_in = expires_in or self.get_expires_in()
@@ -337,12 +340,12 @@ class TokenHelper(models.AbstractModel):
         return access_token, payload, expires_in
 
     @api.model
-    def generate_user_token(self, user, audience=None, expires_in=None, scope='', **kw):
+    def generate_user_token(self, user, audience=_AUDIENCE_UNSET, expires_in=None, scope='', **kw):
         """Compatibility API retained for existing amr_token consumers."""
         return self._generate_user_token(user, audience, expires_in, scope, **kw)
 
     @api.model
-    def _generate_token(self, payload, issuer=None, expires_in=None, audience=None, scope=''):
+    def _generate_token(self, payload, issuer=None, expires_in=None, audience=_AUDIENCE_UNSET, scope=''):
         if 'resource' in payload:
             resource = payload.pop('resource')
             if not isinstance(resource, str) or not resource.strip():
@@ -350,7 +353,9 @@ class TokenHelper(models.AbstractModel):
             audience = resource
         expires_in = expires_in or self.get_expires_in()
         expire = int(time.time()) + expires_in
-        audience = self._validate_audience(self.get_audience() if audience is None else audience)
+        if audience is _AUDIENCE_UNSET:
+            audience = self.get_audience()
+        audience = self._validate_audience(audience)
         payload.update({
             'iss': self.get_issuer() or issuer,
             'aud': audience,
@@ -366,10 +371,7 @@ class TokenHelper(models.AbstractModel):
         if any(algorithm is not None and algorithm != configured
                for algorithm in (kw.get('alg'), kw.get('algorithm'))):
             raise ValueError('Token algorithm does not match provider configuration')
-        audience = kw.get('audience') or kw.get('aud')
-        if audience is None:
-            audience = next((kw[key] for key in ('audience', 'aud')
-                             if key in kw and kw[key] is not None), None)
+        audience = kw.get('audience', kw.get('aud', _AUDIENCE_UNSET))
         scope = kw.pop('scope', '')
         kw.pop('alg', None)
         kw.pop('algorithm', None)
