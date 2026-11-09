@@ -157,6 +157,59 @@ class TestAccessTokenAudiencePresence(TransactionCase):
         self.assertNotIn("resource", payload)
         return payload
 
+    def test_helper_resource_overrides_conflicting_audience_shapes(self):
+        self._configure_url_wrapper_signing()
+        helper = self.env["amr.oidc.helper"]
+        resource = "https://resource.invalid/api"
+        for case_id, conflict in (("string", "wrong-audience"),
+                                  ("list", ["wrong-audience", "other"])):
+            with self.subTest(case_id=case_id):
+                token, _, _ = helper._generate_token(
+                    {"resource": resource}, audience=conflict
+                )
+                payload = helper.decode(token, audience=resource)
+                self.assertEqual(payload["aud"], resource)
+                self.assertNotIn("resource", payload)
+
+    def test_user_resource_overrides_conflicting_audience_shapes(self):
+        self._configure_url_wrapper_signing()
+        user = self.env.user
+        for case_id, conflict in (("string", "wrong-audience"),
+                                  ("list", ["wrong-audience", "other"])):
+            with self.subTest(case_id=case_id):
+                resource = "https://resource.invalid/%s" % case_id
+                token = user.get_access_token(resource=resource, audience=conflict)
+                payload = self.env["amr.oidc.helper"].decode(token, audience=resource)
+                self.assertEqual(payload["aud"], resource)
+                self.assertNotIn("resource", payload)
+
+    def test_user_invalid_resource_types_rejected_without_audience_fallback(self):
+        invalid_resources = [[], (), {}, object(), 17, True, None]
+        for index, resource in enumerate(invalid_resources):
+            with self.subTest(case_id="invalid_resource_type_%s" % index):
+                with self.assertRaisesRegex(ValueError, "resource"):
+                    self.env.user.get_access_token(
+                        resource=resource, audience="valid-fallback"
+                    )
+
+    def test_user_empty_resource_rejected_without_audience_fallback(self):
+        for case_id, resource in (("empty", ""), ("whitespace", " \t ")):
+            with self.subTest(case_id=case_id):
+                with self.assertRaisesRegex(ValueError, "resource"):
+                    self.env.user.get_access_token(
+                        resource=resource, audience="valid-fallback"
+                    )
+
+    def test_helper_invalid_resource_values_rejected_before_signing(self):
+        helper = self.env["amr.oidc.helper"]
+        invalid_resources = [[], (), {}, object(), 17, True, None, "", " \t "]
+        for index, resource in enumerate(invalid_resources):
+            with self.subTest(case_id="invalid_resource_%s" % index):
+                with self.assertRaisesRegex(ValueError, "resource"):
+                    helper._generate_token(
+                        {"resource": resource}, audience="valid-fallback"
+                    )
+
     def test_add_url_access_token_omitted_audience_uses_url_origin(self):
         self._configure_url_wrapper_signing()
         url = "https://wrapper-origin.invalid/path"
