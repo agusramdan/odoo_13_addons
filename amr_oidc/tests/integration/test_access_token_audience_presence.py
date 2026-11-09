@@ -94,3 +94,51 @@ class TestAccessTokenAudiencePresence(TransactionCase):
             self.env["res.users"]._get_access_token(
                 user.id, None, fresh_bucket
             )
+
+    def test_client_credentials_omitted_audience_defaults_and_none_is_rejected(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://oidc-regression.invalid")
+        client = self.env["oidc.client"].create({
+            "client_id": "client-credentials-audience-presence",
+            "web_base_url": "https://oidc-regression.invalid",
+        })
+        secret = "synthetic-client-secret-for-audience-presence"
+        verifier = self.env["res.users"]._crypt_context().hash(secret)
+        client.sudo().write({"client_secret_hash": verifier})
+
+        result = client._client_credentials(client_secret=secret)
+        token = result["access_token"]
+        expected_audience = params.get_param("database.uuid")
+        self.assertTrue(expected_audience)
+        payload = self.env["amr.oidc.helper"].decode(
+            token, audience=expected_audience
+        )
+        self.assertEqual(payload["aud"], expected_audience)
+
+        with self.assertRaisesRegex(ValueError, "audience"):
+            client._client_credentials(client_secret=secret, audience=None)
+
+    def test_client_encode_omitted_audience_defaults_and_none_is_rejected(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://oidc-regression.invalid")
+        client = self.env["oidc.client"].create({
+            "client_id": "client-encode-audience-presence",
+            "web_base_url": "https://oidc-regression.invalid",
+        })
+
+        token, _, _ = client._encode()
+        expected_audience = params.get_param("database.uuid")
+        self.assertTrue(expected_audience)
+        payload = self.env["amr.oidc.helper"].decode(
+            token, audience=expected_audience
+        )
+        self.assertEqual(payload["aud"], expected_audience)
+
+        with self.assertRaisesRegex(ValueError, "audience"):
+            client._encode(audience=None)
