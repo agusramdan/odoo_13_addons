@@ -167,17 +167,18 @@ class OidcClient(models.Model):
             redirect_uri = self.web_base_url + REDIRECT_MODE.get(client.redirect_path)
         else:
             redirect_uri = redirect_uri or client.redirect_uri
+        token_kwargs = {'scope': scope}
         if 'resource' in kw:
             resource = kw['resource']
             if not isinstance(resource, str) or not resource.strip():
                 raise ValueError('Invalid resource')
-            audience = resource
-        elif 'audience' in kw and 'aud' in kw:
-            audience = kw.get('audience') or kw.get('aud') or None
-        else:
-            audience = kw.get('audience', kw.get('aud'))
+            token_kwargs['audience'] = resource
+        elif 'audience' in kw:
+            token_kwargs['audience'] = kw['audience']
+        elif 'aud' in kw:
+            token_kwargs['aud'] = kw['aud']
         token, payload, expires_in = self.env['amr.oidc.helper']._generate_user_token(
-            self.env.user, audience=audience, scope=scope
+            self.env.user, **token_kwargs
         )
         return token, redirect_uri, expires_in
 
