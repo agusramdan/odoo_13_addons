@@ -7,6 +7,9 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import werkzeug
 
 
+_AUDIENCE_UNSET = object()
+
+
 class ResUsers(models.Model):
     _inherit = 'res.users'
 
@@ -29,12 +32,17 @@ class ResUsers(models.Model):
     @ormcache('uid', 'audience', 'bucket')
     def _get_access_token(self, uid, audience, bucket):
         user = self.browse(uid)
-        token, _, _ = self.env['amr.oidc.helper']._generate_user_token(
-            user, audience=audience
-        )
+        if audience is _AUDIENCE_UNSET:
+            token, _, _ = self.env['amr.oidc.helper']._generate_user_token(user)
+        elif audience is None:
+            raise ValueError('A valid audience is required')
+        else:
+            token, _, _ = self.env['amr.oidc.helper']._generate_user_token(
+                user, audience=audience
+            )
         return token
 
-    def get_access_token(self, create=False, audience=None, **kw):
+    def get_access_token(self, create=False, audience=_AUDIENCE_UNSET, **kw):
         missing = object()
         resource = kw.pop('resource', missing)
         has_resource = resource is not missing
@@ -42,6 +50,8 @@ class ResUsers(models.Model):
             if not isinstance(resource, str) or not resource.strip():
                 raise ValueError('Invalid resource')
             audience = resource
+        elif audience is not _AUDIENCE_UNSET and audience is None:
+            raise ValueError('A valid audience is required')
         self.ensure_one()
         if self.id != self.env.uid and not self.env.user.has_group('base.group_system'):
             raise AccessError('You may only issue an access token for yourself.')

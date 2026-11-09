@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # amr.resource-owned helper tests stay with that addon; package tests use tests/unit.
+from . import test_access_token_audience_presence
 from . import test_public_key_ownership
 from . import test_public_key_orm
 from . import test_jwks_route

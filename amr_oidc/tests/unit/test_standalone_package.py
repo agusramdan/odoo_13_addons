@@ -287,6 +287,28 @@ class StandalonePackageTests(unittest.TestCase):
         _, client_payload, _ = helper._generate_token({}, expires_in=60, audience="client-audience")
         self.assertEqual(client_payload["aud"], "client-audience")
 
+    def test_generation_rejects_explicit_none_audience_but_omission_defaults(self):
+        helper = self._audience_alias_helper()
+        _, omitted, _ = helper._generate_token({}, expires_in=60)
+        self.assertEqual(omitted["aud"], "database-audience")
+        with self.assertRaisesRegex(ValueError, "audience"):
+            helper._generate_token({}, expires_in=60, audience=None)
+
+    def test_generate_user_token_explicit_none_audience_is_rejected(self):
+        helper = self._audience_alias_helper()
+        _, omitted, _ = helper._generate_user_token(helper.env.user, expires_in=60)
+        self.assertEqual(omitted["aud"], "database-audience")
+        with self.assertRaisesRegex(ValueError, "audience"):
+            helper._generate_user_token(helper.env.user, audience=None, expires_in=60)
+
+    def test_generate_user_token_compatibility_wrapper_preserves_presence_semantics(self):
+        helper = self._audience_alias_helper()
+        user = helper.env.user
+        _, omitted, _ = helper.generate_user_token(user, expires_in=60)
+        self.assertEqual(omitted["aud"], "database-audience")
+        with self.assertRaisesRegex(ValueError, "audience"):
+            helper.generate_user_token(user, audience=None, expires_in=60)
+
     def test_generation_rejects_malformed_audience_values(self):
         helper = self._audience_alias_helper()
         invalid_audiences = (False, 0, [], ["client-audience", False], {})
@@ -372,16 +394,21 @@ class StandalonePackageTests(unittest.TestCase):
         spec.loader.exec_module(support)
         model = support.load("models/res_users.py").ResUsers()
         model.id = 7
-        model.env = UnitEnv()
+        user = SimpleNamespace(id=7, login="user", email="u@example.invalid")
+        helper = SimpleNamespace(
+            _generate_user_token=mock.Mock(return_value=("synthetic-token", None, None))
+        )
+        model.env = UnitEnv({"amr.oidc.helper": helper})
         model.ensure_one = lambda: None
         model.is_user_allow_create_token = lambda: True
-        model._get_access_token = mock.Mock(return_value="synthetic-token")
+        model.browse = mock.Mock(return_value=user)
 
         with mock.patch("time.time", return_value=900):
             result = model.get_access_token()
 
         self.assertEqual(result, "synthetic-token")
-        model._get_access_token.assert_called_once_with(7, None, 3)
+        model.browse.assert_called_once_with(7)
+        helper._generate_user_token.assert_called_once_with(user)
 
     def test_res_users_resource_is_effective_cache_audience(self):
         import importlib.util
@@ -598,12 +625,17 @@ class StandalonePackageTests(unittest.TestCase):
         helper = self._audience_alias_helper()
 
         helper._encode()
-        helper._encode(audience=None)
 
         encoded_payloads = [call[0][0] for call in helper._encode.__globals__["jwt"].encode.call_args_list]
         self.assertEqual([payload["aud"] for payload in encoded_payloads], [
-            "database-audience", "database-audience",
+            "database-audience",
         ])
+
+    def test_encode_rejects_explicit_none_audience(self):
+        helper = self._audience_alias_helper()
+
+        with self.assertRaisesRegex(ValueError, "audience"):
+            helper._encode(audience=None)
 
     def test_secret_strategy_rejects_algorithm_mismatch_before_secret_lookup(self):
         helper = self._audience_alias_helper()
