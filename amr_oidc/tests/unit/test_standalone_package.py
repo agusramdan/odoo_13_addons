@@ -157,6 +157,104 @@ class StandalonePackageTests(unittest.TestCase):
     #     with self.assertRaisesRegex(ValueError, "signature type"):
     #         helper._generate_token({}, expires_in=60)
 
+    def test_resource_overrides_audience_and_is_not_emitted_as_claim(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_resource", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        packages = {name: types.ModuleType(name) for name in (
+            "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives",
+            "cryptography.hazmat.primitives.asymmetric")}
+        packages["cryptography.hazmat.primitives.asymmetric"].ec = mock.Mock()
+        packages["cryptography.hazmat.primitives.asymmetric"].rsa = mock.Mock()
+        with mock.patch.dict("sys.modules", packages):
+            module = support.load("models/token_helper.py")
+        module.jwt.encode = mock.Mock(return_value="opaque")
+        helper = module.TokenHelper()
+        helper.env = UnitEnv()
+        helper.get_signature_type = lambda: "secret"
+        helper.get_signature_algorithm = lambda: "HS256"
+        helper._get_secret = lambda: "synthetic-secret"
+        helper.get_expires_in = lambda: 60
+        helper.get_issuer = lambda: "https://issuer.invalid"
+        _, payload, _ = helper._generate_token(
+            {"resource": "https://resource.invalid", "custom": "kept"},
+            audience="https://audience.invalid", expires_in=60)
+        self.assertEqual(payload["aud"], "https://resource.invalid")
+        self.assertNotIn("resource", payload)
+        self.assertEqual(payload["custom"], "kept")
+
+        _, list_payload, _ = helper._generate_token(
+            {"resource": "https://resource.invalid"},
+            audience=["https://audience-one.invalid", "https://audience-two.invalid"], expires_in=60)
+        self.assertEqual(list_payload["aud"], "https://resource.invalid")
+        self.assertNotIn("resource", list_payload)
+
+    def test_resource_requires_one_nonempty_string_at_token_generation(self):
+        helper = self._audience_alias_helper()
+
+        for resource in (None, "", "   ", [], ["resource"], {}, False, 0):
+            with self.subTest(resource_type=type(resource).__name__):
+                with self.assertRaisesRegex(ValueError, "resource"):
+                    helper._generate_token(
+                        {"resource": resource}, audience="valid-audience", expires_in=60)
+
+    def test_token_helper_encode_resource_overrides_audience_and_emits_only_aud(self):
+        helper = self._audience_alias_helper()
+
+        token = helper._encode(resource="resource-audience", audience="explicit-audience")
+
+        self.assertEqual(token, "opaque")
+        payload = helper._jwt_encode.call_args[0][0]
+        self.assertEqual(payload["aud"], "resource-audience")
+        self.assertNotIn("resource", payload)
+
+    def test_generate_user_token_resource_overrides_audience_and_emits_only_aud(self):
+        helper = self._audience_alias_helper()
+
+        token, payload, _expires_in = helper._generate_user_token(
+            helper.env.user, audience="explicit-audience", resource="resource-audience")
+
+        self.assertEqual(token, "opaque")
+        self.assertEqual(payload["aud"], "resource-audience")
+        self.assertNotIn("resource", payload)
+
+    def test_generate_user_token_resource_overrides_empty_audience(self):
+        helper = self._audience_alias_helper()
+
+        token, payload, _expires_in = helper._generate_user_token(
+            helper.env.user, audience="", resource="resource-audience")
+
+        self.assertEqual(token, "opaque")
+        self.assertEqual(payload["aud"], "resource-audience")
+        self.assertNotIn("resource", payload)
+
+    def test_client_credentials_forwards_resource_to_encode(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_client_credentials_resource", str(support_path))
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load isolated OIDC client")
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        client = support.load("models/oidc_client.py").OidcClient()
+        helper = self._audience_alias_helper()
+        client.env = UnitEnv({"amr.oidc.helper": helper})
+        client.user_id = helper.env.user
+        client.check_credentials = mock.Mock(return_value=True)
+        client.with_user = mock.Mock(return_value=client)
+
+        result = client._client_credentials(
+            client_secret="synthetic-secret", audience="explicit-audience",
+            resource="resource-audience", scope="read")
+
+        self.assertEqual(result["access_token"], "opaque")
+        payload = helper._jwt_encode.call_args[0][0]
+        self.assertEqual(payload["aud"], "resource-audience")
+        self.assertNotIn("resource", payload)
+        client.check_credentials.assert_called_once_with("synthetic-secret")
+
     def test_empty_generation_audience_fails_and_absent_uses_database_audience(self):
         import importlib.util
         support_path = ADDON_ROOT / "tests" / "support.py"
@@ -227,6 +325,7 @@ class StandalonePackageTests(unittest.TestCase):
             module = support.load("models/token_helper.py")
         module.jwt.encode = mock.Mock(return_value="opaque")
         helper = module.TokenHelper()
+        helper._jwt_encode = module.jwt.encode
         helper.get_signature_type = lambda: "secret"
         helper.get_signature_algorithm = lambda: "HS256"
         helper._get_secret = lambda: "synthetic-secret"
@@ -283,6 +382,86 @@ class StandalonePackageTests(unittest.TestCase):
 
         self.assertEqual(result, "synthetic-token")
         model._get_access_token.assert_called_once_with(7, None, 3)
+
+    def test_res_users_resource_is_effective_cache_audience(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_users_resource", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        model = support.load("models/res_users.py").ResUsers()
+        model.id, model.env = 7, UnitEnv()
+        model.ensure_one = lambda: None
+        model.is_user_allow_create_token = lambda: True
+        model._get_access_token = mock.Mock(return_value="synthetic-token")
+
+        with mock.patch("time.time", return_value=900):
+            model.get_access_token(create=True, audience="ignored", resource="resource-a")
+            model.get_access_token(create=True, audience="ignored", resource="resource-b")
+
+        self.assertEqual(model._get_access_token.call_args_list, [
+            mock.call(7, "resource-a", 3), mock.call(7, "resource-b", 3),
+        ])
+
+    def test_res_users_rejects_explicit_invalid_resource(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_users_bad_resource", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        model = support.load("models/res_users.py").ResUsers()
+        model.id, model.env = 7, UnitEnv()
+        model.ensure_one = lambda: None
+        model.is_user_allow_create_token = lambda: True
+        model._get_access_token = mock.Mock(return_value="synthetic-token")
+
+        for resource in (None, "", "   ", [], False):
+            with self.subTest(resource=resource):
+                with self.assertRaisesRegex(ValueError, "resource"):
+                    model.get_access_token(create=True, audience="valid-audience", resource=resource)
+
+    def test_oidc_client_rejects_whitespace_resource_before_helper(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_client_bad_resource", str(support_path))
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load isolated OIDC client")
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        module = support.load("models/oidc_client.py")
+        client = module.OidcClient()
+        helper = mock.Mock()
+        helper._generate_user_token.return_value = ("opaque", {}, 60)
+        client.redirect_path = False
+        client.redirect_uri = "https://callback.invalid"
+        client.client_id = "client"
+        client.env = UnitEnv({"amr.oidc.helper": helper})
+
+        with self.assertRaisesRegex(ValueError, "resource"):
+            client._create_access_token(resource="   ", audience="valid-audience")
+
+        helper._generate_user_token.assert_not_called()
+
+    def test_oidc_client_encode_forwards_resource_without_losing_audience(self):
+        import importlib.util
+        support_path = ADDON_ROOT / "tests" / "support.py"
+        spec = importlib.util.spec_from_file_location("oidc_test_support_client_resource", str(support_path))
+        support = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(support)
+        module = support.load("models/oidc_client.py")
+        client = module.OidcClient()
+        helper = mock.Mock()
+        helper._generate_user_token.return_value = ("opaque", {}, 60)
+        client.redirect_path = False
+        client.redirect_uri = "https://callback.invalid"
+        client.client_id = "client"
+        client.env = UnitEnv({"amr.oidc.helper": helper})
+
+        client._create_access_token(scope="openid", resource="resource-a", audience="audience-a")
+
+        helper._generate_user_token.assert_called_once()
+        self.assertEqual(helper._generate_user_token.call_args[1]["audience"], "resource-a")
+        self.assertNotIn("resource", helper._generate_user_token.call_args.kwargs)
 
     def test_res_users_url_audiences_derive_and_cache_keys_remain_distinct(self):
         import importlib.util

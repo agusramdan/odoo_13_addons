@@ -35,6 +35,13 @@ class ResUsers(models.Model):
         return token
 
     def get_access_token(self, create=False, audience=None, **kw):
+        missing = object()
+        resource = kw.pop('resource', missing)
+        has_resource = resource is not missing
+        if has_resource:
+            if not isinstance(resource, str) or not resource.strip():
+                raise ValueError('Invalid resource')
+            audience = resource
         self.ensure_one()
         if self.id != self.env.uid and not self.env.user.has_group('base.group_system'):
             raise AccessError('You may only issue an access token for yourself.')

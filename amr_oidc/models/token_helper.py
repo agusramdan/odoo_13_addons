@@ -105,14 +105,26 @@ class TokenHelper(models.AbstractModel):
     ALGORITHM_SECRET_CONFIG = ('HS256', 'HS384', 'HS512')
 
     @api.model
-    def _get_encoder(self):
-        # Encoder memang harus berdasakan config
-        signature_type = self.get_signature_type()
+    def _require_configured_algorithm(self, signature_type, algorithm):
+        allowed = self.get_allowed_algorithms()
         configured = self.get_signature_algorithm()
-        allowed = self.get_allowed_algorithms().get(signature_type)
-        if allowed is None or configured not in allowed:
+        if (signature_type not in allowed
+                or configured not in allowed[signature_type] or algorithm != configured):
             raise ValueError('Token algorithm does not match provider configuration')
-        return self._token_strategy(configured)
+        return configured
+
+    @api.model
+    def _get_encoder(self):
+        # Signing uses the configured algorithm; asymmetric verification uses header alg.
+        signature_type = self.get_signature_type()
+        algorithm = self.get_signature_algorithm()
+        if signature_type == 'secret':
+            self._require_configured_algorithm('secret', algorithm)
+        elif signature_type == 'public_key':
+            self._require_configured_algorithm('public_key', algorithm)
+        else:
+            raise ValueError('A supported signature type is required')
+        return self._token_strategy(algorithm)
 
     def _token_strategy(self, algorithm):
         if algorithm in self.ALGORITHM_CONFIG:
@@ -315,7 +327,7 @@ class TokenHelper(models.AbstractModel):
         self._check_token_issuance_access(user)
         if audience is None and 'aud' in kw:
             audience = kw.pop('aud')
-        if audience is not None:
+        if audience is not None and 'resource' not in kw:
             audience = self._validate_audience(audience)
         payload = self.update_user_payload(user, kw)
         expires_in = expires_in or self.get_expires_in()
@@ -331,8 +343,10 @@ class TokenHelper(models.AbstractModel):
 
     @api.model
     def _generate_token(self, payload, issuer=None, expires_in=None, audience=None, scope=''):
-        resource = payload.get('resource')
-        if resource:
+        if 'resource' in payload:
+            resource = payload.pop('resource')
+            if not isinstance(resource, str) or not resource.strip():
+                raise ValueError('A valid resource is required')
             audience = resource
         expires_in = expires_in or self.get_expires_in()
         expire = int(time.time()) + expires_in
