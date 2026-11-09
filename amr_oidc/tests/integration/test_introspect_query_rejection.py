@@ -2,6 +2,9 @@
 import unittest
 from unittest.mock import patch
 
+import jwt
+import time
+
 try:
     import odoo
 except ModuleNotFoundError as error:
@@ -37,3 +40,33 @@ class TestIntrospectHttpSecurity(HttpCase):
         self.assertEqual(response.json().get('error'), 'invalid_request')
         auth.assert_not_called()
         helper.assert_not_called()
+
+    def test_profile_returns_sub_for_real_signed_bearer_token(self):
+        issuer = 'https://oidc-profile.invalid'
+        audience = 'synthetic-profile-audience'
+        secret = 'synthetic-profile-signing-secret'
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.signature_type', 'secret')
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.secret_algorithm', 'HS256')
+        self.env['ir.config_parameter'].sudo().set_param(
+            'amr_token.secret', secret)
+        self.env['ir.config_parameter'].sudo().set_param(
+            'web.base.url', issuer)
+        self.env['ir.config_parameter'].sudo().set_param(
+            'database.uuid', audience)
+        token = jwt.encode({
+            'sub': 'synthetic-profile-subject',
+            'iss': issuer,
+            'aud': audience,
+            'iat': int(time.time()),
+            'exp': int(time.time()) + 300,
+        }, secret, algorithm='HS256')
+
+        response = self.url_open(
+            '/oidc/profile',
+            headers={'Authorization': 'Bearer ' + token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'sub': 'synthetic-profile-subject'})
