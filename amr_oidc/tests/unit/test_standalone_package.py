@@ -15,6 +15,23 @@ class UnitEnv(dict):
     user = SimpleNamespace(id=7, login="email", email="em@em",has_group=lambda group: False)
     cr = SimpleNamespace(dbname="unit-db")
 
+    def __init__(self, *args, **kwargs):
+        super(UnitEnv, self).__init__(*args, **kwargs)
+        helper = self.get("amr.oidc.helper")
+        if helper is None:
+            helper = SimpleNamespace()
+            self["amr.oidc.helper"] = helper
+        helper._validate_audience = self._validate_audience
+
+    @staticmethod
+    def _validate_audience(audience):
+        if isinstance(audience, str) and audience.strip():
+            return audience
+        if (isinstance(audience, list) and audience
+                and all(isinstance(value, str) and value.strip() for value in audience)):
+            return audience
+        raise ValueError("A valid audience is required")
+
 
 class StandalonePackageTests(unittest.TestCase):
     def test_provider_manifest_does_not_require_token_or_resource_addons(self):

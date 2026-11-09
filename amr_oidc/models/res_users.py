@@ -29,14 +29,13 @@ class ResUsers(models.Model):
         return self.get_access_token(create=create)
 
     @api.model
-    @ormcache('uid', 'audience', 'bucket')
-    def _get_access_token(self, uid, audience, bucket):
+    @ormcache('uid', 'audience_key', 'bucket')
+    def _get_access_token(self, uid, audience_key, bucket):
         user = self.browse(uid)
-        if audience is _AUDIENCE_UNSET:
+        if audience_key is _AUDIENCE_UNSET:
             token, _, _ = self.env['amr.oidc.helper']._generate_user_token(user)
-        elif audience is None:
-            raise ValueError('A valid audience is required')
         else:
+            audience = list(audience_key) if isinstance(audience_key, tuple) else audience_key
             token, _, _ = self.env['amr.oidc.helper']._generate_user_token(
                 user, audience=audience
             )
@@ -57,8 +56,15 @@ class ResUsers(models.Model):
             raise AccessError('You may only issue an access token for yourself.')
         if not self.is_user_allow_create_token():
             raise UserError('User not allowed to create access token')
+        if audience is _AUDIENCE_UNSET:
+            audience_key = audience
+        else:
+            audience = self.env['amr.oidc.helper']._validate_audience(audience)
+            audience_key = tuple(audience) if isinstance(audience, list) else audience
         import time
-        return self._get_access_token(self.id, audience, int(time.time() / 300))
+        return self._get_access_token(
+            self.id, audience_key, int(time.time() / 300)
+        )
 
     def create_access_token(self, audience='', **kw):
         raise UserError('Persistent access-token storage is not available')

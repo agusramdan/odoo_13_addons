@@ -9,3 +9,4 @@ from .integration import test_replay_acl
 from .integration import test_oidc_client_identity
 from .integration import test_client_secret_verifier
 from .integration import test_client_registration
+from .integration import test_provider_selected_uat
