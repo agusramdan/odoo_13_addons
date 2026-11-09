@@ -167,7 +167,12 @@ class OidcClient(models.Model):
             redirect_uri = self.web_base_url + REDIRECT_MODE.get(client.redirect_path)
         else:
             redirect_uri = redirect_uri or client.redirect_uri
-        if 'audience' in kw and 'aud' in kw:
+        if 'resource' in kw:
+            resource = kw['resource']
+            if not isinstance(resource, str) or not resource.strip():
+                raise ValueError('Invalid resource')
+            audience = resource
+        elif 'audience' in kw and 'aud' in kw:
             audience = kw.get('audience') or kw.get('aud') or None
         else:
             audience = kw.get('audience', kw.get('aud'))
@@ -213,13 +218,6 @@ class OidcClient(models.Model):
         if not client:
             raise ValueError("Client Not Register")
         return self.env['amr.oidc.helper']._generate_user_token(self.env.user, **kwargs)
-
-    # Public compatibility aliases retained for existing consumers.
-    def _create_authorization_code(self, redirect_uri=None, scope=''):
-        return self._create_authorization_code(redirect_uri, scope)
-
-    def _create_access_token(self, redirect_uri=None, scope='', **kw):
-        return self._create_access_token(redirect_uri, scope, **kw)
 
     def decode(self, token, **kwargs):
         client = self
