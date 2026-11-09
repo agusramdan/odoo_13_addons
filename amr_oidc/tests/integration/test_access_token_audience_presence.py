@@ -1,5 +1,6 @@
 """Registered regression for omitted versus explicitly-null token audience."""
 import time
+from urllib.parse import parse_qs, urlparse
 
 from odoo.tests.common import TransactionCase
 
@@ -142,3 +143,64 @@ class TestAccessTokenAudiencePresence(TransactionCase):
 
         with self.assertRaisesRegex(ValueError, "audience"):
             client._encode(audience=None)
+
+    def _configure_url_wrapper_signing(self):
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param("amr_token.signature_type", "secret")
+        params.set_param("amr_token.secret_algorithm", "HS256")
+        params.set_param("amr_token.secret", "synthetic-test-signing-secret")
+        params.set_param("web.base.url", "https://configured-origin.invalid")
+
+    def _decode_wrapper_token(self, token, audience):
+        payload = self.env["amr.oidc.helper"].decode(token, audience=audience)
+        self.assertEqual(payload["aud"], audience)
+        self.assertNotIn("resource", payload)
+        return payload
+
+    def test_add_url_access_token_omitted_audience_uses_url_origin(self):
+        self._configure_url_wrapper_signing()
+        url = "https://wrapper-origin.invalid/path"
+        result = self.env.user.add_url_access_token(url=url)
+        token = parse_qs(urlparse(result).query)["access_token"][0]
+        self._decode_wrapper_token(token, "https://wrapper-origin.invalid")
+
+    def test_add_url_access_token_explicit_none_rejects_audience(self):
+        self._configure_url_wrapper_signing()
+        with self.assertRaisesRegex(ValueError, "audience"):
+            self.env.user.add_url_access_token(
+                url="https://wrapper-origin.invalid/path", audience=None
+            )
+
+    def test_get_auto_login_url_omitted_audience_uses_configured_origin(self):
+        self._configure_url_wrapper_signing()
+        result = self.env.user.get_auto_login_url(url=None)
+        token = parse_qs(urlparse(result).query)["token_access"][0]
+        self._decode_wrapper_token(token, "https://configured-origin.invalid")
+
+    def test_get_auto_login_url_explicit_none_rejects_audience(self):
+        self._configure_url_wrapper_signing()
+        with self.assertRaisesRegex(ValueError, "audience"):
+            self.env.user.get_auto_login_url(
+                url="https://wrapper-origin.invalid/path", audience=None
+            )
+
+    def test_add_url_access_token_auto_login_preserves_explicit_audience(self):
+        self._configure_url_wrapper_signing()
+        result = self.env.user.add_url_access_token(
+            url="https://wrapper-origin.invalid/path",
+            url_type="auto_login",
+            audience="explicit-aud",
+        )
+        token = parse_qs(urlparse(result).query)["token_access"][0]
+        payload = self.env["amr.oidc.helper"].decode(token, audience="explicit-aud")
+        self.assertEqual(payload["aud"], "explicit-aud")
+        self.assertNotIn("resource", payload)
+
+    def test_add_url_access_token_auto_login_forwards_explicit_none(self):
+        self._configure_url_wrapper_signing()
+        with self.assertRaisesRegex(ValueError, "audience"):
+            self.env.user.add_url_access_token(
+                url="https://wrapper-origin.invalid/path",
+                url_type="auto_login",
+                audience=None,
+            )
