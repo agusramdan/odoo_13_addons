@@ -63,14 +63,14 @@ class ResUsers(models.Model):
     def create_access_token(self, audience='', **kw):
         raise UserError('Persistent access-token storage is not available')
 
-    def add_url_access_token(self, url=None, create=True, param_name='access_token', audience=None,
-                             url_type='access_token', **kw):
+    def add_url_access_token(self, url=None, create=True, param_name='access_token',
+                             audience=_AUDIENCE_UNSET, url_type='access_token', **kw):
         if url_type != 'access_token':
-            return self.get_auto_login_url(url=url, **kw)
+            return self.get_auto_login_url(url=url, audience=audience, **kw)
         if not self.is_user_allow_create_token():
             return url
         parsed = urlparse(url)
-        if audience is None:
+        if audience is _AUDIENCE_UNSET:
             audience = '%s://%s' % (parsed.scheme, parsed.netloc)
         query = parse_qs(parsed.query)
         query[param_name] = self.get_access_token(create=create, audience=audience, **kw)
@@ -78,13 +78,13 @@ class ResUsers(models.Model):
                            urlencode(query, doseq=True), parsed.fragment))
 
     def get_auto_login_url(self, url=None, create=True, web_token_access_path='/web_token_access',
-                           audience=None, **kw):
+                           audience=_AUDIENCE_UNSET, **kw):
         if not self.is_user_allow_create_token():
             return url
         # sudo: preserve source parameter lookup; parameter policy deferred.
         url = url or self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         parsed = urlparse(url)
-        if audience is None:
+        if audience is _AUDIENCE_UNSET:
             audience = '%s://%s' % (parsed.scheme, parsed.netloc)
         query = {'token_access': self.get_access_token(create=create, audience=audience, **kw)}
         redirect = parsed.path
