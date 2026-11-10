@@ -3,10 +3,12 @@
 Run only in a disposable Odoo 13 database. All token-like inputs are synthetic;
 network and the production helper logger are blocked before each test.
 """
+import base64
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 from requests import HTTPError
 from werkzeug.exceptions import Unauthorized
 from odoo.exceptions import ValidationError
@@ -116,6 +118,63 @@ class TestResourceHelper(ResourceCase):
                     self.helper.get_bearer_token()
             del http.headers['Authorization']
             self.assertIsNone(self.helper.get_bearer_token())
+
+    def test_addons13_83_uat03_manual_config_and_jwks_boundary(self):
+        # AC03: the RS owns manual trust and may fetch only its selected JWKS.
+        self.assertIn('oidc.issuer.register', self.env.registry.models)
+        self.assertIn('amr.resource.helper', self.env.registry.models)
+        module_states = self.env['ir.module.module'].sudo().search([
+            ('name', 'in', ['amr_oidc', 'amr_token'])
+        ])
+        self.assertFalse(module_states, 'provider/token addon state must be absent')
+
+        credential_ref = 'amr_resource.synthetic_credential_ref_uat03'
+        self.profile.credential_ref = credential_ref
+
+        def b64url_uint(value):
+            width = (value.bit_length() + 7) // 8
+            encoded = base64.urlsafe_b64encode(value.to_bytes(width, 'big'))
+            return encoded.rstrip(b'=').decode('ascii')
+
+        public_numbers = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048
+        ).public_key().public_numbers()
+        jwks = {'keys': [{'kty': 'RSA', 'kid': 'synthetic-rs-key',
+                          'use': 'sig', 'alg': 'RS256',
+                          'n': b64url_uint(public_numbers.n),
+                          'e': b64url_uint(public_numbers.e)}]}
+        self.assertEqual(int.from_bytes(base64.urlsafe_b64decode(
+            jwks['keys'][0]['n'] + '=' * (-len(jwks['keys'][0]['n']) % 4)), 'big'),
+            public_numbers.n)
+        self.assertEqual(int.from_bytes(base64.urlsafe_b64decode(
+            jwks['keys'][0]['e'] + '=' * (-len(jwks['keys'][0]['e']) % 4)), 'big'),
+            public_numbers.e)
+
+        expected_config = {
+            'issuer': self.profile.issuer,
+            'jwks_uri': self.profile.jwks_uri,
+            'token_endpoint': self.profile.token_endpoint,
+            'introspection_endpoint': None,
+        }
+        param_model = self.env['ir.config_parameter'].sudo()
+        original_get_param = type(param_model).get_param
+        looked_up_names = []
+
+        def observe_get_param(recordset, key, *args, **kwargs):
+            looked_up_names.append(key)
+            return original_get_param(recordset, key, *args, **kwargs)
+
+        with patch.object(helper_module, 'fetch_json') as fetch_json, \
+                patch.object(type(param_model), 'get_param', observe_get_param):
+            self.assertEqual(self.helper.get_oidc_config(self.profile.issuer), expected_config)
+            fetch_json.assert_not_called()
+            fetch_json.return_value = jwks
+            self.assertEqual(self.helper.get_jwks_data(self.profile.issuer), jwks)
+            fetch_json.assert_called_once_with(self.profile.jwks_uri)
+
+        self.assertNotIn(credential_ref, looked_up_names)
+        # Report only boundary key names, never parameter values.
+        self.assertTrue(all(isinstance(name, str) for name in looked_up_names))
 
     def test_ut04_discovery_and_errors(self):
         with patch.object(helper_module, 'fetch_json') as fetch:
