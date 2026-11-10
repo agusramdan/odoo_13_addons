@@ -4,10 +4,12 @@ Run only in a disposable Odoo 13 database. All token-like inputs are synthetic;
 network and the production helper logger are blocked before each test.
 """
 import base64
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import jwt
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from requests import HTTPError
 from werkzeug.exceptions import Unauthorized
@@ -175,6 +177,50 @@ class TestResourceHelper(ResourceCase):
         self.assertNotIn(credential_ref, looked_up_names)
         # Report only boundary key names, never parameter values.
         self.assertTrue(all(isinstance(name, str) for name in looked_up_names))
+
+    def test_addons13_83_uat04_missing_selected_local_key_no_fallback(self):
+        local_key_ref = 'amr_resource.keys.synthetic_uat04'
+        credential_ref = 'amr_resource.credentials.synthetic_uat04'
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_pem = private_key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('ascii')
+        params = self.env['ir.config_parameter'].sudo()
+        params.set_param(local_key_ref, public_pem)
+        self.profile.write({
+            'jwks_uri': False, 'local_key_ref': local_key_ref,
+            'verification_source': 'local_public', 'metadata_mode': 'manual',
+            'introspection_source': 'none', 'credential_ref': credential_ref,
+        })
+
+        claims = {
+            'iss': self.profile.issuer, 'sub': 'subject-uat04', 'client_id': 'client-a',
+            'aud': 'resource-a', 'exp': int(time.time()) + 300,
+            'iat': int(time.time()) - 1, 'jti': 'synthetic-jti-uat04',
+        }
+        token = jwt.encode(claims, private_key, algorithm='RS256', headers={'typ': 'at+jwt'})
+        original_get_param = type(params).get_param
+        looked_up_names = []
+
+        def observe_get_param(recordset, key, *args, **kwargs):
+            looked_up_names.append(key)
+            return original_get_param(recordset, key, *args, **kwargs)
+
+        with patch.object(helper_module, 'fetch_json') as fetch_json, \
+                patch.object(type(params), 'get_param', observe_get_param):
+            self.assertEqual(self.helper.validate(token)['iss'], self.profile.issuer)
+            fetch_json.assert_not_called()
+
+            params.set_param(local_key_ref, False)
+            params.invalidate_cache()
+            self.profile.invalidate_cache()
+            looked_up_names.clear()
+
+            with self.assertRaises(Unauthorized) as error:
+                self.helper.validate(token)
+            self.assertEqual(error.exception.code, 401)
+            fetch_json.assert_not_called()
+            self.assertEqual(looked_up_names, [local_key_ref])
 
     def test_ut04_discovery_and_errors(self):
         with patch.object(helper_module, 'fetch_json') as fetch:

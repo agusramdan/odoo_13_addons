@@ -1,4 +1,4 @@
-# Odoo 13 / Python 3.7.9; install with the approved Odoo dependency constraints.
+# Odoo 13 / Python 3.8.20; install with the approved Odoo dependency constraints.
 PyJWT==2.8.0
 cryptography==39.0.2
 cffi==1.15.1
