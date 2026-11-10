@@ -1,0 +1,11 @@
+services:
+  cron-watchdog:
+    build: ./watchdog
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - monitoring
+networks:
+  monitoring:
+    external: true
+    name: ${MONITORING_NETWORK:-monitoring}
