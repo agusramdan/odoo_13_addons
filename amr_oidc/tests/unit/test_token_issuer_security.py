@@ -62,6 +62,17 @@ class FakeEnv(dict):
             email="actor-%s@example.invalid" % uid,
             has_group=lambda group: system and group == "base.group_system")
         self.cr = SimpleNamespace(dbname="unit-db")
+        self["amr.oidc.helper"] = SimpleNamespace(
+            _validate_audience=self._validate_audience)
+
+    @staticmethod
+    def _validate_audience(audience):
+        if isinstance(audience, str) and audience.strip():
+            return audience
+        if (isinstance(audience, list) and audience
+                and all(isinstance(value, str) and value.strip() for value in audience)):
+            return audience
+        raise ValueError("A valid audience is required")
 
 
 class FakeUser(object):
@@ -178,6 +189,7 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         record.ensure_one = lambda: None
         record.is_user_allow_create_token = mock.Mock(return_value=True)
         helper = mock.Mock()
+        helper._validate_audience.side_effect = FakeEnv._validate_audience
         helper._generate_user_token.return_value = ("target-token", {}, 60)
         env = FakeEnv(uid=29)
         env["amr.oidc.helper"] = helper
