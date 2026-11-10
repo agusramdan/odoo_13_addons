@@ -1,0 +1,33 @@
+<odoo>
+    <record id="view_amr_cron_execution_tree" model="ir.ui.view">
+        <field name="name">amr.cron.execution.tree</field>
+        <field name="model">amr.cron.execution</field>
+        <field name="arch" type="xml">
+            <tree create="false" edit="false" delete="false">
+                <field name="cron_id"/><field name="cron_name"/>
+                <field name="started_at"/><field name="finished_at"/>
+                <field name="state"/><field name="duration_seconds"/>
+            </tree>
+        </field>
+    </record>
+    <record id="action_amr_cron_execution" model="ir.actions.act_window">
+        <field name="name">Cron Execution Audit</field>
+        <field name="res_model">amr.cron.execution</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+    <menuitem id="menu_amr_cron_audit" name="Cron Execution Audit"
+              parent="base.menu_administration" action="action_amr_cron_execution"
+              groups="base.group_system" sequence="90"/>
+    <record id="view_ir_cron_form_amr_monitor" model="ir.ui.view">
+        <field name="name">ir.cron.form.amr.monitor</field>
+        <field name="model">ir.cron</field>
+        <field name="inherit_id" ref="base.ir_cron_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='interval_number']" position="after">
+                <field name="amr_monitor_enabled"/>
+                <field name="amr_grace_minutes" attrs="{'invisible':[('amr_monitor_enabled','=',False)]}"/>
+                <field name="amr_max_runtime_minutes" attrs="{'invisible':[('amr_monitor_enabled','=',False)]}"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
