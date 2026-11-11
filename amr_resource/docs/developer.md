@@ -2,7 +2,7 @@
 
 ## 1. Target dan arsitektur
 
-Versi source `13.0.1.0.0`, Odoo 13 / Python 3.7.9. Manifest bergantung hanya pada `base`, `web`, `base_setup`; dependency eksternal `jwt` dan `cryptography` dinyatakan eksplisit. Tidak mengasumsikan `amr_token` atau sibling terpasang. Instalasi, effective MRO, dan dependency closure Odoo harus diverifikasi terpisah pada lingkungan disposable yang diotorisasi. `__manifest__.py:1-21`
+Versi source `13.0.1.0.0`, Odoo 13 / Python 3.8.20. Manifest bergantung hanya pada `base`, `web`, `base_setup`; dependency eksternal `jwt` dan `cryptography` dinyatakan eksplisit. Tidak mengasumsikan `amr_token` atau sibling terpasang. Instalasi, effective MRO, dan dependency closure Odoo harus diverifikasi terpisah pada lingkungan disposable yang diotorisasi. `__manifest__.py:1-21`
 
 Inbound: consumer → `amr.resource.helper` → lookup exact registry sesuai company efektif → signature/introspection dan claims → provenance internal → satu resolver → tepat satu user eligible. Issuer token adalah hint lookup, bukan URL yang boleh diikuti. Session sah didahulukan; tanpa session, bearer mendahului params; bearer invalid tidak fallback. Metadata request hanya diperbarui bila UID berubah. `models/helper.py:44-317`; `models/ir_http.py:66-76`; `models/ir_http.py:41-56`
 
@@ -72,7 +72,7 @@ Rollback bukan hanya checkout kode. Pertahankan backup code/schema, konfigurasi 
 
 ## 7. Dependencies dan pengujian
 
-`requirements.txt` mempin PyJWT 2.8.0, cryptography 39.0.2, cffi 1.15.1, pycparser 2.21 untuk Python 3.7.9. Pin mereproduksi library di runner offline, bukan bukti package closure seluruh Odoo berhasil diinstal. Gunakan constraints Odoo yang disetujui; jangan upgrade dependency bersama/sibling tanpa pemeriksaan terpisah. `requirements.txt:1-5`; `tests/test_migration_unit.py:92-95`
+`requirements.txt` mempin PyJWT 2.8.0, cryptography 39.0.2, cffi 1.15.1, pycparser 2.21 untuk Python 3.8.20. Pin mereproduksi library di runner offline, bukan bukti package closure seluruh Odoo berhasil diinstal. Gunakan constraints Odoo yang disetujui; jangan upgrade dependency bersama/sibling tanpa pemeriksaan terpisah. `requirements.txt:1-5`; `tests/test_migration_unit.py:92-95`
 
 - `test_*_unit.py`: unittest offline; import candidate method asli dengan stub Odoo/ORM/request dan transport/DNS/socket boundaries tertutup. Vector JWT memakai key ephemeral dan signature library asli. Model migration dry-run/repeat/conflict diuji dengan ORM boundary stub; bukan transaksi DB nyata.
 - `test_helper.py`, `test_contracts.py`, `test_registry.py`: Odoo-native SavepointCase, diimpor oleh `tests/__init__.py`; perlu registry/DB terotorisasi dan runner Odoo asli. Test legacy yang behavior-nya berubah diperbarui ke reject/static/binding/provenance contract; controller/session/wizard/seed assertions yang tak berubah tetap ada.

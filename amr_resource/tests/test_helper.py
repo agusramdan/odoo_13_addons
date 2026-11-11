@@ -3,10 +3,14 @@
 Run only in a disposable Odoo 13 database. All token-like inputs are synthetic;
 network and the production helper logger are blocked before each test.
 """
+import base64
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from requests import HTTPError
 from werkzeug.exceptions import Unauthorized
 from odoo.exceptions import ValidationError
@@ -117,6 +121,229 @@ class TestResourceHelper(ResourceCase):
             del http.headers['Authorization']
             self.assertIsNone(self.helper.get_bearer_token())
 
+    def test_addons13_83_uat03_manual_config_and_jwks_boundary(self):
+        # AC03: the RS owns manual trust and may fetch only its selected JWKS.
+        self.assertIn('oidc.issuer.register', self.env.registry.models)
+        self.assertIn('amr.resource.helper', self.env.registry.models)
+        module_states = self.env['ir.module.module'].sudo().search([
+            ('name', 'in', ['amr_oidc', 'amr_token'])
+        ])
+        self.assertFalse(module_states, 'provider/token addon state must be absent')
+
+        credential_ref = 'amr_resource.synthetic_credential_ref_uat03'
+        self.profile.credential_ref = credential_ref
+
+        def b64url_uint(value):
+            width = (value.bit_length() + 7) // 8
+            encoded = base64.urlsafe_b64encode(value.to_bytes(width, 'big'))
+            return encoded.rstrip(b'=').decode('ascii')
+
+        public_numbers = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048
+        ).public_key().public_numbers()
+        jwks = {'keys': [{'kty': 'RSA', 'kid': 'synthetic-rs-key',
+                          'use': 'sig', 'alg': 'RS256',
+                          'n': b64url_uint(public_numbers.n),
+                          'e': b64url_uint(public_numbers.e)}]}
+        self.assertEqual(int.from_bytes(base64.urlsafe_b64decode(
+            jwks['keys'][0]['n'] + '=' * (-len(jwks['keys'][0]['n']) % 4)), 'big'),
+            public_numbers.n)
+        self.assertEqual(int.from_bytes(base64.urlsafe_b64decode(
+            jwks['keys'][0]['e'] + '=' * (-len(jwks['keys'][0]['e']) % 4)), 'big'),
+            public_numbers.e)
+
+        expected_config = {
+            'issuer': self.profile.issuer,
+            'jwks_uri': self.profile.jwks_uri,
+            'token_endpoint': self.profile.token_endpoint,
+            'introspection_endpoint': None,
+        }
+        param_model = self.env['ir.config_parameter'].sudo()
+        original_get_param = type(param_model).get_param
+        looked_up_names = []
+
+        def observe_get_param(recordset, key, *args, **kwargs):
+            looked_up_names.append(key)
+            return original_get_param(recordset, key, *args, **kwargs)
+
+        with patch.object(helper_module, 'fetch_json') as fetch_json, \
+                patch.object(type(param_model), 'get_param', observe_get_param):
+            self.assertEqual(self.helper.get_oidc_config(self.profile.issuer), expected_config)
+            fetch_json.assert_not_called()
+            fetch_json.return_value = jwks
+            self.assertEqual(self.helper.get_jwks_data(self.profile.issuer), jwks)
+            fetch_json.assert_called_once_with(self.profile.jwks_uri)
+
+        self.assertNotIn(credential_ref, looked_up_names)
+        # Report only boundary key names, never parameter values.
+        self.assertTrue(all(isinstance(name, str) for name in looked_up_names))
+
+    def test_addons13_83_uat04_missing_selected_local_key_no_fallback(self):
+        local_key_ref = 'amr_resource.keys.synthetic_uat04'
+        credential_ref = 'amr_resource.credentials.synthetic_uat04'
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_pem = private_key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('ascii')
+        params = self.env['ir.config_parameter'].sudo()
+        params.set_param(local_key_ref, public_pem)
+        self.profile.write({
+            'jwks_uri': False, 'local_key_ref': local_key_ref,
+            'verification_source': 'local_public', 'metadata_mode': 'manual',
+            'introspection_source': 'none', 'credential_ref': credential_ref,
+        })
+
+        claims = {
+            'iss': self.profile.issuer, 'sub': 'subject-uat04', 'client_id': 'client-a',
+            'aud': 'resource-a', 'exp': int(time.time()) + 300,
+            'iat': int(time.time()) - 1, 'jti': 'synthetic-jti-uat04',
+        }
+        token = jwt.encode(claims, private_key, algorithm='RS256', headers={'typ': 'at+jwt'})
+        original_get_param = type(params).get_param
+        looked_up_names = []
+
+        def observe_get_param(recordset, key, *args, **kwargs):
+            looked_up_names.append(key)
+            return original_get_param(recordset, key, *args, **kwargs)
+
+        with patch.object(helper_module, 'fetch_json') as fetch_json, \
+                patch.object(type(params), 'get_param', observe_get_param):
+            self.assertEqual(self.helper.validate(token)['iss'], self.profile.issuer)
+            fetch_json.assert_not_called()
+
+            params.set_param(local_key_ref, False)
+            params.invalidate_cache()
+            self.profile.invalidate_cache()
+            looked_up_names.clear()
+
+            with self.assertRaises(Unauthorized) as error:
+                self.helper.validate(token)
+            self.assertEqual(error.exception.code, 401)
+            fetch_json.assert_not_called()
+            self.assertEqual(looked_up_names, [local_key_ref])
+
+    def _uat04_jwks_fixture(self, suffix):
+        trusted_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        alternate_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        trusted_kid = 'synthetic-trusted-kid-' + suffix
+        credential_ref = 'amr_resource.credentials.synthetic_uat04_' + suffix
+        self.profile.write({
+            'token_profile': 'jwt', 'jwks_uri': 'https://keys.invalid/jwks',
+            'metadata_mode': 'manual', 'verification_source': 'jwks',
+            'introspection_source': 'none', 'credential_ref': credential_ref,
+        })
+
+        def b64url_uint(value):
+            width = (value.bit_length() + 7) // 8
+            encoded = base64.urlsafe_b64encode(value.to_bytes(width, 'big'))
+            return encoded.rstrip(b'=').decode('ascii')
+
+        public_numbers = trusted_key.public_key().public_numbers()
+        jwks = {'keys': [{
+            'kty': 'RSA', 'kid': trusted_kid, 'use': 'sig', 'alg': 'RS256',
+            'n': b64url_uint(public_numbers.n), 'e': b64url_uint(public_numbers.e),
+        }]}
+        fetch_patcher = patch.object(helper_module, 'fetch_json', return_value=jwks)
+        fetch_json = fetch_patcher.start()
+        self.addCleanup(fetch_patcher.stop)
+
+        params = self.env['ir.config_parameter'].sudo()
+        original_get_param = type(params).get_param
+        looked_up_names = []
+
+        def observe_get_param(recordset, key, *args, **kwargs):
+            looked_up_names.append(key)
+            return original_get_param(recordset, key, *args, **kwargs)
+
+        param_patcher = patch.object(type(params), 'get_param', observe_get_param)
+        param_patcher.start()
+        self.addCleanup(param_patcher.stop)
+        return trusted_key, alternate_key, trusted_kid, fetch_json, looked_up_names, credential_ref
+
+    def _uat04_jwks_token(self, signing_key, suffix, issuer=None, audience=None, kid=None):
+        now = int(time.time())
+        claims = {
+            'iss': issuer or self.profile.issuer,
+            'aud': audience or 'resource-a',
+            'exp': now + 300, 'iat': now - 1,
+            'jti': 'synthetic-jti-' + suffix,
+            'sub': 'synthetic-subject-' + suffix,
+            'client_id': 'client-a',
+        }
+        return jwt.encode(
+            claims, signing_key, algorithm='RS256',
+            headers={'typ': 'at+jwt', 'kid': kid or 'synthetic-trusted-kid-' + suffix},
+        )
+
+    def _assert_uat04_jwks_positive_control(
+            self, signing_key, suffix, kid, fetch_json, looked_up_names, credential_ref):
+        token = self._uat04_jwks_token(signing_key, suffix, kid=kid)
+        claims = self.helper.validate(token)
+        self.assertEqual(claims['iss'], self.profile.issuer)
+        self.assertEqual(claims['aud'], 'resource-a')
+        self.assertEqual(claims['kid'], kid)
+        self.assertEqual(claims['alg'], 'RS256')
+        fetch_json.assert_called_once_with(self.profile.jwks_uri)
+        self.assertEqual(looked_up_names, [])
+        self.assertNotIn(credential_ref, looked_up_names)
+        fetch_json.reset_mock()
+        looked_up_names.clear()
+
+    def test_addons13_83_uat04_untrusted_issuer_rejected_before_transport(self):
+        trusted_key, _, trusted_kid, fetch_json, looked_up, credential_ref = \
+            self._uat04_jwks_fixture('issuer')
+        self._assert_uat04_jwks_positive_control(
+            trusted_key, 'issuer-positive', trusted_kid, fetch_json, looked_up, credential_ref)
+        token = self._uat04_jwks_token(
+            trusted_key, 'issuer-negative', issuer='https://untrusted-issuer.invalid', kid=trusted_kid)
+        with self.assertRaises(Unauthorized) as error:
+            self.helper.validate(token)
+        self.assertEqual(error.exception.code, 401)
+        fetch_json.assert_not_called()
+        self.assertEqual(looked_up, [])
+        self.assertNotIn(credential_ref, looked_up)
+
+    def test_addons13_83_uat04_untrusted_audience_rejected_before_jwks(self):
+        trusted_key, _, trusted_kid, fetch_json, looked_up, credential_ref = \
+            self._uat04_jwks_fixture('audience')
+        self._assert_uat04_jwks_positive_control(
+            trusted_key, 'audience-positive', trusted_kid, fetch_json, looked_up, credential_ref)
+        token = self._uat04_jwks_token(
+            trusted_key, 'audience-negative', audience='resource-untrusted', kid=trusted_kid)
+        with self.assertRaises(Unauthorized) as error:
+            self.helper.validate(token)
+        self.assertEqual(error.exception.code, 401)
+        fetch_json.assert_not_called()
+        self.assertEqual(looked_up, [])
+        self.assertNotIn(credential_ref, looked_up)
+
+    def test_addons13_83_uat04_untrusted_kid_rejected_without_fallback(self):
+        trusted_key, _, trusted_kid, fetch_json, looked_up, credential_ref = \
+            self._uat04_jwks_fixture('kid')
+        self._assert_uat04_jwks_positive_control(
+            trusted_key, 'kid-positive', trusted_kid, fetch_json, looked_up, credential_ref)
+        token = self._uat04_jwks_token(
+            trusted_key, 'kid-negative', kid='synthetic-untrusted-kid')
+        with self.assertRaises(Unauthorized) as error:
+            self.helper.validate(token)
+        self.assertEqual(error.exception.code, 401)
+        fetch_json.assert_called_once_with(self.profile.jwks_uri)
+        self.assertEqual(looked_up, [])
+        self.assertNotIn(credential_ref, looked_up)
+
+    def test_addons13_83_uat04_invalid_signature_rejected_without_fallback(self):
+        trusted_key, alternate_key, trusted_kid, fetch_json, looked_up, credential_ref = \
+            self._uat04_jwks_fixture('signature')
+        self._assert_uat04_jwks_positive_control(
+            trusted_key, 'signature-positive', trusted_kid, fetch_json, looked_up, credential_ref)
+        token = self._uat04_jwks_token(alternate_key, 'signature-negative', kid=trusted_kid)
+        with self.assertRaises(Unauthorized) as error:
+            self.helper.validate(token)
+        self.assertEqual(error.exception.code, 401)
+        fetch_json.assert_called_once_with(self.profile.jwks_uri)
+        self.assertEqual(looked_up, [])
+        self.assertNotIn(credential_ref, looked_up)
+
     def test_ut04_discovery_and_errors(self):
         with patch.object(helper_module, 'fetch_json') as fetch:
             self.assertEqual(self.helper.get_oidc_config(self.profile.issuer), {
@@ -147,11 +374,13 @@ class TestResourceHelper(ResourceCase):
     def test_resource_helper_does_not_acquire_provider_tokens(self):
         helper_type = type(self.helper)
         self.assertTrue(callable(self.helper.decode))
-        self.assertFalse(hasattr(helper_type, 'encode'))
-        self.assertFalse(hasattr(helper_type, 'generate_token'))
-        with patch.object(helper_type, 'validate', return_value={'synthetic': True}) as validate:
+        self.assertTrue(callable(self.helper.encode))
+        self.assertTrue(callable(self.helper.generate_token))
+        with patch.object(helper_type, 'validate', return_value={'synthetic': True}) as validate, \
+                patch.object(helper_type, 'generate_token') as generate_token:
             self.assertEqual(self.helper.decode(self.token, unused=True), {'synthetic': True})
             validate.assert_called_once_with(self.token)
+            generate_token.assert_not_called()
 
     def test_manual_jwks_config_does_not_require_discovery_unavailable_declaration(self):
         self.profile.write({'token_profile': 'jwt', 'metadata_mode': 'manual',

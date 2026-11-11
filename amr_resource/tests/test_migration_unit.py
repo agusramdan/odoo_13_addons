@@ -100,7 +100,7 @@ class MigrationUnitTests(unittest.TestCase):
         import sys
         import jwt
         import cryptography
-        self.assertEqual(sys.version_info[:3], (3, 7, 9))
+        self.assertEqual(sys.version_info[:3], (3, 8, 20))
         self.assertEqual(jwt.__version__, '2.8.0')
         self.assertEqual(cryptography.__version__, '39.0.2')
         import cffi

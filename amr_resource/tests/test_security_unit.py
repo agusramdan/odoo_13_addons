@@ -251,6 +251,18 @@ class SecurityUnitTests(unittest.TestCase):
         self.helper._local_public_key.assert_not_called()
         self.fetch.assert_not_called()
 
+    def test_addons13_83_missing_selected_local_key_fails_without_fallback(self):
+        self.profile.verification_source = 'local_public'
+        self.profile.jwks_uri = False
+        self.profile.local_key_ref = 'amr_resource.keys.synthetic'
+        self.profile.credential_ref = 'amr_resource.credentials.synthetic'
+        self.env.parameters.get_param.return_value = None
+
+        self.reject(self.helper.validate, self.token())
+
+        self.fetch.assert_not_called()
+        self.env.parameters.get_param.assert_called_once_with(self.profile.local_key_ref)
+
     def test_get_jwks_data_rejects_local_profile_before_fetch(self):
         self.profile.verification_source = 'local_public'
         self.profile.local_key_ref = False
