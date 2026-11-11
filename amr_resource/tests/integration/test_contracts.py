@@ -14,13 +14,13 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from psycopg2 import IntegrityError
 from werkzeug.exceptions import Unauthorized
 
-from .. import exceptions
-from ..controllers import main
-from ..models import ir_http
+from ... import exceptions
+from ...controllers import main
+from ...models import ir_http
 from .test_helper import ResourceCase
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestResourceContracts(ResourceCase):
@@ -30,6 +30,7 @@ class TestResourceContracts(ResourceCase):
         self.assertEqual(action['res_model'], 'oidc.issuer.register')
         self.assertEqual(action['type'], 'ir.actions.act_window')
         self.assertEqual(action['view_mode'], 'tree,form')
+        # sudo: seed and inspect protected global config for settings-action assertions.
         params = self.env['ir.config_parameter'].sudo()
         params.set_param('web.base.url', 'http://127.0.0.1:19000')
         parameter = params.search([('key', '=', 'web.base.url')], limit=1)

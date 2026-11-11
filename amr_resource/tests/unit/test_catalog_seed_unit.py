@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 
 class TestOidcAlgorithmCatalogSeed(unittest.TestCase):
     def test_xml_seeds_only_supported_rs256_algorithm(self):
-        addon_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        addon_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         xml_path = os.path.join(addon_root, 'data', 'oidc_algorithms.xml')
         root = ET.parse(xml_path).getroot()
 

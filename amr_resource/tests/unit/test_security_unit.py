@@ -19,7 +19,7 @@ from werkzeug.exceptions import Unauthorized
 
 from test_registry_unit import registry, BoundaryModel
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_candidates():

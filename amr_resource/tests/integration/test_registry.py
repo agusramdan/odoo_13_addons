@@ -43,6 +43,7 @@ class TestResourceRegistry(ResourceCase):
             self.profile.audience_ids.unlink()
 
     def test_legacy_migration_is_out_of_scope_and_fails_closed(self):
+        # sudo: seed protected global config keys for the migration-boundary test.
         params = self.env['ir.config_parameter'].sudo()
         for key, value in {
             'amr_resource.issuer': 'amr_resource.legacy.synthetic_issuer',

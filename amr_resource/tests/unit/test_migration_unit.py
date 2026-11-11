@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from test_registry_unit import load_registry, IssuerProbe, ValidationError, AccessError
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class MigrationUnitTests(unittest.TestCase):
@@ -115,9 +115,25 @@ class MigrationUnitTests(unittest.TestCase):
         pins = (ROOT / 'requirements.txt').read_text()
         self.assertIn('PyJWT==2.8.0', pins)
         self.assertIn('cryptography==39.0.2', pins)
-        source = (ROOT / 'tests/__init__.py').read_text()
-        self.assertIn('test_registry', source)
-        self.assertNotIn('test_security_unit', source)
+        test_root = ROOT / 'tests'
+
+        def imported_names(path):
+            tree = ast.parse(path.read_text())
+            return {
+                alias.name for node in tree.body
+                if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module is None
+                for alias in node.names
+            }
+
+        root_imports = imported_names(test_root / '__init__.py')
+        self.assertEqual(root_imports, {'integration'})
+        integration_imports = imported_names(test_root / 'integration' / '__init__.py')
+        self.assertEqual(integration_imports, {'test_helper', 'test_contracts', 'test_registry'})
+        self.assertNotIn('test_security_unit', root_imports | integration_imports)
+        self.assertTrue(all(
+            (test_root / 'integration' / (module + '.py')).is_file()
+            for module in integration_imports
+        ))
         settings = ast.parse((ROOT / 'models/res_config_settings.py').read_text())
         self.assertNotIn('amr_select_issuer', [n.targets[0].id for n in ast.walk(settings)
                          if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)])
