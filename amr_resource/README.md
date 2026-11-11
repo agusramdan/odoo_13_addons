@@ -1,6 +1,6 @@
 # Resource Server (`amr_resource`)
 
-Addon Odoo 13 untuk validasi OAuth access token dan pemilihan user melalui registry issuer terkontrol. Versi source `13.0.1.0.0`; target Python 3.7.9. Dependensi Odoo: `base`, `web`, `base_setup`. `__manifest__.py:1-21`
+Addon Odoo 13 untuk validasi OAuth access token dan pemilihan user melalui registry issuer terkontrol. Versi source `13.0.1.0.0`; target Python 3.8.20. Dependensi Odoo: `base`, `web`, `base_setup`. `__manifest__.py:1-21`
 
 ## Untuk Developer
 
