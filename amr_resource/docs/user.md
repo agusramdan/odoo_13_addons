@@ -39,4 +39,4 @@ Session sah tetap didahulukan. Bila session tidak sah, bearer diperiksa sebelum 
 
 ## Batas versi
 
-Source `13.0.1.0.0` menargetkan Odoo 13 / Python 3.7.9. Panduan ini tidak membuktikan instalasi, UAT, compatibility addon issuer/sibling, Odoo 20, rollout ataupun rollback di instance tertentu. `__manifest__.py:1-21`
+Source `13.0.1.0.0` menargetkan Odoo 13 / Python 3.8.20. Panduan ini tidak membuktikan instalasi, UAT, compatibility addon issuer/sibling, Odoo 20, rollout ataupun rollback di instance tertentu. `__manifest__.py:1-21`
