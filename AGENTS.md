@@ -111,15 +111,6 @@ You are an expert Odoo developer. This project contains Odoo custom modules
 - Raise `odoo.exceptions.AccessError` when manually checking access rights.
 - Never let exceptions bubble uncaught from public methods.
 
-## Unit Testing (TDD)
-- Test files live in `<addon>/tests/test_*.py`.
-- Assert using `assertEqual`, `assertTrue`, `assertRaises`. Not raw `assert`.
-
-## Integration Testing
-This covers the main failure modes when Cursor generates Odoo code without guidance: raw SQL where ORM should be used, wrong field naming, missing _description, malformed XML IDs, and security CSV with wrong column order. Save it, open Cursor, and from this point forward every completion in this workspace follows Odoo conventions.
-- Test files live in `<addon>/integration_tests/test_*.py`.
-- Test classes inherit `TransactionCase` (or `SavepointCase` for Odoo <16).
-- Use `self.env['model'].create({...})` to set up test data, not fixtures.
 
 ## Document
 - Document write in `<addon>/docs`

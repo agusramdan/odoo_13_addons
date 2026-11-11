@@ -16,7 +16,7 @@ from werkzeug.exceptions import Unauthorized
 from odoo.exceptions import ValidationError
 from odoo.tests.common import SavepointCase
 
-from ..models import helper as helper_module
+from ...models import helper as helper_module
 
 
 class ResourceCase(SavepointCase):
@@ -64,6 +64,7 @@ class TestResourceHelper(ResourceCase):
         self.assertEqual(policies.search([], limit=1).ids, [])
 
     def test_ut01_resolution_and_compute(self):
+        # sudo: seed protected global config keys used by the issuer/audience test.
         params = self.env['ir.config_parameter'].sudo()
         params.set_param('web.base.url', 'http://127.0.0.1:19000')
         params.set_param('database.uuid', 'synthetic-resource-db')
@@ -125,6 +126,7 @@ class TestResourceHelper(ResourceCase):
         # AC03: the RS owns manual trust and may fetch only its selected JWKS.
         self.assertIn('oidc.issuer.register', self.env.registry.models)
         self.assertIn('amr.resource.helper', self.env.registry.models)
+        # sudo: inspect the global installed-addon registry regardless of test-user ACLs.
         module_states = self.env['ir.module.module'].sudo().search([
             ('name', 'in', ['amr_oidc', 'amr_token'])
         ])
@@ -158,7 +160,7 @@ class TestResourceHelper(ResourceCase):
             'token_endpoint': self.profile.token_endpoint,
             'introspection_endpoint': None,
         }
-        param_model = self.env['ir.config_parameter'].sudo()
+        param_model = self.env['ir.config_parameter']
         original_get_param = type(param_model).get_param
         looked_up_names = []
 
@@ -185,6 +187,7 @@ class TestResourceHelper(ResourceCase):
         public_pem = private_key.public_key().public_bytes(
             serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
         ).decode('ascii')
+        # sudo: seed a protected config key with a synthetic PEM for the local-key test.
         params = self.env['ir.config_parameter'].sudo()
         params.set_param(local_key_ref, public_pem)
         self.profile.write({
@@ -247,7 +250,7 @@ class TestResourceHelper(ResourceCase):
         fetch_json = fetch_patcher.start()
         self.addCleanup(fetch_patcher.stop)
 
-        params = self.env['ir.config_parameter'].sudo()
+        params = self.env['ir.config_parameter']
         original_get_param = type(params).get_param
         looked_up_names = []
 
@@ -431,6 +434,7 @@ class TestResourceHelper(ResourceCase):
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
         public = key.public_key().public_bytes(serialization.Encoding.PEM,
                                               serialization.PublicFormat.SubjectPublicKeyInfo).decode('ascii')
+        # sudo: seed the protected config key used by the local-public-key validation test.
         self.env['ir.config_parameter'].sudo().set_param('amr_resource.keys.synthetic', public)
         self.profile.write({'jwks_uri': False, 'local_key_ref': 'amr_resource.keys.synthetic',
                             'verification_source': 'local_public', 'metadata_mode': 'manual',

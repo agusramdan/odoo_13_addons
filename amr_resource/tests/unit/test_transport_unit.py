@@ -1,4 +1,4 @@
-"""Standalone: python -m unittest discover -s amr_resource/tests -p test_transport_unit.py.
+"""Standalone transport units; run with the isolated addon unit runner.
 
 Load the file directly so discovery never imports the Odoo addon package.
 Only DNS/socket/TLS boundaries (and the clock) are replaced; HTTP is real stdlib.
@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 
 SPEC = importlib.util.spec_from_file_location(
-    'amr_transport_standalone', str(Path(__file__).resolve().parents[1] / 'transport.py'))
+    'amr_transport_standalone', str(Path(__file__).resolve().parents[2] / 'transport.py'))
 assert SPEC is not None and SPEC.loader is not None
 transport = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(transport)

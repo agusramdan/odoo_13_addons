@@ -1,4 +1,4 @@
-"""Standalone registry units: python tests/test_registry_unit.py -v.
+"""Standalone registry units; run with the isolated addon unit runner.
 
 Requires cryptography and Werkzeug; only the Odoo boundary is stubbed.
 These do NOT verify ORM SQL,
@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, Mock, patch
 from xml.etree import ElementTree
 from werkzeug.exceptions import Unauthorized
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class AccessError(Exception):
