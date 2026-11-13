@@ -1,0 +1,119 @@
+# UAT template only: opt-in profiles do not grant authorization to run tests.
+# No services start with plain `docker compose up` because every service has a profile.
+# All images must be owner-approved immutable digest references; no production data,
+# credentials, routes, or host ports are configured here. Container odoo13dbuat
+# hosts the disposable database odoo13uat (these names are not interchangeable).
+services:
+  odoo13addonsuat:
+    profiles: ["uat-native"]
+    image: "${UAT_ODOO_IMAGE:?Set approved Odoo image reference including @sha256 digest}"
+    init: true
+    depends_on:
+      odoo13dbuat:
+        condition: service_healthy
+    networks: [uat-internal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "${UAT_ODOO_UID:?Set approved unprivileged numeric UID}:${UAT_ODOO_GID:?Set approved unprivileged numeric GID}"
+    working_dir: /workspace
+    command: ["/bin/sh", "-ec", "test \"$(python3 -c 'import sys; print(\".\".join(map(str, sys.version_info[:3])))')\" = 3.8.20; exec ${UAT_ODOO_COMMAND:?Set owner-approved bounded Odoo command} --database=odoo13uat"]
+    environment:
+      HOST: odoo13dbuat
+      PORT: "5432"
+      UAT_DB_NAME: "odoo13uat"
+      USER: "${UAT_DB_USER:?Set synthetic UAT database user}"
+      PASSWORD_FILE: /run/secrets/uat_db_password
+      UAT_PYTHON_RUNTIME: "3.8.20"
+      UAT_DEPENDENCY_SET: "${UAT_DEPENDENCY_SET:?Set exact approved dependency set/reference}"
+    secrets: [uat_db_password]
+    volumes:
+      - type: bind
+        source: "${UAT_SOURCE_DIR:?Set exact task-scoped source directory}"
+        target: /workspace
+        read_only: true
+      - type: bind
+        source: "${UAT_ODOO_CONFIG_FILE:?Set isolated task-specific Odoo config file}"
+        target: /etc/odoo/odoo.conf
+        read_only: true
+      - odoo-filestore:/var/lib/odoo
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    mem_limit: "${UAT_ODOO_MEMORY_LIMIT:?Set approved memory limit}"
+    cpus: "${UAT_ODOO_CPU_LIMIT:?Set approved CPU limit}"
+    pids_limit: "${UAT_ODOO_PIDS_LIMIT:?Set approved process limit}"
+    restart: "no"
+
+  odoo13dbuat:
+    profiles: ["uat-native"]
+    image: "${UAT_POSTGRES_IMAGE:?Set approved PostgreSQL image reference including @sha256 digest}"
+    init: true
+    networks: [uat-internal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: "odoo13uat"
+      POSTGRES_USER: "${UAT_DB_USER:?Set synthetic UAT database user}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/uat_db_password
+    secrets: [uat_db_password]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=16m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: "${UAT_DB_MEMORY_LIMIT:?Set approved memory limit}"
+    cpus: "${UAT_DB_CPU_LIMIT:?Set approved CPU limit}"
+    pids_limit: "${UAT_DB_PIDS_LIMIT:?Set approved process limit}"
+    restart: "no"
+
+  uat-runner:
+    profiles: ["uat-offline"]
+    build:
+      context: .
+      dockerfile: Dockerfile.uat
+      args:
+        UAT_BASE_IMAGE: "${UAT_RUNNER_BASE_IMAGE:?Set approved immutable runner image reference including @sha256 digest}"
+        UAT_PYTHON_RUNTIME: "3.8.20"
+        UAT_DEPENDENCY_SET: "${UAT_DEPENDENCY_SET:?Set exact approved dependency set/reference}"
+    image: "${UAT_RUNNER_IMAGE:?Set unique task-scoped runner image name}"
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "${UAT_UID:?Set approved unprivileged numeric UID}:${UAT_GID:?Set approved unprivileged numeric GID}"
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: "${UAT_SOURCE_DIR:?Set exact task-scoped source directory}"
+        target: /workspace
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    mem_limit: "${UAT_MEMORY_LIMIT:?Set approved memory limit}"
+    cpus: "${UAT_CPU_LIMIT:?Set approved CPU limit}"
+    pids_limit: "${UAT_PIDS_LIMIT:?Set approved process limit}"
+    restart: "no"
+    command: ["/bin/sh", "-c", "${UAT_APPROVED_COMMAND:?Set exact owner-approved bounded command; no implicit test execution}"]
+    environment:
+      UAT_TASK_ID: "${UAT_TASK_ID:?Set task identifier}"
+      UAT_DB_NAME: "odoo13uat"
+      UAT_MAX_RUNS: "3"
+
+networks:
+  uat-internal:
+    internal: true
+
+volumes:
+  db-data:
+  odoo-filestore:
+
+secrets:
+  uat_db_password:
+    file: "${UAT_DB_PASSWORD_FILE:?Provide externally managed synthetic UAT DB password file; never put secret in YAML}"
