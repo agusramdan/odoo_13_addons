@@ -7,7 +7,7 @@
 | Versi manifest kandidat                | [`13.0.0.0.8`](__manifest__.py#L10)                                                                                                                                  |
 | Dependensi Odoo                        | `base`, `base_setup`, `web`, `amr_resource` ([manifest](__manifest__.py#L11))                                                                                        |
 | Python external dependency di manifest | `pyjwt` (distribusi PyPI; diimpor sebagai modul `jwt`) — deklarasi saja, bukan bukti paket tersedia ([manifest](__manifest__.py#L12-L14))                            |
-| Dependency Python repository           | File root `requirement.txt`: PyJWT 2.8.0, cryptography 39.0.2, requests 2.21.0, Werkzeug 0.14.1 (target Odoo 13/Python 3.7.9/Linux); bukan bukti paket terpasang     |
+| Dependency Python repository           | File root `requirement.txt`: PyJWT 2.8.0, cryptography 39.0.2, requests 2.21.0, Werkzeug 0.14.1; target proyek menurut [`AGENTS.md`](../AGENTS.md) adalah Python 3.8.20, sedangkan header requirement masih menyebut 3.7.3 (perlu rekonsiliasi); bukan bukti paket terpasang |
 | Source pin (provenance)                | [`addons_oidc` commit `6725f802acde636be0b25e2c140d15dccd37b0db`](https://github.com/agusramdan/addons_oidc/tree/6725f802acde636be0b25e2c140d15dccd37b0db/amr_token) |
 
 ## Untuk Developer

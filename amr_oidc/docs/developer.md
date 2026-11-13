@@ -8,7 +8,7 @@ Penelaahan kode sumber pada snapshot `agusramdan/odoo_13_addons@6bd356e7386420e2
 
 Rujukan historis di bagian berikut memakai path/baris pada snapshot ADDONS13-37, bukan line number candidate ADDONS13-39. Tabel SHA-256 di bawah adalah integritas snapshot historis dan tidak mewakili file yang berubah pada candidate baru. Rujukan/perilaku current ada pada catatan ADDONS13-39.
 
-`AGENTS.md` menetapkan target proyek Python 3.7.9 (`../AGENTS.md:14-16`); runtime uji Python 3.7.9 dan suite offline candidate telah dijalankan, tetapi ini bukan bukti runtime Odoo/registry, toolchain deployment, atau route efektif.
+`AGENTS.md` di root repository menetapkan target proyek Python 3.8.20 (`../../AGENTS.md:7`). Catatan suite offline Python 3.7.9 di bawah adalah hasil historis kandidat sebelumnya; itu bukan bukti uji pada target 3.8.20 maupun bukti runtime Odoo/registry, toolchain deployment, atau route efektif.
 
 ## Arsitektur
 
