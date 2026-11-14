@@ -1,15 +1,32 @@
 # -*- coding: utf-8 -*-
 """OIDC-owned standalone base for token engine behavior."""
 import base64
+import hashlib
+import hmac
 import logging
+import os
 import time
 import uuid
 import jwt
-from odoo import _, api, models
+from odoo import SUPERUSER_ID, _, api, models
 from odoo.exceptions import AccessError
 
 
 _AUDIENCE_UNSET = object()
+_FRESH_TTL_UNSET = object()
+_FRESH_INSTANCE_MARKER = 'AMR_OIDC_FRESH_PROFILE_INSTANCE_ID'
+_FRESH_INSTANCE_BINDING = 'amr_token.fresh_profile_instance_binding'
+
+
+class _FreshIssuanceProvenance(object):
+    __slots__ = ('client_id', 'user_id', 'issuer', 'audience', 'subject')
+
+    def __init__(self, client_id, user_id, issuer, audience, subject):
+        self.client_id = client_id
+        self.user_id = user_id
+        self.issuer = issuer
+        self.audience = audience
+        self.subject = subject
 
 
 def get_algorith_config():
@@ -288,6 +305,152 @@ class TokenHelper(models.AbstractModel):
     def oidc_jwks(self):
         # sudo: preserve source parameter lookup; parameter policy deferred.
         return {"keys": self.env["amr.public.key"].sudo().get_jwks()}
+
+    @api.model
+    def _issue_fresh_client_token(self, client_id, client_secret, scope='',
+                                  expires_in=_FRESH_TTL_UNSET):
+        """Authenticate one registered client and mint the opt-in fresh profile."""
+        if (type(client_id) is not str or not 1 <= len(client_id) <= 1024
+                or any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in client_id)
+                or type(client_secret) is not str or not 1 <= len(client_secret) <= 1024):
+            raise AccessError(_('Invalid client.'))
+        # sudo: resolve only the exact Basic-auth client before credential checks.
+        client = self.env['oidc.client'].sudo().search([
+            ('client_id', '=', client_id), ('active', '=', True),
+        ])
+        if (len(client) != 1 or client.authentication_method != 'client_secret'
+                or not client.is_confidential):
+            raise AccessError(_('Invalid client.'))
+        grants = client.allowed_grants.filtered(lambda grant: grant.code == 'client_credentials')
+        user = client.user_id
+        if (not grants or not user or not user.active or user.id == SUPERUSER_ID
+                or user.share or user.has_group('base.group_public')
+                or user.has_group('base.group_portal')):
+            raise AccessError(_('Client is not authorized.'))
+        client.check_credentials(client_secret)
+        self._require_fresh_profile_instance()
+        issuer = self._get_fresh_profile_issuer()
+        ttl = self._get_fresh_profile_ttl()
+        if expires_in is not _FRESH_TTL_UNSET:
+            if type(expires_in) is not int or not 60 <= expires_in <= ttl:
+                raise ValueError('Invalid fresh-profile token lifetime')
+            ttl = expires_in
+        if type(scope) is not str or scope:
+            raise ValueError('Client scope is not authorized')
+        audience = client.name or client.client_id
+        if (type(audience) is not str or not 1 <= len(audience) <= 1024
+                or not audience.strip()
+                or any(ord(char) < 33 or 127 <= ord(char) <= 159 for char in audience)):
+            raise ValueError('Client audience is not configured')
+        subject = self.env['oidc.issuer.principal.subject']._get_or_create_subject(
+            issuer, user.id)
+        provenance = _FreshIssuanceProvenance(
+            client.client_id, user.id, issuer, audience, subject)
+        if self.get_signature_type() != 'public_key' or self.get_signature_algorithm() != 'RS256':
+            raise ValueError('Fresh profile requires RS256 public-key signing')
+        now = int(time.time())
+        payload = {
+            'iss': issuer, 'aud': audience, 'sub': subject,
+            'iat': now, 'exp': now + ttl, 'jti': str(uuid.uuid4()),
+            'client_id': client.client_id, 'azp': client.client_id,
+        }
+        token = self._sign_fresh_profile_token(payload, provenance)
+        return {'access_token': token, 'token_type': 'Bearer', 'expires_in': ttl}
+
+    @api.model
+    def _sign_fresh_profile_token(self, payload, provenance):
+        if (not isinstance(provenance, _FreshIssuanceProvenance)
+                or payload.get('client_id') != provenance.client_id
+                or payload.get('azp') != provenance.client_id
+                or payload.get('iss') != provenance.issuer
+                or payload.get('aud') != provenance.audience
+                or payload.get('sub') != provenance.subject):
+            raise AccessError(_('Authenticated client provenance is required.'))
+        if self.get_signature_type() != 'public_key' or self.get_signature_algorithm() != 'RS256':
+            raise ValueError('Fresh profile requires RS256 public-key signing')
+        # sudo: resolve the single active RS256 signing key after client authorization.
+        keys = self.env['amr.public.key'].sudo().search([
+            ('algorithm', '=', 'RS256'), ('active', '=', True), ('is_signing', '=', True),
+        ])
+        if len(keys) != 1:
+            raise ValueError('Exactly one active RS256 signing key is required')
+        return jwt.encode(payload, keys.private_key, algorithm='RS256',
+                          headers={'kid': keys.kid, 'typ': 'at+jwt'})
+
+    @api.model
+    def _fresh_profile_is_enabled(self):
+        # sudo: inspect only the opt-in issuer setting at the token boundary.
+        issuer = self.env['ir.config_parameter'].sudo().get_param(
+            'amr_token.fresh_profile_issuer')
+        if not issuer:
+            return False
+        self._get_fresh_profile_issuer()
+        self._require_fresh_profile_instance()
+        return True
+
+    @api.model
+    def _fresh_profile_instance_digest(self):
+        # Entropy is operator-provisioned; enforce only a minimum input length here.
+        marker = os.environ.get(_FRESH_INSTANCE_MARKER)
+        if not isinstance(marker, str) or len(marker) < 32:
+            raise ValueError('Fresh profile instance marker is unavailable')
+        return hashlib.sha256(marker.encode('utf-8')).hexdigest()
+
+    @api.model
+    def _bind_fresh_profile_instance(self):
+        # sudo: persist only a digest of the deployment-only identity marker.
+        parameter = self.env['ir.config_parameter'].sudo()
+        digest = self._fresh_profile_instance_digest()
+        binding = parameter.get_param(_FRESH_INSTANCE_BINDING, default=False)
+        if binding is not False and binding is not None:
+            if not isinstance(binding, str) or not hmac.compare_digest(binding, digest):
+                raise ValueError('Fresh profile instance binding does not match')
+            return
+        parameter.set_param(_FRESH_INSTANCE_BINDING, digest)
+
+    @api.model
+    def _require_fresh_profile_instance(self):
+        # sudo: compare only deployment digest; the marker is never stored or logged.
+        binding = self.env['ir.config_parameter'].sudo().get_param(_FRESH_INSTANCE_BINDING)
+        digest = self._fresh_profile_instance_digest()
+        if not isinstance(binding, str) or not hmac.compare_digest(binding, digest):
+            raise ValueError('Fresh profile instance is not authorized')
+
+    @api.model
+    def _get_fresh_profile_issuer(self):
+        from urllib.parse import urlsplit
+
+        # sudo: read only explicit profile configuration and canonical issuer.
+        issuer = self.env['ir.config_parameter'].sudo().get_param(
+            'amr_token.fresh_profile_issuer')
+        try:
+            parsed = urlsplit(issuer or '')
+            valid = (isinstance(issuer, str) and 1 <= len(issuer) <= 2048
+                     and all(32 < ord(char) < 127 for char in issuer)
+                     and '\\' not in issuer and parsed.scheme == 'https'
+                     and parsed.hostname and parsed.username is None
+                     and parsed.password is None and parsed.port in (None, 443)
+                     and not parsed.query and not parsed.fragment
+                     and issuer == self.get_issuer())
+        except (TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise ValueError('Fresh issuer profile is not configured')
+        return issuer
+
+    @api.model
+    def _get_fresh_profile_ttl(self):
+        # sudo: read only the shared token lifetime; validate before signing.
+        value = self.env['ir.config_parameter'].sudo().get_param('amr_token.expires_in')
+        if value is None or value is False or value == '':
+            return 900
+        if (not isinstance(value, str) or not value.isascii()
+                or not value.isdecimal() or str(int(value)) != value):
+            raise ValueError('Invalid fresh-profile token lifetime configuration')
+        ttl = int(value)
+        if not 60 <= ttl <= 86400:
+            raise ValueError('Invalid fresh-profile token lifetime configuration')
+        return ttl
 
     @api.model
     def oidc_token(self, grant_type=None, **kwargs):

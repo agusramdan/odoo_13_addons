@@ -177,3 +177,9 @@ Hash SHA-256 berikut adalah rekaman worktree historis pada 2026-10-22 (ADDONS13-
 | `amr_token/models/helper.py` | `e286ae9022c66807c8fb6d6a1dc8af90a1a5c4e1243d42949e3de92a18d3a1dc` |
 
 [PERLU KONFIRMASI] Registry/runtime, role dan akses efektif, route/UI visibility, dependency aktual, konfigurasi deployed, flow OIDC dan interoperabilitas memerlukan bukti terpisah. Persyaratan kebijakan di atas belum dibuktikan enforce. Dokumentasi tidak menilai izin secret/private-key atau authorization-code-record access.
+
+## Catatan kandidat ADDONS13-79: fresh-profile instance binding
+
+Fresh-profile issuance mengharuskan proses Odoo menyediakan `AMR_OIDC_FRESH_PROFILE_INSTANCE_ID` dengan nilai acak berentropi tinggi, stabil, sekurangnya 32 karakter pada setiap worker. Jangan masukkan nilainya ke database, UI, request, atau log. Binding hanya dibuat ketika administrator sistem secara eksplisit menyimpan konfigurasi issuer fresh-profile; database menyimpan SHA-256 digest saja. Pada setiap issuance, digest dibandingkan dengan perbandingan konstan-waktu. Nilai hilang, berbeda, atau binding DB hilang menolak issuance; tidak ada rebind otomatis lewat pengaturan. Pemulihan/perubahan identitas memerlukan rencana lifecycle/clone yang diotorisasi terpisah.
+
+Binding ini mendeteksi pemindahan DB ke proses yang memakai marker berbeda atau tanpa marker. Ia **tidak** mendeteksi clone bila konfigurasi eksternal/marker yang sama turut disalin. Pastikan marker dikelola terpisah per deployment dan lakukan inventory/otorisasi clone/restore; salinan semua identitas eksternal tetap menjadi risiko operasional dan tidak boleh dianggap terdeteksi otomatis. Perilaku ini memerlukan verifikasi runtime/Odoo terisolasi; unit test offline bukan bukti registrasi atau konfigurasi worker.

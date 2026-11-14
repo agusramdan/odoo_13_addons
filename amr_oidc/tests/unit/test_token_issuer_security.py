@@ -150,9 +150,9 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         self.assertIn("_get_secret", methods)
         self.assertIn("_create_refresh_token", methods)
 
-    def test_res_users_rejects_other_user_without_system_group_before_cache(self):
+    def test_res_users_rejects_other_user_without_system_group_before_signing(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         record = module.ResUsers()
         record.id = 29
         record.ensure_one = lambda: None
@@ -165,9 +165,9 @@ class TokenIssuerSecurityTests(unittest.TestCase):
 
         cached.assert_not_called()
 
-    def test_res_users_allows_self_and_system_user_before_cache(self):
+    def test_res_users_allows_self_and_system_user_to_issue_tokens(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         for actor_uid, target_uid, is_system in ((29, 29, False), (7, 29, True)):
             with self.subTest(actor_uid=actor_uid, is_system=is_system):
                 record = module.ResUsers()
@@ -179,11 +179,11 @@ class TokenIssuerSecurityTests(unittest.TestCase):
                 with mock.patch("time.time", return_value=900):
                     self.assertEqual(record.get_access_token(audience="client-audience"),
                                      "opaque-token")
-                cached.assert_called_once_with(target_uid, "client-audience", 3)
+                cached.assert_called_once_with(target_uid, "client-audience")
 
-    def test_res_users_access_token_path_browses_target_and_delegates_audience_bucket(self):
+    def test_res_users_access_token_path_browses_target_and_delegates_legacy_two_argument_contract(self):
         support = _load_support()
-        record = support.load("models/res_users.py").ResUsers()
+        record = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource").ResUsers()
         target = FakeUser(29)
         record.id = 29
         record.ensure_one = lambda: None
@@ -203,10 +203,40 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         record.browse.assert_called_once_with(29)
         helper._generate_user_token.assert_called_once_with(
             target, audience="client-audience")
+        self.assertNotIn("expires_in", helper._generate_user_token.call_args.kwargs)
+
+    def test_glue_preserves_legacy_missing_ttl_default_end_to_end(self):
+        support = _load_support()
+        glue = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
+        helper_module = _load_module(support, "models/token_helper.py")
+        record = glue.ResUsers()
+        record.id = 29
+        record.ensure_one = lambda: None
+        record.is_user_allow_create_token = lambda: True
+        record.env = FakeEnv(uid=29)
+        target = FakeUser(29)
+        record.browse = lambda uid: target
+
+        helper = helper_module.TokenHelper()
+        helper.env = FakeEnv(uid=29)
+        params = SimpleNamespace(sudo=lambda: params)
+        params.get_param = lambda key, default=None: default
+        helper.env["ir.config_parameter"] = params
+        signer = mock.Mock(return_value=("legacy-token", {"exp": 87400}, 86400))
+        helper._generate_token = signer
+        record.env["amr.oidc.helper"] = helper
+
+        result = record.get_access_token(audience="legacy-audience")
+
+        self.assertEqual(result, "legacy-token")
+        signer.assert_called_once_with(
+            {"uid": 29, "user_id": "target-user", "sub": "target-user",
+             "email": "", "db": "unit-db"},
+            audience="legacy-audience", expires_in=86400, scope="")
 
     def test_res_users_create_access_token_fails_without_signing_or_storage(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         record = module.ResUsers()
         helper = mock.Mock()
         helper._generate_user_token.return_value = ("target-token", {}, 60)

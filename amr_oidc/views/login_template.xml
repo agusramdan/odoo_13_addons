@@ -412,7 +412,7 @@
                     </div>
 
                     <!-- Continue -->
-                    <t t-if="request.env.user.is_user_allow_create_token()">
+                    <t t-if="request.env.user._oidc_can_show_continue()">
                     <a
                         class="btn btn-primary btn-continue"
                         t-attf-href="/oidc/authorize_continue?params={{ params }}%26client_name={{ client_name }}"

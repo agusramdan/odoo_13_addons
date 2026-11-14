@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import base64
 import json
+import re
+from urllib.parse import unquote_plus
 
 from werkzeug.exceptions import HTTPException
 from werkzeug.wrappers import Response
@@ -28,6 +31,19 @@ class ControllerOIDC(Controller):
     def make_response(cls, status=200, **payload):
         return Response(json.dumps(payload or {"error": "unknown_error"}), status=status, content_type="application/json; charset=utf-8")
 
+    @classmethod
+    def _token_response(cls, status=200, **payload):
+        response = cls.make_response(status=status, **payload)
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Pragma'] = 'no-cache'
+        return response
+
+    @classmethod
+    def _invalid_client_response(cls):
+        response = cls._token_response(401, error='invalid_client')
+        response.headers['WWW-Authenticate'] = 'Basic realm="token"'
+        return response
+
     def invalid_response(self, status, error, info=""):
         return self.make_response(status=status, error=error, error_description=info)
 
@@ -38,12 +54,58 @@ class ControllerOIDC(Controller):
 
     @route('/oidc/token', type='http', auth='none', methods=['POST'], csrf=False)
     def api_oidc_token(self, **kwargs):
+        http_request = request.httprequest
+        form = http_request.form
+        if form.get('grant_type') == 'client_credentials':
+            helper = request.env['amr.oidc.helper']
+            try:
+                if not helper._fresh_profile_is_enabled():
+                    # sudo: preserve legacy unsupported-grant lookup only.
+                    payload = helper.sudo().oidc_token(**kwargs)
+                    return self._token_response(**payload)
+            except Exception:
+                return self._token_response(401, error='invalid_request')
+            if (not http_request.is_secure or http_request.args
+                    or len(form.getlist('grant_type')) != 1
+                    or len(form.getlist('scope')) > 1
+                    or set(form) - {'grant_type', 'scope'}
+                    or kwargs and kwargs != dict(form)):
+                return self._token_response(400, error='invalid_request')
+            try:
+                if len(http_request.headers.getlist('Authorization')) != 1:
+                    return self._invalid_client_response()
+                authorization = http_request.headers.get('Authorization', '')
+                scheme, encoded = authorization.split(' ', 1)
+                if scheme.lower() != 'basic':
+                    raise ValueError()
+                decoded = base64.b64decode(encoded, validate=True).decode('ascii')
+                encoded_client_id, encoded_client_secret = decoded.split(':', 1)
+                if (not encoded_client_id or not encoded_client_secret
+                        or re.search(r'%(?![0-9A-Fa-f]{2})', decoded)):
+                    raise ValueError()
+                client_id = unquote_plus(encoded_client_id, encoding='utf-8', errors='strict')
+                client_secret = unquote_plus(
+                    encoded_client_secret, encoding='utf-8', errors='strict')
+                if (not client_id or not client_secret or len(client_id) > 1024
+                        or len(client_secret) > 1024
+                        or any(ord(char) <= 31 or 127 <= ord(char) <= 159
+                               for char in client_id)):
+                    raise ValueError()
+            except (ValueError, UnicodeError, TypeError):
+                return self._invalid_client_response()
+            try:
+                result = helper._issue_fresh_client_token(
+                    client_id, client_secret, form.get('scope', ''))
+                return self._token_response(**result)
+            except Exception:
+                return self._invalid_client_response()
         try:
-            # sudo: preserve source token lookup; token policy deferred.
+            # sudo: preserve legacy unsupported-grant lookup only.
             payload = request.env['amr.oidc.helper'].sudo().oidc_token(**kwargs)
-            return self.make_response(**payload)
+            return self._token_response(**payload)
         except Exception as ex:
-            return self.handle_exception(ex, 401, "invalid_request")
+            return self._token_response(
+                401, success=False, error="invalid_request", error_description=str(ex))
 
     @route('/.well-known/openid-configuration', type='http', auth='public', methods=['GET'], csrf=False)
     def well_known_openid_configuration(self):

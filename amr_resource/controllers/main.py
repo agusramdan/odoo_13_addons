@@ -50,7 +50,7 @@ class RedirectController(Controller):
 
     @route('/redirect', type='http', auth='user_or_param', methods=['GET'], csrf=False)
     def redirect_url(self, url=None):
-        url = request.env.user.add_url_access_token(url)
+        url = request.env.user._resource_access_url(url)
         return redirect(url)
 
     @route('/api/v1/access_token/url', type='http', auth='user_or_param', methods=['GET'], csrf=False)
@@ -80,7 +80,7 @@ class RedirectController(Controller):
 
         if not result and url:
             if url_type in ['auto_login', 'access_token']:
-                access_url = request.env.user.add_url_access_token(url, url_type=url_type)
+                access_url = request.env.user._resource_access_url(url, url_type=url_type)
             else:
                 return self.invalid_response(400, "invalid type", "type[%s] accept only auto_login or access_token" % url_type)
             result = {

@@ -22,6 +22,11 @@ class ParentHelper:
         return {"status": 400, "error": "unsupported_grant_type"}
 
 
+class StubTransientModel(object):
+    def set_values(self):
+        return True
+
+
 class StubResponse:
     def __init__(self, response="", status=200, status_code=None, **kwargs):
         self.status_code = status if status_code is None else status_code
@@ -29,6 +34,7 @@ class StubResponse:
             response = response.encode("utf-8")
         self.data = response
         self.response = response
+        self.headers = kwargs.get("headers", {})
 
 
 class AccessError(Exception):
@@ -48,20 +54,24 @@ def _route(paths, **options):
     return decorate
 
 
-def load(relative, parent_helper=None):
-    """Load only one leaf model module with inert fields and no external libraries."""
+def load(relative, parent_helper=None, addon=None):
+    """Load one leaf model module with inert fields and no external libraries."""
+    addon = Path(addon) if addon is not None else ADDON
     odoo = ModuleType('odoo')
     setattr(odoo, '_', lambda value: value)
+    setattr(odoo, 'SUPERUSER_ID', 1)
     setattr(odoo, 'api', SimpleNamespace(
         model=lambda method: method,
+        model_create_multi=lambda method: method,
+        depends=lambda *field_names: (lambda method: method),
         constrains=lambda *field_names: (lambda method: method),
     ))
     setattr(odoo, 'fields', SimpleNamespace(**{name: Field for name in (
-        'Boolean', 'Char', 'Text', 'Many2one', 'Many2many', 'One2many', 'Datetime',
+        'Boolean', 'Char', 'Text', 'Integer', 'Many2one', 'Many2many', 'One2many', 'Datetime',
         'Selection', 'Binary')}))
     abstract_model = parent_helper or ParentHelper
     setattr(odoo, 'models', SimpleNamespace(Model=object, AbstractModel=abstract_model,
-                                             TransientModel=object))
+                                             TransientModel=StubTransientModel))
     exceptions = ModuleType('odoo.exceptions')
     setattr(exceptions, 'UserError', type('UserError', (Exception,), {}))
     setattr(exceptions, 'ValidationError', type('ValidationError', (Exception,), {}))
@@ -80,7 +90,7 @@ def load(relative, parent_helper=None):
     psycopg2 = ModuleType('psycopg2')
     psycopg2.IntegrityError = type('IntegrityError', (Exception,), {})
     spec = importlib.util.spec_from_file_location('_isolated_oidc_leaf',
-                                                  str(ADDON / relative))
+                                                  str(addon / relative))
     module = importlib.util.module_from_spec(spec)
     werkzeug = ModuleType('werkzeug')
     setattr(werkzeug, 'url_encode', urlencode)
@@ -97,6 +107,8 @@ def load_controller():
     odoo = ModuleType('odoo')
     setattr(odoo, 'api', SimpleNamespace(
         model=lambda method: method,
+        model_create_multi=lambda method: method,
+        depends=lambda *field_names: (lambda method: method),
         constrains=lambda *field_names: (lambda method: method),
     ))
     setattr(odoo, 'fields', SimpleNamespace())

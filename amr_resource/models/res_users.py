@@ -64,6 +64,11 @@ class ResUsers(models.Model):
         raise UserError('Access token generation is not supported by amr_resource')
 
     @api.model
+    def _resource_access_url(self, url=None, url_type='access_token'):
+        # Keep RS routes independent of optional provider URL helpers.
+        return url
+
+    @api.model
     def add_url_access_token(self, url=None, url_type='access_token', **kw):
         if url_type != 'access_token':
             return self.get_auto_login_url(url=url, **kw)

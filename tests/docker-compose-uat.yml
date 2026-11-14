@@ -75,11 +75,9 @@ services:
   uat-runner:
     profiles: ["uat-offline"]
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile.uat
       args:
-        UAT_BASE_IMAGE: "${UAT_RUNNER_BASE_IMAGE:?Set approved immutable runner image reference including @sha256 digest}"
-        UAT_PYTHON_RUNTIME: "3.8.20"
         UAT_DEPENDENCY_SET: "${UAT_DEPENDENCY_SET:?Set exact approved dependency set/reference}"
     image: "${UAT_RUNNER_IMAGE:?Set unique task-scoped runner image name}"
     init: true
