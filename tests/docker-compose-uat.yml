@@ -17,14 +17,14 @@ services:
     security_opt: ["no-new-privileges:true"]
     user: "${UAT_ODOO_UID:?Set approved unprivileged numeric UID}:${UAT_ODOO_GID:?Set approved unprivileged numeric GID}"
     working_dir: /workspace
-    command: ["/bin/sh", "-ec", "test \"$(python3 -c 'import sys; print(\".\".join(map(str, sys.version_info[:3])))')\" = 3.8.20; exec ${UAT_ODOO_COMMAND:?Set owner-approved bounded Odoo command} --database=odoo13uat"]
+    command: ["/bin/sh", "-ec", "test \"$(python3 -c 'import sys; print(\".\".join(map(str, sys.version_info[:3])))')\" = 3.7.3; exec ${UAT_ODOO_COMMAND:?Set owner-approved bounded Odoo command} --database=odoo13uat"]
     environment:
       HOST: odoo13dbuat
       PORT: "5432"
       UAT_DB_NAME: "odoo13uat"
       USER: "${UAT_DB_USER:?Set synthetic UAT database user}"
       PASSWORD_FILE: /run/secrets/uat_db_password
-      UAT_PYTHON_RUNTIME: "3.8.20"
+      UAT_PYTHON_RUNTIME: "3.7.3"
       UAT_DEPENDENCY_SET: "${UAT_DEPENDENCY_SET:?Set exact approved dependency set/reference}"
     secrets: [uat_db_password]
     volumes:

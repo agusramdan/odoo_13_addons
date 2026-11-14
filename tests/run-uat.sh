@@ -10,7 +10,7 @@ fail() { printf '%s\n' "run-uat: $*" >&2; exit 64; }
 : "${UAT_PROFILE:?Set the explicitly approved Compose profile}"
 [ "${UAT_MAX_RUNS:-3}" = 3 ] || fail 'UAT_MAX_RUNS must be exactly 3 total attempts'
 [ "${UAT_DB_NAME:-odoo13uat}" = odoo13uat ] || fail 'database name must be odoo13uat'
-[ "${UAT_PYTHON_RUNTIME:-3.8.20}" = 3.8.20 ] || fail 'Python runtime selection must be 3.8.20'
+[ "${UAT_PYTHON_RUNTIME:-3.7.3}" = 3.7.3 ] || fail 'Python runtime selection must be 3.7.3'
 printf '%s' "$UAT_COMPOSE_PROJECT" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$' || fail 'invalid Compose project name'
 case "$UAT_STATE_FILE:$UAT_EVIDENCE_DIR" in /*:/*) ;; *) fail 'state and evidence paths must be absolute' ;; esac
 case "$UAT_STATE_FILE:$UAT_EVIDENCE_DIR" in *'/var/lib/'*|*'/run/'*) fail 'state/evidence must be outside ephemeral service volumes' ;; esac

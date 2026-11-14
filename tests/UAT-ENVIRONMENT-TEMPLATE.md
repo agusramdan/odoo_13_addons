@@ -182,7 +182,7 @@ profile_kind: "NON-AUTHORITATIVE EXAMPLE — not an execution manifest"
 task:
   id: "ADDONS13-79"
 runtime:
-  selected_target: "Python 3.8.20 (Owner selection; NOT YET DEPENDENCY-QUALIFIED)"
+  selected_target: "Python 3.7.3 (Owner selection; NOT YET DEPENDENCY-QUALIFIED)"
   odoo_container: "odoo13addonsuat"
   postgres_container: "odoo13dbuat"
   disposable_database: "odoo13uat"
