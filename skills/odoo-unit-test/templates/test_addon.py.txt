@@ -1,0 +1,10 @@
+# Place this file in <addon>/tests/unit/test_addon.py.
+# Run: python <skill>/scripts/run_tests.py --addon <addon>
+from mock_odoo import MockOdooEnv, MockModel, MockFactory, odoo_modules
+
+# with odoo_modules():
+#     import your_addon_module  # or load its source file directly via importlib
+#
+# def test_your_business_decision():
+#     env = MockOdooEnv({'your.model': MockModel()})
+#     ...  # inject env and dependencies, then assert observable behavior
