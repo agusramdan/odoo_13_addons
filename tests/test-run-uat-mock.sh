@@ -12,7 +12,15 @@ export PATH="$tmp/bin:$PATH" MOCK_CALLS="$tmp/calls"
 export UAT_COMPOSE_PROJECT=task-uat-79 UAT_STATE_FILE="$tmp/state"
 export UAT_EVIDENCE_DIR="$tmp/evidence" UAT_COMPOSE_FILE="$compose_file"
 export UAT_PROFILE=uat-offline UAT_MAX_RUNS=3 UAT_DB_NAME=odoo13uat
-export UAT_PYTHON_RUNTIME=3.8.20
+export UAT_PYTHON_RUNTIME=3.7.3
+
+# A mismatched runtime must fail before invoking even the Docker mock.
+if UAT_PYTHON_RUNTIME=3.8.20 "$repo/tests/run-uat.sh" uat-runner 2>"$tmp/runtime.err"; then
+  echo 'expected mismatched runtime to be rejected' >&2; exit 1
+fi
+grep -q 'Python runtime selection must be 3.7.3' "$tmp/runtime.err"
+[ ! -s "$MOCK_CALLS" ]
+[ ! -e "$UAT_STATE_FILE" ]
 
 # Three invocations count as three total started attempts and each cleans only
 # the named project; a fourth invocation is rejected before calling docker.
