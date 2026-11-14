@@ -1,5 +1,6 @@
 pytest==7.4.4
 PyJWT==2.8.0
+Werkzeug==0.14.1
 typing_extensions==4.7.1
 cryptography==39.0.2
 cffi==1.15.1
