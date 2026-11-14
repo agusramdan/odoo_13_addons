@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: ../Dockerfile
-    container_name: odoo13_task_web
+    container_name: odoo13-task-web
     depends_on:
       - db
     ports:
@@ -27,8 +27,8 @@ services:
 
   # 2. PostgreSQL Database (biasanya PG 11 atau 12 sangat stabil untuk Odoo 13)
   db:
-    image: postgres:12
-    container_name: odoo13_task_db
+    image: postgres:10
+    container_name: odoo13-task-db
     environment:
       - POSTGRES_DB=${POSTGRES_USER:-postgres}
       - POSTGRES_USER=${POSTGRES_USER:-odoo}

@@ -21,9 +21,9 @@
     <record id="view_ir_cron_form_amr_monitor" model="ir.ui.view">
         <field name="name">ir.cron.form.amr.monitor</field>
         <field name="model">ir.cron</field>
-        <field name="inherit_id" ref="base.ir_cron_view"/>
+        <field name="inherit_id" ref="base.ir_cron_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//field[@name='interval_number']" position="after">
+            <xpath expr="//field[@name='doall']" position="after">
                 <field name="amr_monitor_enabled"/>
                 <field name="amr_grace_minutes" attrs="{'invisible':[('amr_monitor_enabled','=',False)]}"/>
                 <field name="amr_max_runtime_minutes" attrs="{'invisible':[('amr_monitor_enabled','=',False)]}"/>
