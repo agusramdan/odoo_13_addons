@@ -4,7 +4,7 @@ FROM odoo:13.0@sha256:487514270bff6f4a37cfb7532a2f513cfca7ea4ce996f628c6d9edd450
 
 COPY requirements.txt /tmp/addons-requirements.txt
 
-COPY ./amr_* /mnt/extra-addons/
+COPY ../amr_* /mnt/extra-addons/
 
 ARG UAT_DEPENDENCY_SET
 LABEL org.opencontainers.image.description="Isolated, parameterized UAT runner scaffold" \
