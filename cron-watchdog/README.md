@@ -2,12 +2,21 @@
 
 ## Architecture
 
-![Odoo Cron Monitoring Architecture](docs/images/odoo-cron-monitoring.png)
+![Odoo Cron Monitoring Architecture](odoo-cron-monitoring.png)
 
 ## Components
 - `../amr_cron_monitor`: optional per-cron monitoring settings and callback audit.
 - `watchdog`: independent read-only PostgreSQL checker and Uptime Kuma push client.
 - `docker-compose.yml`: watchdog container only; reuse your existing Odoo/PostgreSQL/Kuma deployment.
+
+## Automated Installation (Recommended)
+You can easily deploy the watchdog using the automated installation script. This script dynamically generates the `.env` configuration, securely sets up the PostgreSQL monitor user on-the-fly, and pulls/runs the Docker container.
+
+Run the following command in your terminal to download and execute the installation script directly:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/agusramdan/odoo_13_addons/main/cron-whatcdog/install.sh | bash
+```
 
 ## Deployment
 1. Back up Odoo database; test on staging first.
