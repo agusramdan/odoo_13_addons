@@ -206,7 +206,8 @@ class PackageContract(unittest.TestCase):
             "__init__.py": {"controllers", "models", "wizard"},
             "models/__init__.py": {"token_helper", "public_key", "oidc_authorization_code", "oidc_client",
                                    "oidc_client_key", "oidc_client_grant", "oidc_jwt_replay",
-                                   "oidc_refresh_token", "res_config_settings", "res_users"},
+                                   "oidc_refresh_token", "res_config_settings", "res_users",
+                                   "oidc_issuer_principal_subject"},
             "controllers/__init__.py": {"main"},
             "wizard/__init__.py": {"service_account"},
         }

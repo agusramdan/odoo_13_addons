@@ -22,6 +22,8 @@ class UnitEnv(dict):
             helper = SimpleNamespace()
             self["amr.oidc.helper"] = helper
         helper._validate_audience = self._validate_audience
+        self["ir.config_parameter"] = SimpleNamespace(
+            sudo=lambda: SimpleNamespace(get_param=lambda key: "60"))
 
     @staticmethod
     def _validate_audience(audience):
@@ -389,7 +391,8 @@ class StandalonePackageTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("oidc_test_support_users_empty", str(support_path))
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
+        module = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource")
+        model = module.ResUsers()
         helper = self._audience_alias_helper()
         model._uid, model.id, model.login, model.email = 7, 7, "user", "u@example.invalid"
         model.ensure_one = lambda: None
@@ -398,10 +401,12 @@ class StandalonePackageTests(unittest.TestCase):
         )
         model.env = UnitEnv({"amr.oidc.helper": helper})
 
-        with self.assertRaisesRegex(ValueError, "audience"):
+        model.get_access_token = mock.Mock(side_effect=AssertionError("URL issuance attempted"))
+        with self.assertRaisesRegex(module.UserError, "URL access tokens are disabled"):
             model.add_url_access_token("https://app.example.invalid", audience="")
-        with self.assertRaisesRegex(ValueError, "audience"):
+        with self.assertRaisesRegex(module.UserError, "URL access tokens are disabled"):
             model.get_auto_login_url("https://app.example.invalid", audience="")
+        model.get_access_token.assert_not_called()
 
     def test_res_users_access_token_keeps_absent_audience_for_uuid_default(self):
         import importlib.util
@@ -409,7 +414,7 @@ class StandalonePackageTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("oidc_test_support_users_default", str(support_path))
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
+        model = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource").ResUsers()
         model.id = 7
         user = SimpleNamespace(id=7, login="user", email="u@example.invalid")
         helper = SimpleNamespace(
@@ -427,13 +432,13 @@ class StandalonePackageTests(unittest.TestCase):
         model.browse.assert_called_once_with(7)
         helper._generate_user_token.assert_called_once_with(user)
 
-    def test_res_users_resource_is_effective_cache_audience(self):
+    def test_res_users_resource_is_effective_issuance_audience(self):
         import importlib.util
         support_path = ADDON_ROOT / "tests" / "support.py"
         spec = importlib.util.spec_from_file_location("oidc_test_support_users_resource", str(support_path))
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
+        model = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource").ResUsers()
         model.id, model.env = 7, UnitEnv()
         model.ensure_one = lambda: None
         model.is_user_allow_create_token = lambda: True
@@ -444,7 +449,7 @@ class StandalonePackageTests(unittest.TestCase):
             model.get_access_token(create=True, audience="ignored", resource="resource-b")
 
         self.assertEqual(model._get_access_token.call_args_list, [
-            mock.call(7, "resource-a", 3), mock.call(7, "resource-b", 3),
+            mock.call(7, "resource-a"), mock.call(7, "resource-b"),
         ])
 
     def test_res_users_rejects_explicit_invalid_resource(self):
@@ -453,7 +458,7 @@ class StandalonePackageTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("oidc_test_support_users_bad_resource", str(support_path))
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
+        model = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource").ResUsers()
         model.id, model.env = 7, UnitEnv()
         model.ensure_one = lambda: None
         model.is_user_allow_create_token = lambda: True
@@ -507,22 +512,21 @@ class StandalonePackageTests(unittest.TestCase):
         self.assertEqual(helper._generate_user_token.call_args[1]["audience"], "resource-a")
         self.assertNotIn("resource", helper._generate_user_token.call_args.kwargs)
 
-    def test_res_users_url_audiences_derive_and_cache_keys_remain_distinct(self):
+    def test_res_users_url_audiences_derive_and_issue_distinct_tokens(self):
         import importlib.util
         support_path = ADDON_ROOT / "tests" / "support.py"
         spec = importlib.util.spec_from_file_location("oidc_test_support_users_urls", str(support_path))
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
-        model.get_access_token = mock.Mock(return_value="synthetic-token")
+        module = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource")
+        model = module.ResUsers()
+        model.get_access_token = mock.Mock(side_effect=AssertionError("URL issuance attempted"))
 
-        model.add_url_access_token("https://app.example.invalid/path")
-        model.get_auto_login_url("https://other.example.invalid/path")
-
-        self.assertEqual(model.get_access_token.call_args_list, [
-            mock.call(create=True, audience="https://app.example.invalid"),
-            mock.call(create=True, audience="https://other.example.invalid"),
-        ])
+        with self.assertRaisesRegex(module.UserError, "URL access tokens are disabled"):
+            model.add_url_access_token("https://app.example.invalid/path")
+        with self.assertRaisesRegex(module.UserError, "URL access tokens are disabled"):
+            model.get_auto_login_url("https://other.example.invalid/path")
+        model.get_access_token.assert_not_called()
 
     def test_public_key_rejects_jwt_kid_that_does_not_match_active_key(self):
         import importlib.util
@@ -709,7 +713,7 @@ class StandalonePackageTests(unittest.TestCase):
 
         self.assertEqual(payload["aud"], "database-audience")
 
-    def test_cached_user_issuance_preserves_actor_and_passes_target_user(self):
+    def test_user_issuance_preserves_actor_and_passes_target_user(self):
         import importlib.util
         support_path = ADDON_ROOT / "tests" / "support.py"
         spec = importlib.util.spec_from_file_location("oidc_test_support_cached_user", str(support_path))
@@ -717,7 +721,7 @@ class StandalonePackageTests(unittest.TestCase):
             raise ImportError("cannot create isolated support module spec")
         support = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(support)
-        model = support.load("models/res_users.py").ResUsers()
+        model = support.load("models/res_users.py", addon=ADDON_ROOT.parent / "amr_oidc_resource").ResUsers()
         target = SimpleNamespace(id=29, login="target", email="target@example.invalid")
         helper = mock.Mock()
         helper._generate_user_token.return_value = ("target-token", {}, 60)
@@ -726,7 +730,7 @@ class StandalonePackageTests(unittest.TestCase):
         model.browse = mock.Mock(return_value=target)
         model.with_user = mock.Mock(return_value=model)
 
-        result = model._get_access_token(29, "client-audience", 1)
+        result = model._get_access_token(29, "client-audience")
 
         self.assertEqual(result, "target-token")
         helper._generate_user_token.assert_called_once_with(

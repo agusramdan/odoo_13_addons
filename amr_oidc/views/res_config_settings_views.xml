@@ -30,6 +30,12 @@
                                     <label for="amr_token_expires_in" string="Expires" class="col-lg-3 o_light_label"/>
                                     <field name="amr_token_expires_in" placeholder="e.g. 1000"/>
                                 </div>
+                                <div class="text-muted">Saving this value also changes the shared legacy and refresh token setting; refresh creation remains independently configured.</div>
+                                <div class="row mt16" groups="base.group_system">
+                                    <label for="amr_token_fresh_profile_issuer" string="Fresh Issuer Profile" class="col-lg-3 o_light_label"/>
+                                    <field name="amr_token_fresh_profile_issuer" placeholder="Exact HTTPS issuer"/>
+                                </div>
+                                <div class="text-muted" groups="base.group_system">Opt-in only for a newly provisioned isolated issuer; no existing tokens or identities are converted.</div>
                                 <div id='create_public_key' class="row mt16"  attrs="{'invisible': [('amr_token_signature_type', '!=', 'public_key')]}">
                                     <span class="col-lg-3 o_light_label" />
                                     <button name="action_create_public_key" icon="fa-arrow-right" type="object" string="Create Key" class="btn-link"/>
