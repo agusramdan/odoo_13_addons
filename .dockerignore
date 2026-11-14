@@ -1,0 +1,5 @@
+# Abaikan semua item di tingkat root terlebih dahulu
+*
+# Izinkan folder berawalan amr_ dan seluruh isi di dalamnya
+!amr_*/
+!amr_*/**
