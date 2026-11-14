@@ -30,7 +30,7 @@ jobs:
         run: echo "DATE_TAG=$(date +'%Y%m%d')" >> $GITHUB_ENV
 
       # 4. Build dan push image ke Docker Hub
-      - name: Build and push Docker image
+      - name: Build and push Docker image odoo-13-addons
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -39,3 +39,13 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-addons:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-addons:${{ env.DATE_TAG }}
+
+      - name: Build and push Docker image cron-monitor
+        uses: docker/build-push-action@v5
+        with:
+          context: cron-watchdog/.
+          file: cron-watchdog/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cron-watchdog:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cron-watchdog:${{ env.DATE_TAG }}
