@@ -20,7 +20,7 @@ CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL_SECONDS', '60'))
 STALE_AFTER = int(os.getenv('AUDIT_STALE_MINUTES', '120'))
 
 SQL = """
-SELECT c.id, c.name, c.nextcall, c.amr_grace_minutes, c.amr_max_runtime_minutes,
+SELECT c.id, c.cron_name, c.nextcall, c.amr_grace_minutes, c.amr_max_runtime_minutes,
        (EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'UTC') - c.nextcall)) / 60.0) AS overdue_min,
        a.state AS last_state, a.started_at AS last_started,
        a.finished_at AS last_finished,
@@ -32,7 +32,7 @@ LEFT JOIN LATERAL (
   WHERE cron_id = c.id
   ORDER BY started_at DESC, id DESC LIMIT 1
 ) a ON true
-WHERE c.active = TRUE AND c.numbercall != 0 AND c.amr_monitor_enabled = TRUE
+WHERE c.active AND c.numbercall != 0 AND c.amr_monitor_enabled
 ORDER BY c.id
 """
 
@@ -51,8 +51,9 @@ def check():
     if not rows:
         return False, 'No enabled monitored cron found'
     failures = []
+    tabel = str.maketrans('', '', ';:?/#\'\"\\')
     for row in rows:
-        name = str(row['name'])[:50]
+        name = str(row['cron_name']).translate(tabel)[:50]
         overdue = float(row['overdue_min'] or 0)
         grace = max(1, int(row['amr_grace_minutes'] or 10))
         runtime = max(1, int(row['amr_max_runtime_minutes'] or 30))
