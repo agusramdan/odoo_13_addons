@@ -6,5 +6,3 @@
 # Werkzeug version matches Odoo 13.0's Linux requirements.
 PyJWT==2.8.0
 cryptography==39.0.2
-requests==2.31.0
-Werkzeug==0.14.1
