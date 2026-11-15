@@ -18,6 +18,7 @@ class TestUserTokenGlueActorAndIssuer(TransactionCase):
 
     def test_malformed_ttl_configuration_keeps_helper_error_before_signing(self):
         params = self._configure_secret()
+        self.env.user.get_access_token(audience="ttl-config-audience")
         params.set_param("amr_token.expires_in", "")
         with mock.patch("jwt.encode") as signer:
             with self.assertRaises(ValueError):
@@ -59,15 +60,37 @@ class TestUserTokenGlueActorAndIssuer(TransactionCase):
             token = self.env.user.get_access_token(audience=audience)
             self.env.user.get_access_token(audience=audience)
             other_token = self.env.user.get_access_token(audience=other_audience)
-            self.assertEqual(signer.call_count, 3)
+            self.assertEqual(signer.call_count, 2)
             with self.assertRaisesRegex(ValueError, "A valid audience is required"):
                 self.env.user.get_access_token(audience=[])
-            self.assertEqual(signer.call_count, 3)
+            self.assertEqual(signer.call_count, 2)
 
         claims = helper.decode(token, audience=audience)
         self.assertEqual(claims["aud"], audience)
         other_claims = helper.decode(other_token, audience=other_audience)
         self.assertEqual(other_claims["aud"], other_audience)
+
+    def test_legacy_cache_reuses_within_ttl_bucket_and_rolls_over(self):
+        params = self._configure_secret()
+        params.set_param("amr_token.expires_in", "60")
+        audience = "legacy-cache-rollover-audience"
+        with mock.patch("jwt.encode", wraps=jwt.encode) as signer:
+            with mock.patch("odoo.addons.amr_oidc.models.token_helper.time.time",
+                            return_value=1800000000):
+                with mock.patch("odoo.addons.amr_oidc_resource.models.res_users.time.time",
+                                return_value=1800000000):
+                    first = self.env.user.get_access_token(audience=audience)
+                    repeated = self.env.user.get_access_token(audience=audience)
+                    self.assertEqual(repeated, first)
+                    self.assertEqual(signer.call_count, 1)
+
+            with mock.patch("odoo.addons.amr_oidc.models.token_helper.time.time",
+                            return_value=1800000060):
+                with mock.patch("odoo.addons.amr_oidc_resource.models.res_users.time.time",
+                                return_value=1800000060):
+                    rolled = self.env.user.get_access_token(audience=audience)
+            self.assertNotEqual(rolled, first)
+            self.assertEqual(signer.call_count, 2)
 
     def test_non_system_cross_user_denial_precedes_signing(self):
         self._configure_secret()

@@ -1,7 +1,7 @@
 """Offline package contracts only; no registry, ORM, HTTP or security verdict.
 
-Run from repository root with the pinned Python 3.8.20 test image:
-python -B -m unittest discover -s amr_oidc/tests/unit -p 'test_*.py' -v
+Run from repository root with the target Odoo 13/Python 3.7.3 test image:
+python3 -B -m unittest discover -s amr_oidc/tests/unit -p 'test_*.py' -v
 The addon root is deliberately never imported.
 """
 import ast
@@ -21,6 +21,63 @@ ADDON = Path(__file__).resolve().parents[2]
 
 
 class PackageContract(unittest.TestCase):
+    def test_pytest_image_dependencies_include_target_compatible_crypto_pins(self):
+        requirements = ADDON.parent / "tests" / "requirements-pytest.txt"
+        self.assertTrue(requirements.is_file(), "Missing test image requirements")
+        pinned = {}
+        for line in requirements.read_text(encoding="utf-8").splitlines():
+            entry = line.strip()
+            if not entry or entry.startswith("#"):
+                continue
+            name, separator, version = entry.partition("==")
+            if separator:
+                pinned[name.lower()] = version
+
+        expected = {
+            "cryptography": "39.0.2",
+            "cffi": "1.15.1",
+            "pycparser": "2.21",
+        }
+        mismatches = [
+            "%s==%s (found %s)" % (name, version, pinned.get(name))
+            for name, version in expected.items()
+            if pinned.get(name) != version
+        ]
+        self.assertEqual(
+            mismatches,
+            [],
+            "pytest image requirements must preserve target-compatible pins:\n" +
+            "\n".join(mismatches),
+        )
+
+    def test_provider_tests_avoid_python37_incompatible_ast_and_mock_call_attributes(self):
+        targets = (
+            "tests/unit/test_resource_glue_contract.py",
+            "tests/unit/test_fresh_profile_issuance.py",
+            "tests/unit/test_token_issuer_security.py",
+            "tests/unit/test_standalone_package.py",
+        )
+        issues = []
+        for relative in targets:
+            tree = ast.parse(self.source(relative))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Attribute)
+                        and isinstance(node.value, ast.Name)
+                        and node.value.id == "ast"
+                        and node.attr == "Constant"):
+                    issues.append("%s: ast.Constant" % relative)
+                if (isinstance(node, ast.Attribute)
+                        and node.attr in ("args", "kwargs")
+                        and isinstance(node.value, ast.Attribute)
+                        and node.value.attr == "call_args"):
+                    issues.append("%s: call_args.%s" % (relative, node.attr))
+
+        self.assertEqual(
+            issues,
+            [],
+            "Python 3.7.3-incompatible test APIs found:\n" + "\n".join(issues),
+        )
+
     def source(self, relative):
         path = ADDON / relative
         self.assertTrue(path.is_file(), "Missing candidate file: " + relative)

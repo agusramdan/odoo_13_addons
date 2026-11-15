@@ -31,15 +31,68 @@ class ResourceGlueContract(unittest.TestCase):
         )
         self.assertNotIn('mock.patch("amr_oidc.models.token_helper.time.time",', source)
 
-    def test_glue_issuance_is_not_cached_across_signing_configuration_changes(self):
+    def test_legacy_cache_key_is_scoped_and_guarded_by_live_validation(self):
         tree = ast.parse((GLUE / "models/res_users.py").read_text())
+        cache_method = next(node for node in ast.walk(tree)
+                            if isinstance(node, ast.FunctionDef)
+                            and node.name == "_get_access_token_cached")
+        cache_decorators = [node for node in cache_method.decorator_list
+                            if isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "ormcache"]
+        self.assertEqual(len(cache_decorators), 1)
+        string_literal_types = tuple(
+            ast_type for ast_type in (
+                getattr(ast, "Constant", None), getattr(ast, "Str", None)
+            ) if ast_type is not None
+        )
+
+        def string_literal_value(node):
+            if hasattr(node, "value"):
+                return node.value
+            return getattr(node, "s", None)
+
+        cache_dimensions = {
+            string_literal_value(node) for node in cache_decorators[0].args
+            if isinstance(node, string_literal_types)
+            and isinstance(string_literal_value(node), str)
+        }
+        self.assertTrue({
+            "uid", "actor_uid", "audience_key", "dbname", "registry_id",
+            "bucket", "config_revision", "policy_revision",
+        } <= cache_dimensions)
+        self.assertFalse(any(
+            value in cache_dimensions for value in
+            ("secret", "private_key", "signing_material")
+        ))
+
+        wrapper = next(node for node in ast.walk(tree)
+                       if isinstance(node, ast.FunctionDef)
+                       and node.name == "_get_access_token")
+        calls = [node.func.attr for node in sorted(
+            ast.walk(wrapper), key=lambda item: getattr(item, "lineno", -1))
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)]
+        self.assertLess(calls.index("_legacy_cache_context"),
+                        calls.index("_get_access_token_cached"))
+        context = next(node for node in ast.walk(tree)
+                       if isinstance(node, ast.FunctionDef)
+                       and node.name == "_legacy_cache_context")
+        context_calls = {node.func.attr for node in ast.walk(context)
+                         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+        self.assertIn("_check_token_issuance_access", context_calls)
+        self.assertIn("get_expires_in", context_calls)
+
+    def test_fresh_client_token_issuer_remains_uncached(self):
+        tree = ast.parse((PROVIDER / "models/token_helper.py").read_text())
         method = next(node for node in ast.walk(tree)
                       if isinstance(node, ast.FunctionDef)
-                      and node.name == "_get_access_token")
-        self.assertFalse(any(isinstance(node, ast.Call)
-                             and isinstance(node.func, ast.Name)
-                             and node.func.id == "ormcache"
-                             for node in method.decorator_list))
+                      and node.name == "_issue_fresh_client_token")
+        self.assertFalse(any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "ormcache"
+            for node in method.decorator_list
+        ))
 
     def test_missing_secret_fixture_clears_secret_before_negative_assertion(self):
         source = (PROVIDER / "tests/integration/test_provider_selected_uat.py").read_text()
@@ -68,7 +121,7 @@ class ResourceGlueContract(unittest.TestCase):
                 "test_helper_invalid_resource_values_rejected_before_signing"):
             self.assertNotIn(test_name, glue_source)
 
-    def test_glue_reads_current_signing_key_and_ttl_for_each_issuance(self):
+    def test_incomplete_helper_double_bypasses_cache_and_preserves_rotation(self):
         import importlib.util
         support_path = PROVIDER / "tests/support.py"
         spec = importlib.util.spec_from_file_location("resource_glue_cache_support", support_path)

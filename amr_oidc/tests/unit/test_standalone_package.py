@@ -510,7 +510,7 @@ class StandalonePackageTests(unittest.TestCase):
 
         helper._generate_user_token.assert_called_once()
         self.assertEqual(helper._generate_user_token.call_args[1]["audience"], "resource-a")
-        self.assertNotIn("resource", helper._generate_user_token.call_args.kwargs)
+        self.assertNotIn("resource", helper._generate_user_token.call_args[1])
 
     def test_res_users_url_audiences_derive_and_issue_distinct_tokens(self):
         import importlib.util

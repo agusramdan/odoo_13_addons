@@ -404,7 +404,7 @@ class FreshProfileTokenHelperTests(unittest.TestCase):
 
         self.assertEqual(result, {"access_token": "signed-jwt", "token_type": "Bearer",
                                   "expires_in": 900})
-        claims, provenance = signed.call_args.args
+        claims, provenance = signed.call_args[0]
         self.assertEqual(claims["iss"], "https://issuer.invalid")
         self.assertEqual(claims["aud"], "service-a")
         self.assertEqual(claims["sub"], "a" * 64)
@@ -434,7 +434,7 @@ class FreshProfileTokenHelperTests(unittest.TestCase):
         signed.assert_not_called()
         result = self.helper._issue_fresh_client_token("machine-a", "secret", "", 60)
         self.assertEqual(result["expires_in"], 60)
-        claims = signed.call_args.args[0]
+        claims = signed.call_args[0][0]
         self.assertEqual(claims["exp"] - claims["iat"], 60)
 
     def test_bad_client_credential_stops_before_mapping_or_signer(self):
