@@ -6,7 +6,6 @@ COPY amr_resource/ /opt/odoo/addons/amr_resource/
 COPY amr_sentry/ /opt/odoo/addons/amr_sentry/
 COPY amr_service_client/ /opt/odoo/addons/amr_service_client/
 COPY amr_service_client_profile/ /opt/odoo/addons/amr_service_client_profile/
-COPY amr_oidc_resource/ /opt/odoo/addons/amr_oidc_resource/
 COPY amr_cron_monitor/ /opt/odoo/addons/amr_cron_monitor/
 COPY amr_data_sync/ /opt/odoo/addons/amr_data_sync/
 COPY amr_data_sync_event/ /opt/odoo/addons/amr_data_sync_event/
