@@ -1,0 +1,19 @@
+# UAT runner scaffold only; runtime is deliberately pinned and checked.
+# Repository sources and dependency resolution are deliberately not copied or run here.
+FROM odoo:13.0@sha256:487514270bff6f4a37cfb7532a2f513cfca7ea4ce996f628c6d9edd4502be2a6
+
+COPY requirements.txt /tmp/addons-requirements.txt
+
+COPY . /etc/odoo/addons/
+
+ARG UAT_DEPENDENCY_SET
+LABEL org.opencontainers.image.description="Isolated, parameterized UAT runner scaffold" \
+      org.example.uat.dependency-set="${UAT_DEPENDENCY_SET}"
+
+WORKDIR /workspace
+
+
+# No default test command: each task must provide its explicitly authorized
+# bounded command through the UAT profile. Compose keeps this image dormant by
+# default and supplies no implicit database, credentials, or network access.
+CMD ["/bin/sh", "-c", "echo 'UAT command not configured; provide task-approved command.' >&2; exit 64"]

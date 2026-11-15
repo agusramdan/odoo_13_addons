@@ -62,6 +62,7 @@ class FakeEnv(dict):
             email="actor-%s@example.invalid" % uid,
             has_group=lambda group: system and group == "base.group_system")
         self.cr = SimpleNamespace(dbname="unit-db")
+        self.registry = object()
         self["amr.oidc.helper"] = SimpleNamespace(
             _validate_audience=self._validate_audience)
 
@@ -150,9 +151,9 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         self.assertIn("_get_secret", methods)
         self.assertIn("_create_refresh_token", methods)
 
-    def test_res_users_rejects_other_user_without_system_group_before_cache(self):
+    def test_res_users_rejects_other_user_without_system_group_before_signing(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         record = module.ResUsers()
         record.id = 29
         record.ensure_one = lambda: None
@@ -165,9 +166,9 @@ class TokenIssuerSecurityTests(unittest.TestCase):
 
         cached.assert_not_called()
 
-    def test_res_users_allows_self_and_system_user_before_cache(self):
+    def test_res_users_allows_self_and_system_user_to_issue_tokens(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         for actor_uid, target_uid, is_system in ((29, 29, False), (7, 29, True)):
             with self.subTest(actor_uid=actor_uid, is_system=is_system):
                 record = module.ResUsers()
@@ -179,11 +180,11 @@ class TokenIssuerSecurityTests(unittest.TestCase):
                 with mock.patch("time.time", return_value=900):
                     self.assertEqual(record.get_access_token(audience="client-audience"),
                                      "opaque-token")
-                cached.assert_called_once_with(target_uid, "client-audience", 3)
+                cached.assert_called_once_with(target_uid, "client-audience")
 
-    def test_res_users_access_token_path_browses_target_and_delegates_audience_bucket(self):
+    def test_res_users_access_token_path_browses_target_and_delegates_legacy_two_argument_contract(self):
         support = _load_support()
-        record = support.load("models/res_users.py").ResUsers()
+        record = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource").ResUsers()
         target = FakeUser(29)
         record.id = 29
         record.ensure_one = lambda: None
@@ -203,10 +204,61 @@ class TokenIssuerSecurityTests(unittest.TestCase):
         record.browse.assert_called_once_with(29)
         helper._generate_user_token.assert_called_once_with(
             target, audience="client-audience")
+        self.assertNotIn("expires_in", helper._generate_user_token.call_args[1])
+
+    def test_glue_preserves_legacy_missing_ttl_default_end_to_end(self):
+        support = _load_support()
+        glue = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
+        helper_module = _load_module(support, "models/token_helper.py")
+        record = glue.ResUsers()
+        record.id = 29
+        record.ensure_one = lambda: None
+        record.is_user_allow_create_token = lambda: True
+        record.env = FakeEnv(uid=29)
+        target = FakeUser(29)
+        record.browse = lambda uid: target
+
+        helper = helper_module.TokenHelper()
+        helper.env = FakeEnv(uid=29)
+        config_values = {
+            "amr_token.signature_type": "secret",
+            "amr_token.secret_algorithm": "HS256",
+            "amr_token.secret": "synthetic-legacy-fixture-secret",
+            "web.base.url": "https://legacy-fixture.invalid",
+            "database.uuid": "legacy-fixture-database-audience",
+        }
+        params = SimpleNamespace(sudo=lambda: params)
+        params.get_param = lambda key, default=None: config_values.get(key, default)
+
+        def search_read(domain, fields):
+            requested = next(
+                clause[2] for clause in domain
+                if clause[0] == "key" and clause[1] == "in")
+            return [
+                {"id": index, "key": key, "value": config_values[key],
+                 "write_date": "synthetic-write-date"}
+                for index, key in enumerate(sorted(requested), 1)
+                if key in config_values
+            ]
+
+        params.search_read = search_read
+        record.env["ir.config_parameter"] = params
+        helper.env["ir.config_parameter"] = params
+        signer = mock.Mock(return_value=("legacy-token", {"exp": 87400}, 86400))
+        helper._generate_token = signer
+        record.env["amr.oidc.helper"] = helper
+
+        result = record.get_access_token(audience="legacy-audience")
+
+        self.assertEqual(result, "legacy-token")
+        signer.assert_called_once_with(
+            {"uid": 29, "user_id": "target-user", "sub": "target-user",
+             "email": "", "db": "unit-db"},
+            audience="legacy-audience", expires_in=86400, scope="")
 
     def test_res_users_create_access_token_fails_without_signing_or_storage(self):
         support = _load_support()
-        module = support.load("models/res_users.py")
+        module = support.load("models/res_users.py", addon=ADDON.parent / "amr_oidc_resource")
         record = module.ResUsers()
         helper = mock.Mock()
         helper._generate_user_token.return_value = ("target-token", {}, 60)
@@ -354,6 +406,125 @@ class TokenIssuerSecurityTests(unittest.TestCase):
                 self.assertEqual(method(FakeUser(target_uid)), "opaque-token")
                 record.create.assert_called_once()
                 module.jwt.encode.assert_called_once()
+
+    def test_fresh_issuer_preserves_subject_across_rename_and_distinguishes_users(self):
+        support = _load_support()
+        module = _load_module(support, "models/token_helper.py")
+        helper = module.TokenHelper()
+        issuer = "https://issuer.invalid"
+
+        def make_user(user_id, name, login, email):
+            return SimpleNamespace(
+                id=user_id, active=True, share=False, name=name, login=login,
+                email=email, has_group=lambda group: False)
+
+        first_user = make_user(29, "Before", "before-29", "before-29@example.invalid")
+        second_user = make_user(30, "Other", "other-30", "other-30@example.invalid")
+
+        class GrantList(list):
+            def filtered(self, predicate):
+                return GrantList(item for item in self if predicate(item))
+
+        class ClientSet(list):
+            def __getattr__(self, name):
+                return getattr(self[0], name)
+
+        client = SimpleNamespace(
+            id=3, client_id="machine-a", name="service-a", active=True,
+            is_confidential=True, authentication_method="client_secret",
+            user_id=first_user,
+            allowed_grants=GrantList([SimpleNamespace(code="client_credentials")]),
+            check_credentials=mock.Mock(return_value=True))
+
+        class ClientModel(object):
+            def sudo(self):
+                return self
+
+            def search(self, domain):
+                return ClientSet([client])
+
+        class SubjectMapper(object):
+            def __init__(self):
+                self.calls = []
+
+            def _get_or_create_subject(self, namespace, user_id):
+                self.calls.append((namespace, user_id))
+                return {29: "a" * 64, 30: "b" * 64}[user_id]
+
+        mapper = SubjectMapper()
+        helper.env = FakeEnv(uid=7)
+        helper.env["oidc.client"] = ClientModel()
+        helper.env["oidc.issuer.principal.subject"] = mapper
+        helper._get_fresh_profile_issuer = mock.Mock(return_value=issuer)
+        helper._require_fresh_profile_instance = mock.Mock()
+        helper._get_fresh_profile_ttl = mock.Mock(return_value=900)
+        helper.get_signature_type = mock.Mock(return_value="public_key")
+        helper.get_signature_algorithm = mock.Mock(return_value="RS256")
+        signed = mock.Mock(side_effect=("token-one", "token-two", "token-three"))
+        helper._sign_fresh_profile_token = signed
+
+        helper._issue_fresh_client_token("machine-a", "synthetic-secret", "")
+        first_user.name = "Renamed"
+        first_user.login = "renamed-29"
+        first_user.email = "renamed-29@example.invalid"
+        helper._issue_fresh_client_token("machine-a", "synthetic-secret", "")
+        client.user_id = second_user
+        helper._issue_fresh_client_token("machine-a", "synthetic-secret", "")
+
+        payloads = [call[0][0] for call in signed.call_args_list]
+        subjects = [payload["sub"] for payload in payloads]
+        for subject in subjects:
+            self.assertRegex(subject, r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(subjects[0], subjects[1])
+        self.assertNotEqual(subjects[0], subjects[2])
+        for payload in payloads:
+            self.assertFalse({"uid", "user_id", "login", "email", "db"}.intersection(payload))
+        self.assertEqual(mapper.calls, [(issuer, 29), (issuer, 29), (issuer, 30)])
+
+    def test_fresh_client_route_rejects_caller_subject_before_issuance(self):
+        support = _load_support()
+        module = support.load_controller()
+        controller = module.ControllerOIDC()
+        helper = mock.Mock()
+        helper._fresh_profile_is_enabled.return_value = True
+        helper._issue_fresh_client_token.return_value = {
+            "access_token": "synthetic-access-token",
+            "token_type": "Bearer",
+            "expires_in": 900,
+        }
+        module.request.env = {"amr.oidc.helper": helper}
+
+        class Form(dict):
+            def getlist(self, key):
+                if key not in self:
+                    return []
+                value = self[key]
+                return value if isinstance(value, list) else [value]
+
+        class Headers(dict):
+            def getlist(self, key):
+                return [self[key]] if key in self else []
+
+        module.request.httprequest = SimpleNamespace(
+            form=Form({
+                "grant_type": "client_credentials",
+                "scope": "",
+                "sub": "caller-chosen-subject",
+            }),
+            args={}, is_secure=True,
+            headers=Headers({
+                "Authorization": "Basic bWFjaGluZS1hOnN5bnRoZXRpYy1zZWNyZXQ="}),
+        )
+
+        response = controller.api_oidc_token()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(module.json.loads(response.data), {"error": "invalid_request"})
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        self.assertEqual(response.headers.get("Pragma"), "no-cache")
+        self.assertNotIn("caller-chosen-subject", response.data.decode("utf-8"))
+        helper._fresh_profile_is_enabled.assert_called_once_with()
+        helper._issue_fresh_client_token.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -10,3 +10,4 @@ from . import oidc_authorization_code
 from . import oidc_jwt_replay
 from . import res_config_settings
 from . import res_users
+from . import oidc_issuer_principal_subject

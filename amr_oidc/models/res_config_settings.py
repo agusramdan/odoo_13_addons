@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from odoo import api, fields, models
+from odoo.exceptions import AccessError, UserError
 
 
 class ResConfigSettings(models.TransientModel):
@@ -59,6 +60,59 @@ class ResConfigSettings(models.TransientModel):
         config_parameter="amr_token.expires_in",
     )
     amr_token_audience = fields.Char("Audience", config_parameter="database.uuid")
+    amr_token_fresh_profile_issuer = fields.Char(
+        "Fresh Issuer Profile", config_parameter="amr_token.fresh_profile_issuer",
+        groups="base.group_system",
+    )
+
+    def _validate_fresh_profile_settings(self, values):
+        # sudo: read only the opt-in flag before enforcing scoped settings rules.
+        configured = self.env['ir.config_parameter'].sudo().get_param(
+            'amr_token.fresh_profile_issuer')
+        selected = values.get('amr_token_fresh_profile_issuer', configured)
+        if (configured or selected) and not self.env.user.has_group('base.group_system'):
+            raise AccessError('Only a system administrator may change fresh-profile settings.')
+        if not selected or 'amr_token_expires_in' not in values:
+            return
+        ttl = values['amr_token_expires_in']
+        canonical = (type(ttl) is int or
+                     isinstance(ttl, str) and ttl.isascii() and ttl.isdecimal()
+                     and len(ttl) <= 5 and str(int(ttl)) == ttl)
+        if not canonical or not 60 <= int(ttl) <= 86400:
+            raise UserError('Fresh-profile lifetime must be canonical seconds between 60 and 86400.')
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for values in vals_list:
+            self._validate_fresh_profile_settings(values)
+        return super(ResConfigSettings, self).create(vals_list)
+
+    def write(self, values):
+        self._validate_fresh_profile_settings(values)
+        return super(ResConfigSettings, self).write(values)
+
+    def set_values(self):
+        for record in self:
+            # sudo: inspect the opt-in profile flag before guarding settings writes.
+            profile_issuer = record.env['ir.config_parameter'].sudo().get_param(
+                'amr_token.fresh_profile_issuer')
+            is_system = record.env.user.has_group('base.group_system')
+            if profile_issuer and not is_system:
+                raise AccessError('Only a system administrator may change fresh-profile settings.')
+            if not is_system:
+                continue
+            if record.amr_token_fresh_profile_issuer:
+                helper = record.env['amr.oidc.helper']
+                if record.amr_token_fresh_profile_issuer != helper.get_issuer():
+                    raise UserError('Fresh issuer must exactly match the configured canonical issuer.')
+                ttl = record.amr_token_expires_in
+                if type(ttl) is not int or not 60 <= ttl <= 86400:
+                    raise UserError('Fresh-profile lifetime must be between 60 and 86400 seconds.')
+                if profile_issuer:
+                    helper._require_fresh_profile_instance()
+                else:
+                    helper._bind_fresh_profile_instance()
+        return super(ResConfigSettings, self).set_values()
 
     @api.depends("amr_token_algorithm")
     def _compute_amr_token_using_secret(self):

@@ -1,0 +1,7 @@
+from odoo.tests.common import TransactionCase
+
+class TestYourAddonIntegration(TransactionCase):
+    def test_business_flow(self):
+        # Replace with your addon model, required fields, actions and assertions.
+        record = self.env['your.model'].create({'name': 'Example'})
+        self.assertTrue(record.id)
