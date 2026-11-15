@@ -125,8 +125,12 @@ class MigrationUnitTests(unittest.TestCase):
                 for alias in node.names
             }
 
-        root_imports = imported_names(test_root / '__init__.py')
-        self.assertEqual(root_imports, {'integration'})
+        root_tree = ast.parse((test_root / '__init__.py').read_text())
+        expected_root = ast.parse(
+            'from .integration import test_helper, test_contracts, test_registry')
+        self.assertEqual(ast.dump(root_tree), ast.dump(expected_root))
+        root_imports = {alias.name for node in root_tree.body
+                        if isinstance(node, ast.ImportFrom) for alias in node.names}
         integration_imports = imported_names(test_root / 'integration' / '__init__.py')
         self.assertEqual(integration_imports, {'test_helper', 'test_contracts', 'test_registry'})
         self.assertNotIn('test_security_unit', root_imports | integration_imports)

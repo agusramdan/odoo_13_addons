@@ -1,1 +1,1 @@
-from . import integration
+from .integration import test_helper, test_contracts, test_registry

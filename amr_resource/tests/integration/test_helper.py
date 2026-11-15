@@ -1,9 +1,10 @@
 """UT-01..UT-07: existing behavior, not security acceptance.
 
 Run only in a disposable Odoo 13 database. All token-like inputs are synthetic;
-network and the production helper logger are blocked before each test.
+network is blocked and logging calls are observed without suppressing them.
 """
 import base64
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -22,7 +23,8 @@ from ...models import helper as helper_module
 class ResourceCase(SavepointCase):
     def setUp(self):
         super().setUp()
-        log_guard = patch("logging.Logger._log")
+        log_guard = patch("logging.Logger._log", autospec=True,
+                          side_effect=logging.Logger._log)
         self.logger = log_guard.start()
         self.addCleanup(log_guard.stop)
         self.token = 'synthetic-invalid-access-token'
@@ -442,6 +444,7 @@ class TestResourceHelper(ResourceCase):
         claims = dict(iss=self.profile.issuer, sub='subject-a', client_id='client-a', aud='resource-a',
                       exp=int(time.time())+300, iat=int(time.time())-1, jti='synthetic-id')
         token = jwt.encode(claims, key, algorithm='RS256', headers={'typ': 'at+jwt'})
+        self.logger.reset_mock()
         with patch.object(helper_module, 'fetch_json') as fetch:
             result = self.helper.validate(token)
             self.assertTrue(self.helper._verified(result))
@@ -469,11 +472,13 @@ class TestResourceHelper(ResourceCase):
                     self.helper.validate(token)
         jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
         jwk.update(kid='synthetic-key', alg='RS256', use='sig')
+        self.assertFalse(self.logger.called)
         self.profile.write({'local_key_ref': False, 'jwks_uri': 'https://keys.invalid/jwks',
                             'verification_source': 'jwks', 'metadata_mode': 'manual',
                             'introspection_source': 'none'})
         remote_token = jwt.encode(claims, key, algorithm='RS256',
                                   headers={'typ': 'at+jwt', 'kid': 'synthetic-key'})
+        self.logger.reset_mock()
         with patch.object(helper_module, 'fetch_json', return_value={'keys': [jwk]}) as fetch, \
                 patch.object(jwt, 'decode', wraps=jwt.decode) as decode:
             remote_result = self.helper.validate(remote_token)
