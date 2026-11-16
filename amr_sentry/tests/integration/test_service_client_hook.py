@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import Mock, patch
 
 from odoo.addons.amr_service_client.models import service_client as core_service_client
@@ -28,6 +29,31 @@ class TestServiceClientHook(TransactionCase):
     def _service_client(self, credential=None):
         return self.client.get_service_client(
             self.endpoint, credential=credential or self.credential, method='POST')
+
+    def test_uncommitted_fixture_is_invisible_to_fresh_cursor_and_rolls_back(self):
+        key = 'addons13_72.rollback.%s' % uuid.uuid4().hex
+
+        def fresh_count():
+            with self.env.registry.cursor() as cr:
+                cr.execute(
+                    'SELECT COUNT(*) FROM ir_config_parameter WHERE key = %s', (key,))
+                return cr.fetchone()[0]
+
+        baseline = fresh_count()
+        self.assertEqual(baseline, 0)
+
+        class RollbackFixture(Exception):
+            pass
+
+        with self.assertRaises(RollbackFixture):
+            with self.env.cr.savepoint():
+                self.env['ir.config_parameter'].create({'key': key, 'value': 'synthetic'})
+                self.assertEqual(self.env['ir.config_parameter'].search_count([('key', '=', key)]), 1)
+                self.assertEqual(fresh_count(), baseline)
+                raise RollbackFixture()
+
+        self.assertEqual(self.env['ir.config_parameter'].search_count([('key', '=', key)]), 0)
+        self.assertEqual(fresh_count(), baseline)
 
     def test_explicit_client_and_exception_are_forwarded(self):
         error = ValueError('synthetic error')
@@ -313,11 +339,15 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         log_model = self.env['service.client.log']
         original_create_log = type(log_model)._create_log
+        done_writer_calls = []
 
         def fail_done_writer(records, state, *args, **kwargs):
+            done_writer_calls.append(state)
             if state == 'done':
                 raise writer_error
             return original_create_log(records, state, *args, **kwargs)
+
+        error_writer = Mock(wraps=log_model._create_error)
 
         sender = core_service_client.ServiceClientSend(
             self._service_client(), {'value': 'synthetic'}, active_log=True)
@@ -328,10 +358,13 @@ class TestServiceClientHook(TransactionCase):
                 patch.object(core_service_client.requests, 'request',
                              return_value=response), \
                 patch.object(type(log_model), '_create_log', new=fail_done_writer), \
+                patch.object(type(log_model), '_create_error', new=error_writer), \
                 mute_logger(core_service_client._logger.name):
             result = sender.dispatch_send()
 
         self.assertIsNone(result)
+        self.assertEqual(done_writer_calls, ['done'])
+        error_writer.assert_called_once()
         reporter.report.assert_called_once_with(
             success=True, service_client=self.client, exception=None)
         rows = log_model.search([
@@ -359,12 +392,13 @@ class TestServiceClientHook(TransactionCase):
         with patch.object(sentry_hook, 'REPORTER', reporter), \
                 patch.object(core_service_client.requests, 'request',
                              return_value=response), \
-                patch.object(type(log_model), '_create_error', side_effect=writer_error), \
+                patch.object(type(log_model), '_create_error', side_effect=writer_error) as error_writer, \
                 mute_logger(core_service_client._logger.name):
             with self.assertRaises(RuntimeError) as caught:
                 sender.dispatch_send()
 
         self.assertIs(caught.exception, writer_error)
+        error_writer.assert_called_once()
         reporter.report.assert_called_once_with(
             success=False, service_client=self.client, exception=error)
         self.assertEqual(log_model.search([
