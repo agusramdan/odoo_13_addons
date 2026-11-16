@@ -144,7 +144,7 @@ class SentryPackagingContractTest(unittest.TestCase):
     def test_core_packaging_no_longer_declares_sentry_dependencies(self):
         manifest = self._read_manifest("amr_service_client/__manifest__.py")
         service_requirements = self._read_contract_file("amr_service_client/requirements.txt")
-        root_requirements = self._read_contract_file("requirement.txt")
+        root_requirements = self._read_contract_file("requirements.txt")
         core_python_dependencies = manifest.get("external_dependencies", {}).get("python", [])
         self.assertNotIn("sentry_sdk", core_python_dependencies)
         self.assertNotIn("sentry-sdk", service_requirements)

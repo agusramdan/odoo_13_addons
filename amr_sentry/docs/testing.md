@@ -66,3 +66,27 @@ full UAT behavior. Use the separate Odoo integration suite for those gates.
 Odoo discovers ORM tests via each addon's `tests/__init__.py`. Run Odoo 13 with
 `--test-enable --test-tags=/amr_sentry` in a disposable database to exercise
 the Sentry hook integration test.
+
+## Reviewed AC component runner
+
+Run an eligible component AC from the repository root in the pinned offline
+image (preserving its installed pytest path):
+
+```sh
+docker run --rm --network none --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  -v "$PWD:/workspace:ro" -w /workspace \
+  -e PYTHONPATH=/opt/pytest-packages:/workspace/tests/addons13_27:/workspace/amr_sentry/tests:/workspace/amr_service_client/tests:/workspace \
+  --entrypoint python3 addons13-72-pytest-step2:3cc0d4f19776 \
+  -B /workspace/amr_sentry/tests/unit/ac_test_runner.py AC02
+```
+
+The only CLI argument is an AC identifier. Before pytest collection the runner
+installs the project isolation guards and roots pytest at the selected addon
+unit directory (the sibling unit directory for AC01), avoiding native addon
+package imports. The reviewed selector tuple is immutable, and PASS requires
+exact live node-id collection plus one pytest call report per selected item
+with no skip, xfail, xpass, failure or error.
+AC01 runs its two sibling bridge cases read-only. AC05 and AC12 are intentionally
+NOT RUN; this component gate is not native Odoo, ORM/DB, telemetry, monitoring,
+restore, or UAT evidence.

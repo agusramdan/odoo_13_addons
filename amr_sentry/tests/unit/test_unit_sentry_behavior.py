@@ -60,6 +60,32 @@ class SentryReporting(unittest.TestCase):
         best_effort.report(success=True)
         best_effort.report(success=False, exception=RuntimeError('transport'))
 
+    def test_error_writer_delegates_to_shared_log_writer_once(self):
+        path = ROOT / 'amr_service_client/models/service_client_log.py'
+        writer_calls = []
+        writer_error = RuntimeError('done writer failure')
+
+        class Log:
+            def sudo(self):
+                return self
+
+            def format_error(self, exception, extra_params=None):
+                return str(exception)
+
+            def _create_log(self, state, **kwargs):
+                writer_calls.append(state)
+                if state == 'done':
+                    raise writer_error
+
+        create_error = extracted_method(path, 'ServiceClientLog', '_create_error', {})
+        log = Log()
+        try:
+            log._create_log('done')
+        except RuntimeError:
+            create_error(log, writer_error)
+
+        self.assertEqual(writer_calls, ['done', 'error'])
+
     def test_real_log_send_reports_http_failure_and_preserves_logged_error(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
         events = []
@@ -261,11 +287,12 @@ class SentryReporting(unittest.TestCase):
             events = []
             hook_calls = []
             log_calls = []
+            error = RuntimeError('http 503') if status >= 400 else None
             class Response:
                 status_code = status
                 text = 'PRIVATE_RESPONSE_BODY_MARKER'
                 def raise_for_status(self):
-                    if status >= 400: raise RuntimeError('http 503')
+                    if error is not None: raise error
             response = Response()
             class Client:
                 def prepare_request_context(self, **kwargs):
@@ -290,7 +317,7 @@ class SentryReporting(unittest.TestCase):
                 continue
             self.assertEqual(len(hook_calls), 1)
             self.assertEqual(hook_calls[0][0], response)
-            self.assertIsNone(hook_calls[0][1] if status == 200 else None)
+            self.assertIs(hook_calls[0][1], error)
             if status == 503:
                 self.assertIsInstance(hook_calls[0][1], RuntimeError)
                 self.assertEqual(str(hook_calls[0][1]), 'http 503')
@@ -378,6 +405,39 @@ class SentryReporting(unittest.TestCase):
                     else:
                         self.assertIs(kwargs['request_context'], context)
 
+    def test_n3_http_error_raises_original_once_without_response_keyword(self):
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        original = RuntimeError('synthetic-http')
+        requests_made, reports = [], []
+
+        class Response:
+            def raise_for_status(self):
+                raise original
+
+        response = Response()
+
+        def request(**kwargs):
+            requests_made.append(kwargs)
+            return response
+
+        class Client:
+            def prepare_request_context(self, *args, **kwargs):
+                return {'method': 'POST'}
+
+            def _report_sentry(self, **kwargs):
+                reports.append(kwargs)
+
+        call = extracted_method(path, 'ServiceClient', 'call', {
+            'requests': types.SimpleNamespace(request=request)})
+        with self.assertRaises(RuntimeError) as caught:
+            call(Client(), method='POST', raise_exception=True)
+
+        self.assertIs(caught.exception, original)
+        self.assertEqual(len(requests_made), 1)
+        self.assertEqual(len(reports), 1)
+        self.assertIs(reports[0]['exception'], original)
+        self.assertNotIn('response', reports[0])
+
     def test_dispatch_success_without_active_log_reports_one_outcome(self):
         # ADDONS13-68 addendum L2: one successful request and eligible success
         # hook, with no success log when active_log is False. Component only.
@@ -440,6 +500,37 @@ class SentryReporting(unittest.TestCase):
         self.assertNotIn('response_text', logs[1][1])
         self.assertEqual(reports, [(response, None, 'POST')])
 
+    def test_dispatch_error_writer_failure_propagates_without_second_failure_report(self):
+        error = RuntimeError('synthetic request failure')
+        writer_error = RuntimeError('synthetic error writer failure')
+        reports = []
+
+        class Client:
+            def prepare_request_context(self, **kwargs):
+                raise error
+            def _report_sentry(self, response=None, exception=None, method=None):
+                reports.append((response, exception, method))
+
+        class Log:
+            def _create_error(self, exception, **kwargs):
+                raise writer_error
+
+        sender = types.SimpleNamespace(
+            active_log=False, payload={}, service_client=Client(),
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': Log()})
+        dispatch = extracted_method(
+            ROOT / 'amr_service_client/models/service_client.py',
+            'ServiceClientSend', 'dispatch_send', {
+                'requests': types.SimpleNamespace(request=lambda **kwargs: None),
+                '_logger': types.SimpleNamespace(exception=lambda *a: None)})
+
+        with self.assertRaises(RuntimeError) as caught:
+            dispatch(sender)
+
+        self.assertIs(caught.exception, writer_error)
+        self.assertEqual(reports, [(None, error, None)])
+
     def test_create_log_accepts_service_client_integer_id(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
         class AbstractModel: pass
@@ -457,7 +548,8 @@ class SentryReporting(unittest.TestCase):
         self.assertEqual(row['client_id'], 42)
         self.assertEqual(row['endpoint_id'], 7)
         self.assertEqual(row['state'], 'done')
-        self.assertEqual(row['response'], 'ok')
+        self.assertIsNone(row['request_context'])
+        self.assertIsNone(row['response'])
 
     def test_real_log_send_reports_success(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
