@@ -261,11 +261,12 @@ class SentryReporting(unittest.TestCase):
             events = []
             hook_calls = []
             log_calls = []
+            error = RuntimeError('http 503') if status >= 400 else None
             class Response:
                 status_code = status
                 text = 'PRIVATE_RESPONSE_BODY_MARKER'
                 def raise_for_status(self):
-                    if status >= 400: raise RuntimeError('http 503')
+                    if error is not None: raise error
             response = Response()
             class Client:
                 def prepare_request_context(self, **kwargs):
@@ -290,7 +291,7 @@ class SentryReporting(unittest.TestCase):
                 continue
             self.assertEqual(len(hook_calls), 1)
             self.assertEqual(hook_calls[0][0], response)
-            self.assertIsNone(hook_calls[0][1] if status == 200 else None)
+            self.assertIs(hook_calls[0][1], error)
             if status == 503:
                 self.assertIsInstance(hook_calls[0][1], RuntimeError)
                 self.assertEqual(str(hook_calls[0][1]), 'http 503')
@@ -440,6 +441,37 @@ class SentryReporting(unittest.TestCase):
         self.assertNotIn('response_text', logs[1][1])
         self.assertEqual(reports, [(response, None, 'POST')])
 
+    def test_dispatch_error_writer_failure_propagates_without_second_failure_report(self):
+        error = RuntimeError('synthetic request failure')
+        writer_error = RuntimeError('synthetic error writer failure')
+        reports = []
+
+        class Client:
+            def prepare_request_context(self, **kwargs):
+                raise error
+            def _report_sentry(self, response=None, exception=None, method=None):
+                reports.append((response, exception, method))
+
+        class Log:
+            def _create_error(self, exception, **kwargs):
+                raise writer_error
+
+        sender = types.SimpleNamespace(
+            active_log=False, payload={}, service_client=Client(),
+            client_id=None, endpoint_id=None, credential_id=None,
+            env={'service.client.log': Log()})
+        dispatch = extracted_method(
+            ROOT / 'amr_service_client/models/service_client.py',
+            'ServiceClientSend', 'dispatch_send', {
+                'requests': types.SimpleNamespace(request=lambda **kwargs: None),
+                '_logger': types.SimpleNamespace(exception=lambda *a: None)})
+
+        with self.assertRaises(RuntimeError) as caught:
+            dispatch(sender)
+
+        self.assertIs(caught.exception, writer_error)
+        self.assertEqual(reports, [(None, error, None)])
+
     def test_create_log_accepts_service_client_integer_id(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
         class AbstractModel: pass
@@ -457,7 +489,8 @@ class SentryReporting(unittest.TestCase):
         self.assertEqual(row['client_id'], 42)
         self.assertEqual(row['endpoint_id'], 7)
         self.assertEqual(row['state'], 'done')
-        self.assertEqual(row['response'], 'ok')
+        self.assertIsNone(row['request_context'])
+        self.assertIsNone(row['response'])
 
     def test_real_log_send_reports_success(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'

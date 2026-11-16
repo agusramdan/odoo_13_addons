@@ -34,7 +34,7 @@ class SentryTestLayout(unittest.TestCase):
 
     def test_canonical_unit_files_do_not_import_legacy_adapters(self):
         inventory = {
-            'behavior': {'SentryReporting': 18},
+            'behavior': {'SentryReporting': 19},
             'bootstrap': {'SentryBootstrapContractTest': 3, 'SentryPackagingContractTest': 2},
             'config': {'TestSentryConfig': 4},
             'docs': {'SentryDocs': 6, 'ActivatedOperatorExamples': 1},
