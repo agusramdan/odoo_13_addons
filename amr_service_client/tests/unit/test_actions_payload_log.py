@@ -87,7 +87,7 @@ class ActionSink:
         return self.result
 
 
-class Factory(client_mod.ServiceClientFactory):
+class Factory(client_mod.ServiceClientModel):
     def __init__(self):
         self.env = types.SimpleNamespace(context={}, user=object())
         self.iteration = "response = [{'n': 1}, {'n': 2}]"

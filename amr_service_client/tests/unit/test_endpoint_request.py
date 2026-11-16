@@ -180,7 +180,7 @@ class EndpointRegression(unittest.TestCase):
                 return next((r for r in self.records if r.id == record_id), None)
         first, duplicate = Record('svc', record_id=11), Record('svc', record_id=12)
         model = Model([first, duplicate])
-        factory = production.ServiceClientFactory.__new__(production.ServiceClientFactory)
+        factory = production.ServiceClientModel.__new__(production.ServiceClientModel)
         factory.env = {'service.endpoint': model}
         self.assertIs(factory._get_endpoint('svc'), first)
         self.assertEqual(model.search_calls, [([('code', '=', 'svc'), ('active', '=', True)], 1)])

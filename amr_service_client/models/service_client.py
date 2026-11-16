@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 
 import base64
-import json
 import logging
 import random
 import re
 import requests
-import traceback
 
-from ..services.sentry_reporting import report_outcome, report_sentry
+from ..services.sentry_reporting import report_outcome
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
-from odoo import _, api, fields, models, tools
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
-from odoo.tools import config
 from odoo.fields import Datetime, Date
 from odoo.tools.safe_eval import safe_eval, test_python_expr
 
@@ -27,6 +24,7 @@ DEFAULT_PYTHON_CODE = """# Available variables:
 #  - user: user 
 #  - records : Record
 # To return an response, assign: 
+# url = ger_config_param('')
 # path = ""
 # method = ""
 # audience = ""
@@ -169,12 +167,15 @@ class ServiceClient:
         self.endpoint = endpoint
         self.credential_id = credential
         self.loader = env["service.credential.loader"]
-        self.credential = self.loader.get_credential(credential or endpoint.credential_id)
+        self.credential = self.loader.get_credential(credential or endpoint and endpoint.credential_id)
         self.credential_data = self.loader.load_credential(credential) if self.credential else None
         self.provider = env["service.auth.factory"].create_service_auth(self.credential_data)
         self.path = path
         self.method = method
-        self.active_log = endpoint.active_log
+        if endpoint:
+            self.active_log = endpoint.active_log
+        else:
+            self.active_log = False
         self.service_client = service_client
         self.client_id = client_id or (service_client and service_client.id)
 
@@ -186,14 +187,19 @@ class ServiceClient:
         pass
 
     def prepare_request_context(self, path=None, method=None, params=None, payload=None, headers=None, **kw):
-        url = self.endpoint.get_url(path or self.path)
-        request_context = {
-            "url": url,
-            "headers": self.endpoint.request_headers_default(headers),
-            "params": params,
-            "timeout": self.endpoint.timeout,
-        }
-        audience = kw.get('audience', None) or self.endpoint.audience
+        request_context = {}
+        if params:
+            request_context['params'] = params
+        if self.endpoint:
+            request_context['url'] = kw.get('url') or self.endpoint.get_url(path or self.path)
+            request_context['headers'] = self.endpoint.request_headers_default(headers)
+            request_context["timeout"] = self.endpoint.timeout
+            audience = kw.get('audience', None) or self.endpoint.audience
+        else:
+            request_context['url'] = kw.get('url')
+            request_context['headers'] = headers
+            audience = kw.get('audience', None)
+
         if method:
             request_context['method'] = method
         elif self.method:
@@ -205,14 +211,15 @@ class ServiceClient:
         return self.provider.authenticate(request_context, audience=audience)
 
     def _report_sentry(self, response=None, exception=None, method=None):
-        report_outcome(self.env, service_client=self.service_client, response=response, exception=exception,
-                       method=method)
+        report_outcome(
+            self.env, service_client=self.service_client, response=response, exception=exception, method=method
+        )
 
     def call(self, method=None, path=None, params=None, payload=None, headers=None, raise_exception=True, **kw):
         response = None
         try:
             request_context = self.prepare_request_context(
-                path, method, params=params, payload=payload, headers=headers
+                path, method, params=params, payload=payload, headers=headers, **kw
             )
             response = requests.request(**request_context)
             response.raise_for_status()
@@ -340,7 +347,7 @@ class RemoteObjectProxy:
     __repr__ = __str__
 
 
-class ServiceClientFactory(models.Model):
+class ServiceClientModel(models.Model):
     _name = 'service.client'
     _description = "Service Client"
 
@@ -383,15 +390,16 @@ class ServiceClientFactory(models.Model):
     ref_ir_act_window = fields.Many2one('ir.actions.act_window', 'Sidebar action', readonly=True, copy=False,
                                         help="Sidebar action to make this template available on records "
                                              "of the related document model")
+
     def unlink(self):
         self.unlink_action_window()
-        return super(ServiceClientFactory, self).unlink()
+        return super(ServiceClientModel, self).unlink()
 
     @api.returns('self', lambda value: value.id)
     def copy(self, default=None):
         default = dict(default or {},
                        name=_("%s (copy)") % self.name)
-        return super(ServiceClientFactory, self).copy(default=default)
+        return super(ServiceClientModel, self).copy(default=default)
 
     def unlink_action_window(self):
         for template in self:
@@ -409,7 +417,8 @@ class ServiceClientFactory(models.Model):
                 'name': button_name,
                 'type': 'ir.actions.act_window',
                 'res_model': 'service_client.compose.request',
-                'context': "{'default_composition_mode': 'mass_mail', 'default_service_client_id' : %d, 'default_use_service_client': True}" % (service_client.id),
+                'context': "{'default_composition_mode': 'mass_mail', 'default_service_client_id' : %d, 'default_use_service_client': True}" % (
+                    service_client.id),
                 'view_mode': 'form,tree',
                 'view_id': view.id,
                 'target': 'new',
@@ -427,11 +436,17 @@ class ServiceClientFactory(models.Model):
     @api.model
     def _get_eval_context(self):
         """ evaluation context to pass to safe_eval """
+        def ger_config_param(key, default=False):
+            return self.env['ir.config_parameter'].sudo().get_param(key, default=default)
+
         return {
             'ctx': self.env.context,
             'env': self.env,
             'user': self.env.user,
             'service_client': self,
+            'ger_config_param': ger_config_param,
+            'b64encode': base64.b64encode,
+            'b64decode': base64.b64decode,
         }
 
     @api.constrains('iteration')
@@ -473,14 +488,14 @@ class ServiceClientFactory(models.Model):
         eval_context['records'] = records
         self.run_action_service_client(eval_context=eval_context)
 
-    def prepare_request(self,records,ctx,eval_context):
+    def prepare_request(self, records, ctx, eval_context):
         self.ensure_one()
         eval_context_local = dict(eval_context or {})
         eval_context_local['ctx'] = ctx
         record = eval_context_local.get('record')
         eval_context_local['records'] = records.with_context(ctx)
         if record and record != records:
-                eval_context_local['record'] = record.with_context(ctx)
+            eval_context_local['record'] = record.with_context(ctx)
         eval_context_local['payload'] = self.payload_ids.get_payload(eval_context_local)
         eval_context_local.update(self._run_action_code(eval_context_local))
         return eval_context_local
@@ -502,6 +517,7 @@ class ServiceClientFactory(models.Model):
                 int_ctx = int_ctx or {}
                 ctx.update(int_ctx)
                 eval_context_local = self.prepare_request(records, ctx, eval_context)
+                url = eval_context_local.get('url') or None
                 path = eval_context_local.get('path') or None
                 method = eval_context_local.get('method') or "POST"
                 params = eval_context_local.get('params') or {}
@@ -514,8 +530,10 @@ class ServiceClientFactory(models.Model):
                         "run_action_service_client: calling service client with method=%s, path=%s, params=%s, headers=%s, payload=%s"
                         , method, path, params, headers, payload
                     )
-                    response = client.call(method=method, path=path, params=params, payload=payload, headers=headers,
-                                           raise_exception=raise_exception)
+                    response = client.call(
+                        method=method, path=path, params=params, payload=payload, headers=headers,
+                        raise_exception=raise_exception, url=url
+                    )
                 except Exception as e:
                     # ServiceClient.call already reports request failures; preserve its
                     # exception for the configured handler without reporting it twice.
@@ -562,23 +580,26 @@ class ServiceClientFactory(models.Model):
         else:
             endpoint = code
         if not endpoint:
-            raise ValueError("Service '%s' not found" % code)
+            _logger.warning("Without endpoint %s", self)
+            return self.env["service.endpoint"]
+            # raise ValueError("Service '%s' not found" % code)
         return endpoint
 
     def get_service_client(self, service_code, credential=None, path=None, method=None):
         if self:
             endpoint = self._get_endpoint(service_code or self.endpoint_id)
-            credential = credential or endpoint.credential_id or self.credential_id
+            credential = credential or (endpoint and endpoint.credential_id) or self.credential_id
         else:
             endpoint = self._get_endpoint(service_code)
-            credential = credential or endpoint.credential_id
-
+            credential = credential or (endpoint and endpoint.credential_id)
         client = ServiceClient(self.env, endpoint, credential, service_client=self, path=path, method=method)
         return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
         endpoint = self._get_endpoint(service_code)
         credential = credential or endpoint.credential_id
+        if not endpoint:
+            raise ValueError("Service '%s' not found" % service_code)
         client = ServiceClient(self.env, endpoint, credential, service_client=self)
         return RemoteObjectProxy(client, model_name, **kwargs)
 
