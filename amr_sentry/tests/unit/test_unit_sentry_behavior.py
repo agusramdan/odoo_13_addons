@@ -379,6 +379,39 @@ class SentryReporting(unittest.TestCase):
                     else:
                         self.assertIs(kwargs['request_context'], context)
 
+    def test_n3_http_error_raises_original_once_without_response_keyword(self):
+        path = ROOT / 'amr_service_client/models/service_client.py'
+        original = RuntimeError('synthetic-http')
+        requests_made, reports = [], []
+
+        class Response:
+            def raise_for_status(self):
+                raise original
+
+        response = Response()
+
+        def request(**kwargs):
+            requests_made.append(kwargs)
+            return response
+
+        class Client:
+            def prepare_request_context(self, *args, **kwargs):
+                return {'method': 'POST'}
+
+            def _report_sentry(self, **kwargs):
+                reports.append(kwargs)
+
+        call = extracted_method(path, 'ServiceClient', 'call', {
+            'requests': types.SimpleNamespace(request=request)})
+        with self.assertRaises(RuntimeError) as caught:
+            call(Client(), method='POST', raise_exception=True)
+
+        self.assertIs(caught.exception, original)
+        self.assertEqual(len(requests_made), 1)
+        self.assertEqual(len(reports), 1)
+        self.assertIs(reports[0]['exception'], original)
+        self.assertNotIn('response', reports[0])
+
     def test_dispatch_success_without_active_log_reports_one_outcome(self):
         # ADDONS13-68 addendum L2: one successful request and eligible success
         # hook, with no success log when active_log is False. Component only.
