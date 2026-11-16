@@ -106,7 +106,7 @@ class TestServiceClientHook(TransactionCase):
             ('client_id', '=', self.client.id),
         ]).ids
         sender = core_service_client.ServiceClientSend(
-            self._service_client(), payload, active_log=True)
+            self._service_client(), payload, active_log=True, endpoint_id=self.endpoint)
 
         with patch.object(sentry_hook, 'REPORTER', reporter), \
                 patch.object(core_service_client.requests, 'request',
@@ -133,14 +133,22 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=False)
+            dispatch_client, {'value': 'synthetic'}, active_log=False, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
+        hook_calls = []
+        original_hook = getattr(type(dispatch_client), '_report_sentry')
+
+        def report_sentry_spy(records, *args, **kwargs):
+            hook_calls.append(kwargs)
+            return original_hook(records, *args, **kwargs)
 
         with patch.object(sentry_hook, 'REPORTER', reporter), \
                 patch.object(core_service_client.requests, 'request',
-                             return_value=response) as request:
+                             return_value=response) as request, \
+                patch.object(type(dispatch_client), '_report_sentry',
+                             new=report_sentry_spy):
             result = sender.dispatch_send()
 
         self.assertIsNone(result)
@@ -148,6 +156,8 @@ class TestServiceClientHook(TransactionCase):
         self.assertEqual(request.call_args[1]['url'], 'https://example.invalid/send')
         self.assertEqual(request.call_args[1]['method'], 'POST')
         self.assertEqual(request.call_args[1]['json'], {'value': 'synthetic'})
+        self.assertEqual(len(hook_calls), 1)
+        self.assertIs(hook_calls[0]['response'], response)
         reporter.report.assert_called_once_with(
             success=True, service_client=self.client, exception=None)
         after_ids = set(self.env['service.client.log'].search([
@@ -164,7 +174,7 @@ class TestServiceClientHook(TransactionCase):
         for active_log in (False, True):
             sender = core_service_client.ServiceClientSend(
                 self._service_client(bad_credential),
-                {'value': 'synthetic'}, active_log=active_log)
+                {'value': 'synthetic'}, active_log=active_log, endpoint_id=self.endpoint)
             log_model = self.env['service.client.log']
             before_ids = set(log_model.search([
                 ('client_id', '=', self.client.id),
@@ -195,7 +205,7 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=True)
+            dispatch_client, {'value': 'synthetic'}, active_log=True, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -225,7 +235,7 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=False)
+            dispatch_client, {'value': 'synthetic'}, active_log=False, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -253,7 +263,7 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=False)
+            dispatch_client, {'value': 'synthetic'}, active_log=False, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -281,7 +291,7 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         reporter.report.side_effect = RuntimeError('synthetic reporter failure')
         sender = core_service_client.ServiceClientSend(
-            self._service_client(), {'value': 'synthetic'}, active_log=True)
+            self._service_client(), {'value': 'synthetic'}, active_log=True, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -308,7 +318,7 @@ class TestServiceClientHook(TransactionCase):
         reporter.report.side_effect = RuntimeError('synthetic reporter secret')
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=True)
+            dispatch_client, {'value': 'synthetic'}, active_log=True, endpoint_id=self.endpoint)
         before_ids = set(self.env['service.client.log'].search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -339,10 +349,10 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         log_model = self.env['service.client.log']
         original_create_log = type(log_model)._create_log
-        done_writer_calls = []
+        writer_calls = []
 
         def fail_done_writer(records, state, *args, **kwargs):
-            done_writer_calls.append(state)
+            writer_calls.append(state)
             if state == 'done':
                 raise writer_error
             return original_create_log(records, state, *args, **kwargs)
@@ -350,7 +360,7 @@ class TestServiceClientHook(TransactionCase):
         error_writer = Mock(wraps=log_model._create_error)
 
         sender = core_service_client.ServiceClientSend(
-            self._service_client(), {'value': 'synthetic'}, active_log=True)
+            self._service_client(), {'value': 'synthetic'}, active_log=True, endpoint_id=self.endpoint)
         before_ids = set(log_model.search([
             ('client_id', '=', self.client.id),
         ]).ids)
@@ -363,7 +373,7 @@ class TestServiceClientHook(TransactionCase):
             result = sender.dispatch_send()
 
         self.assertIsNone(result)
-        self.assertEqual(done_writer_calls, ['done'])
+        self.assertEqual(writer_calls, ['done', 'error'])
         error_writer.assert_called_once()
         reporter.report.assert_called_once_with(
             success=True, service_client=self.client, exception=None)
@@ -383,7 +393,7 @@ class TestServiceClientHook(TransactionCase):
         reporter = Mock()
         dispatch_client = self._service_client()
         sender = core_service_client.ServiceClientSend(
-            dispatch_client, {'value': 'synthetic'}, active_log=False)
+            dispatch_client, {'value': 'synthetic'}, active_log=False, endpoint_id=self.endpoint)
         log_model = self.env['service.client.log']
         before_ids = set(log_model.search([
             ('client_id', '=', self.client.id),
@@ -415,7 +425,7 @@ class TestServiceClientHook(TransactionCase):
             ('client_id', '=', self.client.id),
         ]).ids
         sender = core_service_client.ServiceClientSend(
-            self._service_client(), payload, active_log=True)
+            self._service_client(), payload, active_log=True, endpoint_id=self.endpoint)
 
         with patch.object(sentry_hook, 'REPORTER', reporter), \
                 patch.object(core_service_client.requests, 'request',

@@ -60,6 +60,32 @@ class SentryReporting(unittest.TestCase):
         best_effort.report(success=True)
         best_effort.report(success=False, exception=RuntimeError('transport'))
 
+    def test_error_writer_delegates_to_shared_log_writer_once(self):
+        path = ROOT / 'amr_service_client/models/service_client_log.py'
+        writer_calls = []
+        writer_error = RuntimeError('done writer failure')
+
+        class Log:
+            def sudo(self):
+                return self
+
+            def format_error(self, exception, extra_params=None):
+                return str(exception)
+
+            def _create_log(self, state, **kwargs):
+                writer_calls.append(state)
+                if state == 'done':
+                    raise writer_error
+
+        create_error = extracted_method(path, 'ServiceClientLog', '_create_error', {})
+        log = Log()
+        try:
+            log._create_log('done')
+        except RuntimeError:
+            create_error(log, writer_error)
+
+        self.assertEqual(writer_calls, ['done', 'error'])
+
     def test_real_log_send_reports_http_failure_and_preserves_logged_error(self):
         path = ROOT / 'amr_service_client/models/service_client_log.py'
         events = []
