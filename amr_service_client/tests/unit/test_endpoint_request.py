@@ -156,7 +156,7 @@ class EndpointRegression(unittest.TestCase):
         from test_service_transport import production
         endpoint = Endpoint()
         loader = types.SimpleNamespace(get_credential=mock.Mock(return_value=None))
-        provider = types.SimpleNamespace(authenticate=lambda context, audience: context)
+        provider = types.SimpleNamespace(authenticate=lambda context, audience=None: context)
         env = {'service.credential.loader': loader,
                'service.auth.factory': types.SimpleNamespace(create_service_auth=mock.Mock(return_value=provider))}
         client = production.ServiceClient(env, endpoint, None, path='root/', method='GET')

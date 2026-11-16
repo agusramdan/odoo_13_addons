@@ -87,7 +87,7 @@ class TransportRegression(unittest.TestCase):
                           (socket.socket, 'connect'), (socket.socket, 'connect_ex')):
             self.stack.enter_context(mock.patch.object(obj, name, deny))
         self.endpoint = Endpoint()
-        self.provider = types.SimpleNamespace(authenticate=mock.Mock(side_effect=lambda context, audience: context))
+        self.provider = types.SimpleNamespace(authenticate=mock.Mock(side_effect=lambda context, audience=None: context))
         loader = types.SimpleNamespace(get_credential=mock.Mock(return_value=None))
         factory = types.SimpleNamespace(create_service_auth=mock.Mock(return_value=self.provider))
         self.client = production.ServiceClient({'service.credential.loader': loader,
@@ -121,26 +121,37 @@ class TransportRegression(unittest.TestCase):
         result = self.client.prepare_request_context(payload={'x': 1})
         self.assertEqual(result, {'url': 'https://example.invalid/stored', 'method': 'PUT',
             'headers': {'Content-Type': 'application/json', 'Accept': 'application/json'},
-            'params': None, 'timeout': 17, 'json': {'x': 1}})
+            'timeout': 17, 'json': {'x': 1}})
         self.provider.authenticate.assert_called_with(result, audience='default-audience')
         result = self.client.prepare_request_context(path='read', method='GET', payload={'ignored': True})
         self.assertEqual(result['method'], 'GET')
         self.assertNotIn('json', result)
         self.assertEqual(result['url'], 'https://example.invalid/read')
 
+    def test_context_includes_params_only_when_truthy(self):
+        for arguments in ({}, {'params': None}, {'params': False},
+                          {'params': {}}, {'params': []}, {'params': ''}, {'params': 0}):
+            with self.subTest(arguments=arguments):
+                result = self.client.prepare_request_context(method='GET', **arguments)
+                self.assertNotIn('params', result)
+                self.provider.authenticate.assert_called_with(result, audience='default-audience')
+        params = {'page': 2}
+        result = self.client.prepare_request_context(method='GET', params=params)
+        self.assertEqual(result['params'], params)
+        self.provider.authenticate.assert_called_with(result, audience='default-audience')
+
     def assert_call_contract(self):
         response = types.SimpleNamespace(raise_for_status=mock.Mock())
         spy = mock.Mock(return_value=response)
         with mock.patch.object(requests, 'request', spy):
             actual = self.client.call(method='PATCH', path='items', params={'page': 2},
-                payload={'amount': Decimal('3.5')}, headers={'X-Test': 'yes'}, audience='ignored-by-call')
+                payload={'amount': Decimal('3.5')}, headers={'X-Test': 'yes'}, audience='call-audience')
         self.assertIs(actual, response)
         spy.assert_called_once_with(url='https://example.invalid/items', method='PATCH',
             headers={'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Test': 'yes'},
             params={'page': 2}, timeout=17, json={'amount': 3.5})
         response.raise_for_status.assert_called_once_with()
-        # Existing call() does not forward its audience argument: characterization, not policy.
-        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'default-audience')
+        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'call-audience')
         self.client._report_sentry.assert_called_once_with(response=response, method='PATCH')
 
     def test_call_reaches_transport_with_context(self):
@@ -205,7 +216,7 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(len(self.denied), 5)
         self.denied.clear()
 
-    def test_call_ignores_per_call_active_log_and_audience_but_uses_method(self):
+    def test_call_forwards_audience_and_ignores_per_call_active_log(self):
         response = types.SimpleNamespace(raise_for_status=mock.Mock())
         spy = mock.Mock(return_value=response)
         with mock.patch.object(requests, 'request', spy):
@@ -215,7 +226,93 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(spy.call_args[1]['method'], 'PATCH')
         self.assertNotIn('audience', spy.call_args[1])
         self.assertNotIn('active_log', spy.call_args[1])
-        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'default-audience')
+        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'synthetic-audience')
+
+    def test_audience_override_fallback_and_absence(self):
+        for supplied, expected in (('call-audience', 'call-audience'),
+                                   (None, 'default-audience'),
+                                   ('', 'default-audience')):
+            with self.subTest(supplied=supplied):
+                self.client.prepare_request_context(audience=supplied)
+                self.assertEqual(self.provider.authenticate.call_args[1]['audience'], expected)
+        self.endpoint.audience = None
+        self.client.prepare_request_context()
+        self.assertNotIn('audience', self.provider.authenticate.call_args[1])
+
+    def test_prepare_payload_uses_client_logging_snapshot_and_preserves_payload_key(self):
+        endpoint = Endpoint()
+        endpoint.active_log = True
+        client = production.ServiceClient(self.client.env, endpoint, None)
+        endpoint.active_log = False
+
+        sender = client.prepare_payload(active_log='payload value', item=3)
+
+        self.assertTrue(sender.active_log)
+        self.assertEqual(sender.payload, {'active_log': 'payload value', 'item': 3})
+        endpoint.active_log = False
+        self.assertTrue(sender.active_log)
+
+        endpoint.active_log = False
+        client = production.ServiceClient(self.client.env, endpoint, None)
+        endpoint.active_log = True
+        sender = client.prepare_payload(active_log='still payload')
+        self.assertFalse(sender.active_log)
+        self.assertEqual(sender.payload, {'active_log': 'still payload'})
+
+    def test_prepared_sender_dispatch_logs_success_only_when_snapshot_is_on(self):
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        dispatch = mock.Mock(return_value=response)
+
+        for active_log in (True, False):
+            with self.subTest(active_log=active_log):
+                self.endpoint.active_log = active_log
+                client = production.ServiceClient(self.client.env, self.endpoint, None, path='stored', method='PUT')
+                sender = client.prepare_payload(active_log='payload value', item=3)
+                with mock.patch.object(requests, 'request', dispatch):
+                    sender.dispatch_send()
+
+                dispatch.assert_called_once()
+                self.assertEqual(sender.payload, {'active_log': 'payload value', 'item': 3})
+                self.assertEqual(log_writer._create_log.call_count, int(active_log))
+                if active_log:
+                    self.assertEqual(log_writer._create_log.call_args[0], ('done',))
+                    self.assertEqual(log_writer._create_log.call_args[1]['response_text'], 'synthetic response')
+                log_writer._create_log.reset_mock()
+                dispatch.reset_mock()
+
+        for active_log in (True, False):
+            with self.subTest(active_log=active_log, outcome='error'):
+                self.endpoint.active_log = active_log
+                client = production.ServiceClient(self.client.env, self.endpoint, None, path='stored', method='PUT')
+                sender = client.prepare_payload(active_log='payload value')
+                error = requests.exceptions.Timeout('synthetic')
+                transport = mock.Mock(side_effect=error)
+                with mock.patch.object(requests, 'request', transport):
+                    with mock.patch.object(production._logger, 'exception'):
+                        sender.dispatch_send()
+                transport.assert_called_once()
+                log_writer._create_error.assert_called_once()
+                self.assertIs(log_writer._create_error.call_args[0][0], error)
+                self.assertEqual(log_writer._create_log.call_count, 0)
+                log_writer._create_error.reset_mock()
+
+        dispatch.assert_not_called()
+        self.assertEqual(self.denied, [])
+
+    def test_sender_constructor_preserves_direct_active_log_overrides(self):
+        endpoint = Endpoint()
+        endpoint.active_log = True
+        service = types.SimpleNamespace(env={}, client_id='synthetic-client', endpoint_id=endpoint)
+
+        self.assertFalse(production.ServiceClientSend(service, {}, endpoint_id=endpoint).active_log)
+        self.assertTrue(production.ServiceClientSend(service, {}, active_log=True, endpoint_id=endpoint).active_log)
+        self.assertFalse(production.ServiceClientSend(service, {}, active_log=False, endpoint_id=endpoint).active_log)
+        self.assertTrue(production.ServiceClientSend(service, {}, active_log=None, endpoint_id=endpoint).active_log)
+        endpoint.active_log = False
+        self.assertTrue(production.ServiceClientSend(service, {}, active_log=True, endpoint_id=endpoint).active_log)
+        self.assertFalse(production.ServiceClientSend(service, {}, active_log=None, endpoint_id=endpoint).active_log)
 
     def test_normalize_json_bytearray_uuid_and_unknown_fallback(self):
         unknown = types.SimpleNamespace()

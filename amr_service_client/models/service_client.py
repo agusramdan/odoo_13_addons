@@ -188,18 +188,23 @@ class ServiceClient:
 
     def prepare_request_context(self, path=None, method=None, params=None, payload=None, headers=None, **kw):
         request_context = {}
-        if params:
-            request_context['params'] = params
+        url = None
+
         if self.endpoint:
-            request_context['url'] = kw.get('url') or self.endpoint.get_url(path or self.path)
-            request_context['headers'] = self.endpoint.request_headers_default(headers)
+            url = kw.get('url') or self.endpoint.get_url(path or self.path)
+            headers= self.endpoint.request_headers_default(headers)
             request_context["timeout"] = self.endpoint.timeout
-            audience = kw.get('audience', None) or self.endpoint.audience
+            audience = kw.get('audience', None) or self.endpoint.audience or None
         else:
-            request_context['url'] = kw.get('url')
-            request_context['headers'] = headers
+            url = kw.get('url')
             audience = kw.get('audience', None)
 
+        if url:
+            request_context['url'] = url
+        if params:
+            request_context['params'] = params
+        if headers:
+            request_context['headers'] = headers
         if method:
             request_context['method'] = method
         elif self.method:
@@ -208,7 +213,10 @@ class ServiceClient:
             request_context["json"] = normalize_json(payload)
         else:
             _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
-        return self.provider.authenticate(request_context, audience=audience)
+        kw2 = {}
+        if audience:
+            kw2['audience'] = audience
+        return self.provider.authenticate(request_context, **kw2)
 
     def _report_sentry(self, response=None, exception=None, method=None):
         report_outcome(
@@ -243,7 +251,7 @@ class ServiceClient:
         return self.call(method="DELETE", path=path, **kwargs)
 
     def prepare_payload(self, **payload):
-        return ServiceClientSend(self, payload, endpoint_id=self.endpoint)
+        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint)
 
 
 class RemoteObjectProxy:
@@ -577,12 +585,13 @@ class ServiceClientModel(models.Model):
             endpoint = self.env["service.endpoint"].browse(code)
         elif isinstance(code, str):
             endpoint = self.env["service.endpoint"].search([("code", "=", code), ("active", "=", True), ], limit=1, )
-        else:
+        elif isinstance(code, models.BaseModel) and code._name == "service.endpoint":
             endpoint = code
-        if not endpoint:
+        else:
+            endpoint = self.env["service.endpoint"]
+        if not endpoint and code:
             _logger.warning("Without endpoint %s", self)
-            return self.env["service.endpoint"]
-            # raise ValueError("Service '%s' not found" % code)
+            raise ValueError("Service '%s' not found" % code)
         return endpoint
 
     def get_service_client(self, service_code, credential=None, path=None, method=None):
