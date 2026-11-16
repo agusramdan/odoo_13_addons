@@ -22,12 +22,14 @@ class ServiceCredential(models.Model):
             ("config_path", "Config Path"),
             ("system_parameter_json", "System Parameter JSON"),
             ("system_parameter_path", "System Parameter Path"),
+            ("system_parameter_token", "System Parameter Token"),
         ],
         required=True,
     )
     reference = fields.Char()
     credential_json = fields.Text()
     scopes = fields.Char(help="Comma-separated scopes")
+    header = fields.Char("Header", default='token')
 
     def get_credential_provider(self):
         return self.env["service.credential.loader"].get_credential_provider(self)

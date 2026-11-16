@@ -71,6 +71,22 @@ class ServiceCredentialLoaderConfigPath(models.AbstractModel):
             return json.load(fp)
 
 
+class ServiceCredentialLoaderParameterToken(models.AbstractModel):
+    _name = "service.credential.loader.system_parameter_token"
+
+    @api.model
+    def load_credential(self, credential):
+        parameter_value = self.env["ir.config_parameter"].sudo().get_param(credential.reference)
+        if not parameter_value:
+            raise ValueError("System parameter '%s' not found" % credential.reference)
+        return {
+            "version": '1.0',
+            "type": 'api_key',
+            "header": credential.header,
+            "value": parameter_value,
+        }
+
+
 class ServiceCredentialLoaderParameterJson(models.AbstractModel):
     _name = "service.credential.loader.system_parameter_json"
 
@@ -94,7 +110,6 @@ class ServiceCredentialLoaderParameterPath(models.AbstractModel):
 
         with open(parameter_value, "r", encoding="utf-8") as fp:
             return json.load(fp)
-
 
 
 class ServiceCredentialLoader(models.AbstractModel):
@@ -137,7 +152,7 @@ class ServiceCredentialLoader(models.AbstractModel):
         if not self.env["service.auth.factory"].is_supported(credential["type"]):
             raise ValueError("Unsupported credential type")
 
-    def get_credential_provider(self,credential):
+    def get_credential_provider(self, credential):
         loader = self.env["service.credential.loader"]
         credential_data = loader.load_credential(credential)
         return self.env["service.auth.factory"].create_service_auth(credential_data)

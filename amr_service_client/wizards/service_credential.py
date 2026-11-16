@@ -12,7 +12,7 @@ class ServiceCredentialWizard(models.TransientModel):
         [
             ("service_account", "Service Account"),
             ("client_secret", "Client Secret"),
-            ("get_jwt","Get JWT"),
+            ("get_jwt", "Get JWT"),
             ("api_key", "API Key"),
             ("bearer", "Bearer Token"),
             ("basic", "Basic Auth"),
