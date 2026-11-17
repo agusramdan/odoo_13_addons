@@ -186,13 +186,13 @@ class ServiceClient:
     def __exit__(self, *args):
         pass
 
-    def prepare_request_context(self, path=None, method=None, params=None, payload=None, headers=None, **kw):
+    def prepare_request_context(self, path=None, method=None, params=None, payload=None,**kw):
         request_context = {}
         url = None
-
+        headers = kw.get('headers') or {}
         if self.endpoint:
             url = kw.get('url') or self.endpoint.get_url(path or self.path)
-            headers= self.endpoint.request_headers_default(headers)
+            headers = self.endpoint.request_headers_default(headers)
             request_context["timeout"] = self.endpoint.timeout
             audience = kw.get('audience', None) or self.endpoint.audience
         else:
@@ -209,10 +209,12 @@ class ServiceClient:
             request_context['method'] = method
         elif self.method:
             request_context['method'] = self.method
+        else:
+            request_context['method'] = "GET"
         if request_context['method'] in ("POST", "PUT", "PATCH"):
             request_context["json"] = normalize_json(payload)
         else:
-            _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
+            _logger.debug("prepare_request_context: method=%s, not sending payload", request_context.get('method'))
         return self.provider.authenticate(request_context, audience=audience)
 
     def _report_sentry(self, response=None, exception=None, method=None):
@@ -220,12 +222,12 @@ class ServiceClient:
             self.env, service_client=self.service_client, response=response, exception=exception, method=method
         )
 
-    def call(self, method=None, path=None, params=None, payload=None, headers=None, raise_exception=True, **kw):
+    def call(self, raise_exception=True, **kw):
         response = None
+        method = kw.get('method')
         try:
-            request_context = self.prepare_request_context(
-                path, method, params=params, payload=payload, headers=headers, **kw
-            )
+            request_context = self.prepare_request_context(**kw)
+            method = request_context.get('method')
             response = requests.request(**request_context)
             response.raise_for_status()
             self._report_sentry(response=response, method=method)
@@ -610,23 +612,23 @@ class ServiceClientModel(models.Model):
         client = ServiceClient(self.env, endpoint, credential, service_client=self)
         return RemoteObjectProxy(client, model_name, **kwargs)
 
-    def call(self, service, method, path, params=None, payload=None, headers=None, credential=None, audience=None):
+    def call(self, service, method, path=None, params=None, payload=None, headers=None, credential=None, **kw):
         client = self.get_service_client(service, credential=credential)
-        return client.call(method=method, path=path, params=params, payload=payload, headers=headers, audience=audience)
+        return client.call(method=method, path=path, params=params, payload=payload, headers=headers, **kw)
 
-    def get(self, service, path, params=None, headers=None, credential=None, audience=None):
+    def get(self, service, path=None, params=None, headers=None, credential=None, audience=None):
         return self.call(
             service=service, method="GET", path=path, params=params, headers=headers,
             credential=credential, audience=audience
         )
 
-    def post(self, service, path, payload=None, headers=None, credential=None, audience=None):
+    def post(self, service, path=None, payload=None, headers=None, credential=None, audience=None):
         return self.call(
             service=service, method="POST", path=path, payload=payload, headers=headers,
             credential=credential, audience=audience
         )
 
-    def put(self, service, path, payload=None, headers=None, credential=None, audience=None):
+    def put(self, service, path=None, payload=None, headers=None, credential=None, audience=None):
         return self.call(
             service=service, method="PUT", path=path, payload=payload, headers=headers,
             credential=credential, audience=audience
