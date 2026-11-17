@@ -140,6 +140,123 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(result['params'], params)
         self.provider.authenticate.assert_called_with(result, audience='default-audience')
 
+    def test_amendment_a01_a02_endpoint_url_override_and_fallback(self):
+        self.endpoint.get_url = mock.Mock(return_value='https://example.invalid/fallback')
+        result = self.client.prepare_request_context(
+            url='https://override.invalid/exact', path='per-call')
+        self.assertEqual(result['url'], 'https://override.invalid/exact')
+        self.endpoint.get_url.assert_not_called()
+
+        self.endpoint.get_url.reset_mock()
+        result = self.client.prepare_request_context(url='', path='per-call')
+        self.assertEqual(result['url'], 'https://example.invalid/fallback')
+        self.endpoint.get_url.assert_called_once_with('per-call')
+
+        self.endpoint.get_url.reset_mock()
+        self.client.prepare_request_context(url=None, path='')
+        self.endpoint.get_url.assert_called_once_with('stored')
+
+        self.client.path = None
+        self.endpoint.get_url = mock.Mock(return_value=None)
+        result = self.client.prepare_request_context(url=None, path=None)
+        self.assertNotIn('url', result)
+        self.endpoint.get_url.assert_called_once_with(None)
+
+    def test_amendment_a01_a03_without_endpoint_uses_only_truthy_url(self):
+        self.client.endpoint = None
+        result = self.client.prepare_request_context(
+            url='https://override.invalid/exact', path='per-call')
+        self.assertEqual(result['url'], 'https://override.invalid/exact')
+        result = self.client.prepare_request_context(url=None, path='per-call')
+        self.assertNotIn('url', result)
+        result = self.client.prepare_request_context(url='', path='stored')
+        self.assertNotIn('url', result)
+
+    def test_amendment_a05_endpoint_header_defaults_and_empty_result(self):
+        from test_endpoint_request import Endpoint as MixinEndpoint
+
+        endpoint = MixinEndpoint(content_type='text/plain')
+        endpoint.audience = 'default-audience'
+        client = production.ServiceClient(self.client.env, endpoint, None, path='stored', method='PUT')
+        for supplied in (None, {}):
+            with self.subTest(supplied=supplied):
+                result = client.prepare_request_context(headers=supplied)
+                self.assertEqual(result['headers'], {
+                    'Content-Type': 'text/plain', 'Accept': 'application/json'})
+                self.provider.authenticate.assert_called_with(result, audience='default-audience')
+
+        custom = {'Content-Type': 'application/json', 'X-Test': 'synthetic'}
+        result = client.prepare_request_context(headers=custom)
+        self.assertEqual(result['headers'], {
+            'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Test': 'synthetic'})
+        self.provider.authenticate.assert_called_with(result, audience='default-audience')
+
+        normalize = mock.Mock(return_value={})
+        self.endpoint.request_headers_default = normalize
+        for supplied in (None, {'X-Test': 'synthetic'}):
+            with self.subTest(empty_result_for=supplied):
+                result = self.client.prepare_request_context(headers=supplied)
+                self.assertNotIn('headers', result)
+        self.assertEqual(normalize.call_args_list, [mock.call(None), mock.call({'X-Test': 'synthetic'})])
+
+    def test_amendment_a05_without_endpoint_omits_only_falsy_headers(self):
+        self.client.endpoint = None
+        headers = {'X-Test': 'synthetic'}
+        result = self.client.prepare_request_context(headers=headers)
+        self.assertIs(result['headers'], headers)
+        for supplied in (None, {}):
+            with self.subTest(supplied=supplied):
+                self.assertNotIn('headers', self.client.prepare_request_context(headers=supplied))
+
+    def test_amendment_a06_characterizes_strict_provider_key_compatibility(self):
+        self.client.endpoint = None
+        for field, arguments in (('url', {'url': None}), ('headers', {'headers': None})):
+            def require_key(context, audience=None, key=field):
+                context[key]
+                return context
+            self.client.provider.authenticate = require_key
+            with self.subTest(field=field):
+                with self.assertRaises(KeyError):
+                    self.client.prepare_request_context(**arguments)
+
+    def test_amendment_a13_strict_headers_provider_key_error_with_valid_url(self):
+        self.client.endpoint = None
+
+        def require_headers(context, audience=None):
+            context['headers']
+            return context
+
+        self.client.provider.authenticate = require_headers
+        with self.assertRaises(KeyError) as raised:
+            self.client.prepare_request_context(url='https://example.invalid/valid', headers=None)
+        self.assertEqual(raised.exception.args, ('headers',))
+
+    def test_amendment_a14_strict_url_provider_key_error(self):
+        self.client.endpoint = None
+
+        def require_url(context, audience=None):
+            context['url']
+            return context
+
+        self.client.provider.authenticate = require_url
+        with self.assertRaises(KeyError) as raised:
+            self.client.prepare_request_context(url=None, method='GET')
+        self.assertEqual(raised.exception.args, ('url',))
+
+    def test_amendment_a07_provider_may_change_context_after_seam(self):
+        self.client.endpoint = None
+        observed_at_provider = []
+        def authenticate(context, audience=None):
+            observed_at_provider.append(dict(context))
+            context['headers'] = {'Authorization': 'synthetic'}
+            return context
+        self.client.provider.authenticate = authenticate
+
+        result = self.client.prepare_request_context(url='https://example.invalid', headers=None)
+
+        self.assertNotIn('headers', observed_at_provider[0])
+        self.assertEqual(result['headers'], {'Authorization': 'synthetic'})
+
     def assert_call_contract(self):
         response = types.SimpleNamespace(raise_for_status=mock.Mock())
         spy = mock.Mock(return_value=response)
