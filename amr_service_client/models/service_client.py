@@ -18,6 +18,13 @@ from odoo.tools.safe_eval import safe_eval, test_python_expr
 
 _logger = logging.getLogger(__name__)
 
+
+def _reject_unknown_options(entry_point, options, allowed):
+    unknown = sorted(set(options) - set(allowed))
+    if unknown:
+        raise TypeError("{} got unexpected keyword argument(s): {}".format(
+            entry_point, ', '.join(unknown)))
+
 DEFAULT_PYTHON_CODE = """# Available variables:
 #  - ctx: Odoo Context on which the action is triggered
 #  - env: Odoo Environment on which the action is triggered
@@ -186,10 +193,14 @@ class ServiceClient:
     def __exit__(self, *args):
         pass
 
-    def prepare_request_context(self, path=None, method=None, params=None, payload=None,**kw):
+    def prepare_request_context(self, path=None, method=None, params=None, payload=None, *args, **kw):
+        _reject_unknown_options(
+            'prepare_request_context', kw, {'headers', 'url', 'audience'})
+        if args:
+            raise TypeError("prepare_request_context accepts at most four positional arguments")
         request_context = {}
         url = None
-        headers = kw.get('headers') or {}
+        headers = kw.get('headers')
         if self.endpoint:
             url = kw.get('url') or self.endpoint.get_url(path or self.path)
             headers = self.endpoint.request_headers_default(headers)
@@ -209,6 +220,8 @@ class ServiceClient:
             request_context['method'] = method
         elif self.method:
             request_context['method'] = self.method
+        else:
+            raise ValueError("An HTTP method is required")
         if request_context['method'] in ("POST", "PUT", "PATCH"):
             request_context["json"] = normalize_json(payload)
         else:
@@ -220,15 +233,20 @@ class ServiceClient:
             self.env, service_client=self.service_client, response=response, exception=exception, method=method
         )
 
-    def call(self,method=None, path=None, params=None, payload=None, raise_exception=True, **kw):
+    def call(self, method=None, path=None, params=None, payload=None, *args, raise_exception=True, **kw):
+        _reject_unknown_options('call', kw, {'headers', 'url', 'audience'})
+        if args:
+            raise TypeError("call accepts at most four positional arguments; use keywords for options")
         response = None
+        effective_method = method
         try:
             request_context = self.prepare_request_context(method=method, path=path, params=params, payload=payload, **kw)
+            effective_method = request_context.get('method', method)
             response = requests.request(**request_context)
             response.raise_for_status()
-            self._report_sentry(response=response, method=method)
+            self._report_sentry(response=response, method=effective_method)
         except Exception as exc:
-            self._report_sentry(exception=exc, method=method)
+            self._report_sentry(exception=exc, method=effective_method)
             if raise_exception:
                 raise
         return response
@@ -246,12 +264,16 @@ class ServiceClient:
         return self.call(method="DELETE", path=path, **kwargs)
 
     def prepare_payload(self, **payload):
-        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint, credential_id=self.credential_id)
+        sender = ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint, credential_id=self.credential)
+        sender.credential_id = self.credential
+        return sender
 
 
 class RemoteObjectProxy:
 
     def __init__(self, client, model_name, **kwargs):
+        _reject_unknown_options(
+            'RemoteObjectProxy', kwargs, {'context', 'domain', 'fields', 'offset', 'limit', 'order'})
         self.client = client
         self.model_name = model_name
         self.context = kwargs.get('context', {})
@@ -600,6 +622,8 @@ class ServiceClientModel(models.Model):
         return client
 
     def get_remote_object(self, service_code, model_name, credential=None, **kwargs):
+        _reject_unknown_options(
+            'get_remote_object', kwargs, {'context', 'domain', 'fields', 'offset', 'limit', 'order'})
         endpoint = self._get_endpoint(service_code)
         credential = credential or endpoint.credential_id
         if not endpoint:
@@ -608,6 +632,7 @@ class ServiceClientModel(models.Model):
         return RemoteObjectProxy(client, model_name, **kwargs)
 
     def call(self, service, method, path=None, params=None, payload=None, headers=None, credential=None, **kw):
+        _reject_unknown_options('ServiceClientModel.call', kw, {'audience', 'url', 'raise_exception'})
         client = self.get_service_client(service, credential=credential)
         return client.call(method=method, path=path, params=params, payload=payload, headers=headers, **kw)
 

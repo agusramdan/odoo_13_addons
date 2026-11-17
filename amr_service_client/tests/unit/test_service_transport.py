@@ -114,6 +114,63 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(self.endpoint.paths[-1], 'override')
         self.provider.authenticate.assert_called_with(expected, audience='override-audience')
 
+    def test_d1_ambiguous_positional_arguments_fail_before_provider_or_transport(self):
+        for invoke in (
+            lambda: self.client.call('POST', 'orders', {}, {'x': 1}, {'X-Test': 'v'}),
+            lambda: self.client.call('POST', 'orders', {}, {'x': 1}, {'X-Test': 'v'}, False),
+            lambda: self.client.prepare_request_context('orders', 'POST', {}, {'x': 1}, {'X-Test': 'v'}),
+        ):
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with mock.patch.object(requests, 'request') as transport:
+                    with self.assertRaises(TypeError):
+                        invoke()
+                    transport.assert_not_called()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+        with mock.patch.object(requests, 'request', return_value=None):
+            result = self.client.call(method='POST', path='orders', payload={'x': 1},
+                                      headers={'X-Test': 'v'}, raise_exception=False)
+        self.assertIsNone(result)
+        self.provider.authenticate.assert_called_once()
+
+    def test_d2_endpoint_normalizer_receives_original_falsy_headers(self):
+        normalize = mock.Mock(return_value={})
+        self.endpoint.request_headers_default = normalize
+        for supplied in (None, False, {}):
+            with self.subTest(supplied=supplied):
+                result = self.client.prepare_request_context(headers=supplied)
+                self.assertNotIn('headers', result)
+        self.assertEqual([call[0][0] for call in normalize.call_args_list], [None, False, {}])
+
+    def test_d3_empty_effective_method_fails_before_provider(self):
+        self.client.method = None
+        before = self.provider.authenticate.call_count
+        with self.assertRaisesRegex(ValueError, 'method'):
+            self.client.prepare_request_context()
+        self.assertEqual(self.provider.authenticate.call_count, before)
+
+    def test_d4_reports_effective_provider_method_and_falls_back_before_context(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        self.client.provider.authenticate.side_effect = lambda context, audience=None: dict(context, method='PUT')
+        with mock.patch.object(requests, 'request', return_value=response):
+            self.client.call(method='POST')
+        self.client._report_sentry.assert_called_once_with(response=response, method='PUT')
+
+        self.client._report_sentry.reset_mock()
+        response.raise_for_status.side_effect = RuntimeError('transport response failed')
+        with mock.patch.object(requests, 'request', return_value=response):
+            with self.assertRaisesRegex(RuntimeError, 'transport response failed'):
+                self.client.call(method='POST')
+        self.client._report_sentry.assert_called_once()
+        self.assertEqual(self.client._report_sentry.call_args[1]['method'], 'PUT')
+
+        self.client._report_sentry.reset_mock()
+        self.client.provider.authenticate.side_effect = RuntimeError('prepare failed')
+        with self.assertRaisesRegex(RuntimeError, 'prepare failed'):
+            self.client.call(method='POST')
+        self.client._report_sentry.assert_called_once()
+        self.assertEqual(self.client._report_sentry.call_args[1]['method'], 'POST')
+
     def test_context_overrides_and_normalization(self):
         self.assert_context_contract()
 
@@ -333,17 +390,23 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(len(self.denied), 5)
         self.denied.clear()
 
-    def test_call_forwards_audience_and_ignores_per_call_active_log(self):
+    def test_call_forwards_audience_and_rejects_unknown_active_log_option(self):
         response = types.SimpleNamespace(raise_for_status=mock.Mock())
         spy = mock.Mock(return_value=response)
         with mock.patch.object(requests, 'request', spy):
             self.client.call(method='PATCH', path='child/', payload={'x': 1},
-                             active_log=True, audience='synthetic-audience')
-        self.assertEqual(spy.call_count, 1)
+                             audience='synthetic-audience')
+        spy.assert_called_once()
         self.assertEqual(spy.call_args[1]['method'], 'PATCH')
         self.assertNotIn('audience', spy.call_args[1])
-        self.assertNotIn('active_log', spy.call_args[1])
         self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'synthetic-audience')
+
+        spy.reset_mock()
+        before = self.provider.authenticate.call_count
+        with self.assertRaises(TypeError):
+            self.client.call(method='PATCH', active_log=True, raise_exception=False)
+        spy.assert_not_called()
+        self.assertEqual(self.provider.authenticate.call_count, before)
 
     def test_audience_override_fallback_and_absence(self):
         for supplied, expected in (('call-audience', 'call-audience'),
@@ -607,6 +670,45 @@ class TransportRegression(unittest.TestCase):
                 logged_credential = env['service.client.log']._create_log.call_args[1]['credential_id']
                 self.assertIs(logged_credential, resolved)
 
+                error = requests.exceptions.Timeout('synthetic transport failure')
+                with mock.patch.object(requests, 'request', side_effect=error):
+                    with mock.patch.object(production._logger, 'exception'):
+                        client.prepare_payload().dispatch_send()
+                logged_credential = env['service.client.log']._create_error.call_args[1]['credential_id']
+                self.assertIs(logged_credential, resolved)
+
+    def test_prepared_sender_keeps_resolved_none_after_endpoint_credential_changes(self):
+        original_credential = types.SimpleNamespace(id=13)
+        self.endpoint.credential_id = None
+        self.endpoint.active_log = True
+        self.client.loader.get_credential.return_value = None
+        self.client = production.ServiceClient(self.client.env, self.endpoint, None,
+                                               path='stored', method='PUT')
+        self.client._report_sentry = mock.Mock()
+        self.assertIsNone(self.client.credential)
+        self.endpoint.credential_id = original_credential
+
+        log_writer = self.client.env['service.client.log'] = types.SimpleNamespace(
+            _create_log=mock.Mock(), _create_error=mock.Mock())
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        with mock.patch.object(requests, 'request', return_value=response):
+            sender = self.client.prepare_payload()
+            self.assertIsNone(sender.credential_id)
+            sender.dispatch_send()
+
+        self.assertIsNone(self.client.env['service.auth.factory'].create_service_auth.call_args[0][0])
+        self.client.provider.authenticate.assert_called_once()
+        log_writer._create_log.assert_called_once()
+        self.assertIsNone(log_writer._create_log.call_args[1]['credential_id'])
+
+        error = requests.exceptions.Timeout('synthetic transport failure')
+        with mock.patch.object(requests, 'request', side_effect=error):
+            with mock.patch.object(production._logger, 'exception'):
+                self.client.prepare_payload().dispatch_send()
+        log_writer._create_error.assert_called_once()
+        self.assertIs(log_writer._create_error.call_args[0][0], error)
+        self.assertIsNone(log_writer._create_error.call_args[1]['credential_id'])
+
     def test_direct_sender_credential_override_and_none_fallback_are_unchanged(self):
         endpoint_credential = types.SimpleNamespace(id=13)
         override_credential = types.SimpleNamespace(id=14)
@@ -632,6 +734,438 @@ class TransportRegression(unittest.TestCase):
         self.assertEqual(result['uuid'], '12345678-1234-5678-1234-567812345678')
         self.assertEqual(result['unknown'], str(unknown))
 
+
+class FactoryWhitelistRegression(unittest.TestCase):
+    def setUp(self):
+        TransportRegression.setUp(self)
+        self.addCleanup(TransportRegression.tearDown, self)
+
+    def test_direct_call_and_preparation_reject_unknown_before_provider_even_when_suppressed(self):
+        for invoke in (
+            lambda: self.client.call(method="POST", unexpected_opt=1),
+            lambda: self.client.call(method="POST", unexpected_opt=1, raise_exception=False),
+            lambda: self.client.prepare_request_context(method="POST", unexpected_opt=1),
+            lambda: self.client.get(unexpected_opt=1),
+            lambda: self.client.post(unexpected_opt=1),
+            lambda: self.client.put(unexpected_opt=1),
+            lambda: self.client.delete(unexpected_opt=1),
+        ):
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with self.assertRaises(TypeError):
+                    invoke()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+
+    def test_direct_wrappers_preserve_all_accepted_request_options(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        with mock.patch.object(requests, 'request', return_value=response) as transport:
+            self.client.post('/p', payload={'v': 1}, params={'q': 'x'},
+                             headers={'X-Test': 'h'}, url='https://override.invalid/x',
+                             audience='aud', raise_exception=False)
+        transport.assert_called_once()
+        self.assertEqual(transport.call_args[1]['method'], 'POST')
+        self.assertEqual(transport.call_args[1]['url'], 'https://override.invalid/x')
+        self.assertEqual(transport.call_args[1]['params'], {'q': 'x'})
+        self.assertEqual(transport.call_args[1]['json'], {'v': 1})
+        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'aud')
+
+    def test_each_direct_wrapper_keeps_its_method_payload_and_common_options(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        cases = (
+            ('GET', lambda **options: self.client.get('/p', **options), False),
+            ('POST', lambda **options: self.client.post('/p', **options), True),
+            ('PUT', lambda **options: self.client.put('/p', **options), True),
+            ('DELETE', lambda **options: self.client.delete('/p', **options), False),
+        )
+        for method, invoke, sends_json in cases:
+            with self.subTest(method=method):
+                with mock.patch.object(requests, 'request', return_value=response) as transport:
+                    invoke(params={'q': 'x'}, payload={'v': 1}, headers={'X-Test': 'h'},
+                           url='https://override.invalid/x', audience='aud',
+                           raise_exception=False)
+                actual = transport.call_args[1]
+                self.assertEqual(actual['method'], method)
+                self.assertEqual(actual['url'], 'https://override.invalid/x')
+                self.assertEqual(actual['params'], {'q': 'x'})
+                if sends_json:
+                    self.assertEqual(actual['json'], {'v': 1})
+                else:
+                    self.assertNotIn('json', actual)
+                self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'aud')
+
+    def test_direct_method_keyword_conflict_is_rejected(self):
+        for invoke in (lambda: self.client.get(method='GET'),
+                       lambda: self.client.post(method='POST'),
+                       lambda: self.client.put(method='PUT'),
+                       lambda: self.client.delete(method='DELETE')):
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with self.assertRaises(TypeError):
+                    invoke()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+
+    def test_remote_proxy_rejects_unknown_config_but_remote_data_remains_arbitrary(self):
+        with self.assertRaises(TypeError):
+            production.RemoteObjectProxy(self.client, 'res.partner', unexpected_opt=1)
+        proxy = production.RemoteObjectProxy(self.client, 'res.partner',
+            context={'lang': 'id'}, domain=[], fields=['name'], offset=0, limit=10, order='name')
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(),
+                                         json=lambda: {'result': []})
+        with mock.patch.object(self.client, 'post', return_value=response) as post:
+            proxy.call('remote_method', [], {'custom_remote_kw': 1, 'nested': {'unknown': 2}})
+        posted = post.call_args[1]
+        self.assertEqual(posted['path'], '/api/dataset/call_kw')
+        self.assertEqual(posted['payload']['params']['kwargs']['custom_remote_kw'], 1)
+        self.assertEqual(posted['payload']['params']['kwargs']['nested'], {'unknown': 2})
+
+    def test_sender_payload_keys_are_domain_data_not_request_options(self):
+        sender = self.client.prepare_payload(active_log='data', unexpected_opt={'nested': 1})
+        self.assertEqual(sender.payload,
+                         {'active_log': 'data', 'unexpected_opt': {'nested': 1}})
+
+    def test_model_call_factory_validates_before_client_creation_and_keeps_allowed_keys(self):
+        model = production.ServiceClientModel()
+        model.env = self.client.env
+        model.get_service_client = mock.Mock(return_value=self.client)
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        with mock.patch.object(requests, 'request', return_value=response) as transport:
+            model.call('svc', 'POST', '/p', {'q': 'x'}, {'v': 1}, {'X-Test': 'h'},
+                       credential='cred', audience='aud', url='https://override.invalid/x',
+                       raise_exception=False)
+        model.get_service_client.assert_called_once_with('svc', credential='cred')
+        transport.assert_called_once()
+        self.assertEqual(transport.call_args[1]['method'], 'POST')
+        self.assertEqual(transport.call_args[1]['url'], 'https://override.invalid/x')
+        self.assertEqual(self.provider.authenticate.call_args[1]['audience'], 'aud')
+
+        for extra in ({'unexpected_opt': 1},
+                      {'unexpected_opt': 1, 'raise_exception': False}):
+            model.get_service_client.reset_mock()
+            with self.assertRaises(TypeError):
+                model.call('svc', 'POST', **extra)
+            model.get_service_client.assert_not_called()
+
+    def test_model_call_eighth_positional_audience_is_rejected_with_migration_hint_doc(self):
+        model = production.ServiceClientModel()
+        model.get_service_client = mock.Mock(return_value=self.client)
+        with self.assertRaises(TypeError):
+            model.call('svc', 'POST', '/p', None, {'v': 1}, None, None, 'aud')
+        model.get_service_client.assert_not_called()
+
+    def test_model_wrappers_keep_their_declared_keyword_surfaces(self):
+        model = production.ServiceClientModel()
+        model.call = mock.Mock(return_value='response')
+        self.assertEqual(model.get('svc', params={'q': 'x'}, headers=None,
+                                  credential='cred', audience='aud'), 'response')
+        model.call.assert_called_once_with(service='svc', method='GET', path=None,
+            params={'q': 'x'}, headers=None, credential='cred', audience='aud')
+        model.call.reset_mock()
+        self.assertEqual(model.post('svc', payload={'v': 1}, audience='aud'), 'response')
+        model.call.assert_called_once_with(service='svc', method='POST', path=None,
+            payload={'v': 1}, headers=None, credential=None, audience='aud')
+        model.call.reset_mock()
+        self.assertEqual(model.put('svc', payload={'v': 1}), 'response')
+        model.call.assert_called_once_with(service='svc', method='PUT', path=None,
+            payload={'v': 1}, headers=None, credential=None, audience=None)
+        model.call.reset_mock()
+        self.assertEqual(model.delete('svc', None), 'response')
+        model.call.assert_called_once_with(service='svc', method='DELETE', path=None,
+            headers=None, credential=None, audience=None)
+        for invoke in (lambda: model.get('svc', url='https://override.invalid'),
+                       lambda: model.post('svc', params={}),
+                       lambda: model.put('svc', raise_exception=False),
+                       lambda: model.delete('svc', None, payload={})):
+            with self.subTest(invoke=invoke):
+                model.call.reset_mock()
+                with self.assertRaises(TypeError):
+                    invoke()
+                model.call.assert_not_called()
+
+    def test_model_factory_signature_rejects_unknown_before_constructor(self):
+        model = production.ServiceClientModel()
+        model.env = self.client.env
+        model._get_endpoint = mock.Mock(return_value=self.endpoint)
+        with mock.patch.object(production, 'ServiceClient') as constructor:
+            client = model.get_service_client('svc', credential='cred', path='/stored', method='POST')
+            self.assertIs(client, constructor.return_value)
+            constructor.assert_called_once_with(model.env, self.endpoint, 'cred',
+                service_client=model, path='/stored', method='POST')
+            constructor.reset_mock()
+            with self.assertRaises(TypeError):
+                model.get_service_client('svc', unexpected_opt=1)
+            constructor.assert_not_called()
+
+    def test_remote_factory_accepts_exact_proxy_configuration(self):
+        model = production.ServiceClientModel()
+        model.env = self.client.env
+        model._get_endpoint = mock.Mock(return_value=self.endpoint)
+        with mock.patch.object(production, 'ServiceClient', return_value=self.client) as constructor:
+            proxy = model.get_remote_object('svc', 'res.partner', context={'lang': 'id'},
+                domain=[], fields=['name'], offset=0, limit=10, order='name')
+        constructor.assert_called_once_with(model.env, self.endpoint, None, service_client=model)
+        self.assertEqual((proxy.context, proxy.domain, proxy.fields, proxy.offset,
+                          proxy.limit, proxy.order),
+                         ({'lang': 'id'}, [], ['name'], 0, 10, 'name'))
+
+    def test_remote_factory_rejects_unknown_config_before_client_creation(self):
+        model = production.ServiceClientModel()
+        model._get_endpoint = mock.Mock(return_value=self.endpoint)
+        model.env = self.client.env
+        with mock.patch.object(production, 'ServiceClient') as constructor:
+            with self.assertRaises(TypeError):
+                model.get_remote_object('svc', 'res.partner', unexpected_opt=1)
+            constructor.assert_not_called()
+
+
+
+    def test_direct_call_first_four_positionals_keep_their_binding(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        cases = (
+            (('GET',), {'method': 'GET', 'url': 'https://example.invalid/stored'}),
+            (('POST', 'items'), {'method': 'POST', 'url': 'https://example.invalid/items'}),
+            (('POST', 'items', {'q': 'x'}),
+             {'method': 'POST', 'url': 'https://example.invalid/items', 'params': {'q': 'x'}}),
+            (('POST', 'items', {'q': 'x'}, {'v': 1}),
+             {'method': 'POST', 'url': 'https://example.invalid/items',
+              'params': {'q': 'x'}, 'json': {'v': 1}}),
+        )
+        for positional, expected in cases:
+            with self.subTest(positional=positional):
+                with mock.patch.object(requests, 'request', return_value=response) as transport:
+                    self.client.call(*positional)
+                if expected['method'] in ('POST', 'PUT', 'PATCH'):
+                    expected.setdefault('json', None)
+                expected.update(headers={
+                    'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=17)
+                transport.assert_called_once_with(**expected)
+
+    def test_direct_duplicate_bindings_fail_before_provider_and_transport(self):
+        invokes = (
+            lambda: self.client.call('POST', method='POST'),
+            lambda: self.client.call('POST', 'one', path='two'),
+            lambda: self.client.call('POST', 'one', {'q': 1}, params={'q': 2}),
+            lambda: self.client.call('POST', 'one', None, {'v': 1}, payload={'v': 2}),
+            lambda: self.client.get('/p', path='/q'),
+            lambda: self.client.get('/p', {'q': 1}, params={'q': 2}),
+            lambda: self.client.post('/p', {'v': 1}, payload={'v': 2}),
+            lambda: self.client.put('/p', {'v': 1}, payload={'v': 2}),
+            lambda: self.client.delete('/p', path='/q'),
+            lambda: self.client.prepare_request_context('one', path='two'),
+            lambda: self.client.prepare_request_context('one', 'POST', method='GET'),
+            lambda: self.client.prepare_request_context(
+                'one', 'POST', {'q': 1}, params={'q': 2}),
+            lambda: self.client.prepare_request_context(
+                'one', 'POST', None, {'v': 1}, payload={'v': 2}),
+        )
+        for invoke in invokes:
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with mock.patch.object(requests, 'request') as transport:
+                    with self.assertRaises(TypeError):
+                        invoke()
+                    transport.assert_not_called()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+
+    def test_empty_method_reports_input_and_sender_writer_without_dispatch(self):
+        self.client.method = None
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        for raise_exception in (True, False):
+            with self.subTest(raise_exception=raise_exception):
+                before = self.provider.authenticate.call_count
+                with mock.patch.object(requests, 'request') as transport:
+                    if raise_exception:
+                        with self.assertRaisesRegex(ValueError, 'method'):
+                            self.client.call(raise_exception=True)
+                    else:
+                        self.assertIsNone(self.client.call(raise_exception=False))
+                    transport.assert_not_called()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+                self.client._report_sentry.assert_called_with(exception=mock.ANY, method=None)
+                for active_log in (True, False):
+                    with self.subTest(active_log=active_log):
+                        sender = production.ServiceClientSend(
+                            self.client, {'item': 1}, active_log=active_log, endpoint_id=self.endpoint)
+                        with mock.patch.object(requests, 'request') as transport:
+                            with mock.patch.object(production._logger, 'exception'):
+                                sender.dispatch_send()
+                            transport.assert_not_called()
+                        log_writer._create_error.assert_called_once()
+                        self.assertIsInstance(log_writer._create_error.call_args[0][0], ValueError)
+                        self.assertEqual(log_writer._create_log.call_count, 0)
+                        log_writer._create_error.reset_mock()
+
+    def test_model_wrapper_invalid_keys_never_construct_a_client(self):
+        model = production.ServiceClientModel()
+        model.env = self.client.env
+        model.get_service_client = mock.Mock(return_value=self.client)
+        cases = (
+            ('get', ('svc',), ('payload', 'method', 'url', 'raise_exception', 'unexpected_opt')),
+            ('post', ('svc',), ('params', 'method', 'url', 'raise_exception', 'unexpected_opt')),
+            ('put', ('svc',), ('params', 'method', 'url', 'raise_exception', 'unexpected_opt')),
+            ('delete', ('svc', '/p'),
+             ('params', 'payload', 'method', 'url', 'raise_exception', 'unexpected_opt')),
+        )
+        for name, args, keys in cases:
+            for key in keys:
+                with self.subTest(wrapper=name, key=key):
+                    model.get_service_client.reset_mock()
+                    factory = self.client.env['service.auth.factory'].create_service_auth
+                    before = factory.call_count
+                    with mock.patch.object(requests, 'request') as transport:
+                        with self.assertRaises(TypeError):
+                            getattr(model, name)(*args, **{key: 1})
+                        transport.assert_not_called()
+                    model.get_service_client.assert_not_called()
+                    self.assertEqual(factory.call_count, before)
+
+    def test_action_eval_context_is_not_request_options_and_keeps_post_default(self):
+        model = production.ServiceClientModel()
+        model.ensure_one = mock.Mock()
+        model.active = True
+        model.each_record = False
+        model.endpoint_id = self.endpoint
+        model.credential_id = None
+        records = object()
+        action_context = {'records': records, 'opaque_eval_value': {'arbitrary': 7},
+                          'audience': 'documented-but-not-forwarded'}
+        model._get_eval_context = mock.Mock(return_value={'ctx': {}})
+        model._run_action_iteration = mock.Mock(return_value={
+            'ctx': {}, 'response': [{}]})
+        model.prepare_request = mock.Mock(return_value={
+            'url': None, 'path': None, 'method': None, 'params': None,
+            'headers': None, 'payload': None, 'raise_exception': True,
+            'audience': action_context['audience'],
+        })
+        client = types.SimpleNamespace(call=mock.Mock(return_value='response'),
+                                       _report_sentry=mock.Mock())
+        model.get_service_client = mock.Mock(return_value=client)
+        model._run_action_handle = mock.Mock(return_value={})
+        model.action_next_id = types.SimpleNamespace(
+            with_context=lambda context: types.SimpleNamespace(run=mock.Mock(return_value=None)))
+
+        model.run_action_service_client(eval_context=action_context)
+
+        model.prepare_request.assert_called_once_with(records, {}, action_context)
+        model.get_service_client.assert_called_once_with(self.endpoint, credential=None)
+        client.call.assert_called_once_with(method='POST', path=None, params={}, payload={},
+                                           headers={}, raise_exception=True, url=None)
+        self.assertNotIn('audience', client.call.call_args[1])
+
+    def test_sender_preserves_arbitrary_nested_domain_data_on_wire_without_changing_log_flag(self):
+        payload = {'active_log': 'domain value', 'unexpected_opt': {'nested': [1, {'x': 2}]}}
+        sender = self.client.prepare_payload(**payload)
+        self.assertFalse(sender.active_log)
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic')
+        with mock.patch.object(requests, 'request', return_value=response) as transport:
+            sender.dispatch_send()
+        self.assertEqual(transport.call_args[1]['json'], payload)
+        self.assertFalse(sender.active_log)
+
+    def test_direct_wrappers_accept_omitted_none_and_explicit_paths(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock())
+        wrappers = (
+            ('GET', self.client.get, {'params': {'q': 1}, 'payload': {'v': 1}}),
+            ('POST', self.client.post, {'payload': {'v': 1}}),
+            ('PUT', self.client.put, {'payload': {'v': 1}}),
+            ('DELETE', self.client.delete, {'params': {'q': 1}, 'payload': {'v': 1}}),
+        )
+        for method, invoke, options in wrappers:
+            for supplied, expected_url in ((Ellipsis, 'https://example.invalid/stored'),
+                                           (None, 'https://example.invalid/stored'),
+                                           ('/p', 'https://example.invalid//p')):
+                with self.subTest(method=method, path=supplied):
+                    self.endpoint.paths[:] = []
+                    call_options = dict(options)
+                    if supplied is not Ellipsis:
+                        call_options['path'] = supplied
+                    with mock.patch.object(requests, 'request', return_value=response) as transport:
+                        invoke(**call_options)
+                    self.assertEqual(transport.call_args[1]['method'], method)
+                    self.assertEqual(transport.call_args[1]['url'], expected_url)
+                    self.assertEqual('json' in transport.call_args[1], method in ('POST', 'PUT'))
+
+    def test_each_direct_wrapper_unknown_and_method_conflict_stop_before_dispatch(self):
+        invokes = (
+            lambda: self.client.get(unexpected_opt=1),
+            lambda: self.client.post(unexpected_opt=1),
+            lambda: self.client.put(unexpected_opt=1),
+            lambda: self.client.delete(unexpected_opt=1),
+            lambda: self.client.get(method='GET'),
+            lambda: self.client.post(method='POST'),
+            lambda: self.client.put(method='PUT'),
+            lambda: self.client.delete(method='DELETE'),
+        )
+        for invoke in invokes:
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with mock.patch.object(requests, 'request') as transport:
+                    with self.assertRaises(TypeError):
+                        invoke()
+                    transport.assert_not_called()
+                self.assertEqual(self.provider.authenticate.call_count, before)
+
+    def test_model_call_duplicate_bindings_fail_before_factory(self):
+        model = production.ServiceClientModel()
+        model.get_service_client = mock.Mock(return_value=self.client)
+        invokes = (
+            lambda: model.call('svc', 'POST', method='POST'),
+            lambda: model.call('svc', 'POST', '/p', path='/q'),
+            lambda: model.call('svc', 'POST', '/p', {'q': 1}, params={'q': 2}),
+            lambda: model.call('svc', 'POST', '/p', None, {'v': 1}, payload={'v': 2}),
+        )
+        for invoke in invokes:
+            with self.subTest(invoke=invoke):
+                with mock.patch.object(requests, 'request') as transport:
+                    with self.assertRaises(TypeError):
+                        invoke()
+                    transport.assert_not_called()
+                model.get_service_client.assert_not_called()
+
+    def test_model_wrappers_preserve_omitted_none_and_explicit_paths(self):
+        model = production.ServiceClientModel()
+        model.call = mock.Mock(return_value='ok')
+        cases = (
+            (lambda: model.get('svc'), 'GET'),
+            (lambda: model.get('svc', None), 'GET'),
+            (lambda: model.get('svc', '/p'), 'GET'),
+            (lambda: model.post('svc'), 'POST'),
+            (lambda: model.post('svc', None), 'POST'),
+            (lambda: model.post('svc', '/p'), 'POST'),
+            (lambda: model.put('svc'), 'PUT'),
+            (lambda: model.put('svc', None), 'PUT'),
+            (lambda: model.put('svc', '/p'), 'PUT'),
+            (lambda: model.delete('svc', None), 'DELETE'),
+            (lambda: model.delete('svc', '/p'), 'DELETE'),
+        )
+        for invoke, expected_method in cases:
+            with self.subTest(method=expected_method, invoke=invoke):
+                model.call.reset_mock()
+                self.assertEqual(invoke(), 'ok')
+                self.assertEqual(model.call.call_args[1]['method'], expected_method)
+                self.assertIn('path', model.call.call_args[1])
+        model.call.reset_mock()
+        with self.assertRaises(TypeError):
+            model.delete('svc')
+        model.call.assert_not_called()
+
+    def test_preparation_and_call_reject_reserved_keys_before_provider_or_transport(self):
+        invokes = (
+            lambda: self.client.prepare_request_context(method='POST', credential='secret'),
+            lambda: self.client.prepare_request_context(method='POST', raise_exception=False),
+            lambda: self.client.prepare_request_context(method='POST', unexpected_opt=1),
+            lambda: self.client.call(method='POST', credential='secret'),
+            lambda: self.client.call(method='POST', unexpected_opt=1),
+            lambda: self.client.call(method='POST', unexpected_opt=1, raise_exception=False),
+        )
+        for invoke in invokes:
+            with self.subTest(invoke=invoke):
+                before = self.provider.authenticate.call_count
+                with mock.patch.object(requests, 'request') as transport:
+                    with self.assertRaises(TypeError):
+                        invoke()
+                    transport.assert_not_called()
+                self.assertEqual(self.provider.authenticate.call_count, before)
 
 if __name__ == '__main__':
     unittest.main()
