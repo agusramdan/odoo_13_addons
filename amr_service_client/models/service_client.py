@@ -168,7 +168,7 @@ class ServiceClient:
         self.credential_id = credential
         self.loader = env["service.credential.loader"]
         self.credential = self.loader.get_credential(credential or endpoint and endpoint.credential_id)
-        self.credential_data = self.loader.load_credential(credential) if self.credential else None
+        self.credential_data = self.loader.load_credential(self.credential) if self.credential else None
         self.provider = env["service.auth.factory"].create_service_auth(self.credential_data)
         self.path = path
         self.method = method
@@ -194,7 +194,7 @@ class ServiceClient:
             url = kw.get('url') or self.endpoint.get_url(path or self.path)
             headers= self.endpoint.request_headers_default(headers)
             request_context["timeout"] = self.endpoint.timeout
-            audience = kw.get('audience', None) or self.endpoint.audience or None
+            audience = kw.get('audience', None) or self.endpoint.audience
         else:
             url = kw.get('url')
             audience = kw.get('audience', None)
@@ -213,10 +213,7 @@ class ServiceClient:
             request_context["json"] = normalize_json(payload)
         else:
             _logger.debug("prepare_request_context: method=%s, not sending payload", request_context['method'])
-        kw2 = {}
-        if audience:
-            kw2['audience'] = audience
-        return self.provider.authenticate(request_context, **kw2)
+        return self.provider.authenticate(request_context, audience=audience)
 
     def _report_sentry(self, response=None, exception=None, method=None):
         report_outcome(
@@ -251,7 +248,8 @@ class ServiceClient:
         return self.call(method="DELETE", path=path, **kwargs)
 
     def prepare_payload(self, **payload):
-        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint)
+        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint,
+                                 credential_id=self.credential)
 
 
 class RemoteObjectProxy:

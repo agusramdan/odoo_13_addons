@@ -235,9 +235,37 @@ class TransportRegression(unittest.TestCase):
             with self.subTest(supplied=supplied):
                 self.client.prepare_request_context(audience=supplied)
                 self.assertEqual(self.provider.authenticate.call_args[1]['audience'], expected)
-        self.endpoint.audience = None
+        setattr(self.endpoint, 'audience', None)
         self.client.prepare_request_context()
-        self.assertNotIn('audience', self.provider.authenticate.call_args[1])
+        self.assertEqual(self.provider.authenticate.call_args[1], {'audience': None})
+
+    def test_required_audience_provider_receives_exact_fallback_values(self):
+        received = []
+
+        def authenticate(context, audience):
+            received.append(audience)
+            return context
+
+        self.client.provider.authenticate = authenticate
+        for endpoint_audience in (None, False, '', 'endpoint-audience'):
+            self.endpoint.audience = endpoint_audience
+            for supplied, expected in ((None, endpoint_audience),
+                                       (False, endpoint_audience),
+                                       ('', endpoint_audience),
+                                       ('call-audience', 'call-audience')):
+                with self.subTest(endpoint_audience=endpoint_audience, supplied=supplied):
+                    result = self.client.prepare_request_context(audience=supplied)
+                    self.assertIsInstance(result, dict)
+                    self.assertEqual(received[-1], expected)
+
+        self.client.endpoint = None
+        for supplied, expected in ((None, None), (False, False), ('', ''),
+                                   ('call-audience', 'call-audience')):
+            with self.subTest(endpoint=None, supplied=supplied):
+                self.client.prepare_request_context(audience=supplied)
+                self.assertEqual(received[-1], expected)
+        self.client.prepare_request_context()
+        self.assertIsNone(received[-1])
 
     def test_prepare_payload_uses_client_logging_snapshot_and_preserves_payload_key(self):
         endpoint = Endpoint()
@@ -423,6 +451,58 @@ class TransportRegression(unittest.TestCase):
         transport.assert_called_once()
         self.assertEqual(transport.call_args[1]['json'],
                          {'active_log': 'payload value', 'item': 3})
+
+    def test_prepared_sender_attributes_resolved_credential(self):
+        endpoint_credential = types.SimpleNamespace(id=13)
+        override_credential = types.SimpleNamespace(id=14)
+        cases = (
+            ('credential-name', override_credential, override_credential, True, endpoint_credential),
+            (override_credential, override_credential, override_credential, True, endpoint_credential),
+            (None, endpoint_credential, endpoint_credential, True, endpoint_credential),
+            (None, None, None, False, None),
+        )
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        for supplied, resolved, loaded, should_load, endpoint_credential in cases:
+            with self.subTest(supplied=supplied, resolved=resolved):
+                endpoint = Endpoint()
+                endpoint.active_log = True
+                endpoint.credential_id = endpoint_credential
+                loader = types.SimpleNamespace(
+                    get_credential=mock.Mock(return_value=resolved),
+                    load_credential=mock.Mock(return_value={'type': 'none'}),
+                )
+                provider = types.SimpleNamespace(authenticate=lambda context, audience=None: context)
+                env = {
+                    'service.credential.loader': loader,
+                    'service.auth.factory': types.SimpleNamespace(
+                        create_service_auth=mock.Mock(return_value=provider)),
+                    'service.client.log': types.SimpleNamespace(
+                        _create_log=mock.Mock(), _create_error=mock.Mock()),
+                }
+                client = production.ServiceClient(env, endpoint, supplied, path='stored', method='PUT')
+                self.assertIs(client.credential, resolved)
+                if should_load:
+                    loader.load_credential.assert_called_once_with(loaded)
+                else:
+                    loader.load_credential.assert_not_called()
+                with mock.patch.object(requests, 'request', return_value=response):
+                    client.prepare_payload().dispatch_send()
+                logged_credential = env['service.client.log']._create_log.call_args[1]['credential_id']
+                self.assertIs(logged_credential, resolved)
+
+    def test_direct_sender_credential_override_and_none_fallback_are_unchanged(self):
+        endpoint_credential = types.SimpleNamespace(id=13)
+        override_credential = types.SimpleNamespace(id=14)
+        service = types.SimpleNamespace(env={}, client_id='synthetic-client',
+                                        endpoint_id=types.SimpleNamespace(credential_id=endpoint_credential))
+
+        override = production.ServiceClientSend(service, {}, endpoint_id=service.endpoint_id,
+                                                credential_id=override_credential)
+        fallback = production.ServiceClientSend(service, {}, endpoint_id=service.endpoint_id,
+                                               credential_id=None)
+
+        self.assertIs(override.credential_id, override_credential)
+        self.assertIs(fallback.credential_id, endpoint_credential)
 
     def test_normalize_json_bytearray_uuid_and_unknown_fallback(self):
         unknown = types.SimpleNamespace()
