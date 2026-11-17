@@ -4,8 +4,7 @@
 # amr_oidc: PyJWT (imported as jwt) and cryptography.
 # amr_resource / amr_service_client: PyJWT and requests.
 # Werkzeug version matches Odoo 13.0's Linux requirements.
-# amr_sentry: sentry-sdk and PyYAML.
+# amr_sentry: sentry-sdk.
 PyJWT==2.8.0
 cryptography==39.0.2
 sentry-sdk==2.73.0
-PyYAML==6.0.1
