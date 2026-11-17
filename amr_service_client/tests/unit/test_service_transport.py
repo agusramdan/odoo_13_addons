@@ -314,6 +314,116 @@ class TransportRegression(unittest.TestCase):
         self.assertTrue(production.ServiceClientSend(service, {}, active_log=True, endpoint_id=endpoint).active_log)
         self.assertFalse(production.ServiceClientSend(service, {}, active_log=None, endpoint_id=endpoint).active_log)
 
+    def test_dispatch_uses_active_log_mutated_after_sender_creation(self):
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        sender = production.ServiceClientSend(self.client, {'item': 1}, active_log=False,
+                                              endpoint_id=self.endpoint)
+        sender.active_log = True
+        with mock.patch.object(requests, 'request', return_value=response):
+            sender.dispatch_send()
+        log_writer._create_log.assert_called_once()
+        self.assertEqual(log_writer._create_log.call_args[0], ('done',))
+        self.assertEqual(log_writer._create_error.call_count, 0)
+        self.assertFalse(self.endpoint.active_log)
+
+        log_writer._create_log.reset_mock()
+        sender = production.ServiceClientSend(self.client, {'item': 1}, active_log=True,
+                                              endpoint_id=self.endpoint)
+        sender.active_log = False
+        with mock.patch.object(requests, 'request', return_value=response):
+            sender.dispatch_send()
+        self.assertEqual(log_writer._create_log.call_count, 0)
+        self.assertEqual(log_writer._create_error.call_count, 0)
+        self.assertFalse(self.endpoint.active_log)
+
+    def test_dispatch_preparation_error_always_attempts_error_writer(self):
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        error = ValueError('synthetic preparation failure')
+        self.client.prepare_request_context = mock.Mock(side_effect=error)
+        for active_log in (True, False):
+            with self.subTest(active_log=active_log):
+                self.client._report_sentry.reset_mock()
+                sender = production.ServiceClientSend(self.client, {}, active_log=active_log,
+                                                      endpoint_id=self.endpoint)
+                with mock.patch.object(requests, 'request') as transport:
+                    with mock.patch.object(production._logger, 'exception'):
+                        sender.dispatch_send()
+                transport.assert_not_called()
+                log_writer._create_error.assert_called_once()
+                self.assertIs(log_writer._create_error.call_args[0][0], error)
+                self.client._report_sentry.assert_called_once_with(
+                    response=None, exception=error, method=None)
+                log_writer._create_error.reset_mock()
+        self.assertEqual(log_writer._create_log.call_count, 0)
+
+    def test_dispatch_http_error_with_logging_on_reports_and_writes_error(self):
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        error = requests.exceptions.HTTPError('synthetic HTTP failure')
+        response = types.SimpleNamespace(text='failure response',
+            raise_for_status=mock.Mock(side_effect=error))
+        with mock.patch.object(requests, 'request', return_value=response):
+            with mock.patch.object(production._logger, 'exception'):
+                production.ServiceClientSend(self.client, {}, active_log=True,
+                    endpoint_id=self.endpoint).dispatch_send()
+        self.client._report_sentry.assert_called_once_with(
+            response=response, exception=error, method='PUT')
+        log_writer._create_error.assert_called_once()
+        self.assertIs(log_writer._create_error.call_args[0][0], error)
+        self.assertEqual(log_writer._create_log.call_count, 0)
+
+    def test_dispatch_contains_hook_failures_and_keeps_writer_behavior(self):
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(), _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        self.client._report_sentry.side_effect = RuntimeError('hook unavailable')
+        with mock.patch.object(requests, 'request', return_value=response):
+            production.ServiceClientSend(self.client, {'item': 1}, active_log=True,
+                endpoint_id=self.endpoint).dispatch_send()
+        log_writer._create_log.assert_called_once()
+        self.assertEqual(log_writer._create_error.call_count, 0)
+
+        log_writer._create_log.reset_mock()
+        error = requests.exceptions.Timeout('synthetic transport failure')
+        self.client._report_sentry.reset_mock(side_effect=True)
+        self.client._report_sentry.side_effect = RuntimeError('hook unavailable')
+        with mock.patch.object(requests, 'request', side_effect=error):
+            with mock.patch.object(production._logger, 'exception'):
+                production.ServiceClientSend(self.client, {}, active_log=False,
+                    endpoint_id=self.endpoint).dispatch_send()
+        self.client._report_sentry.assert_called_once_with(
+            response=None, exception=error, method='PUT')
+        log_writer._create_error.assert_called_once()
+        self.assertEqual(log_writer._create_log.call_count, 0)
+
+    def test_success_writer_failure_attempts_error_writer_without_second_hook(self):
+        error = RuntimeError('success writer failed')
+        log_writer = types.SimpleNamespace(_create_log=mock.Mock(side_effect=error),
+                                           _create_error=mock.Mock())
+        self.client.env['service.client.log'] = log_writer
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        with mock.patch.object(requests, 'request', return_value=response):
+            with mock.patch.object(production._logger, 'exception'):
+                result = production.ServiceClientSend(self.client, {}, active_log=True,
+                    endpoint_id=self.endpoint).dispatch_send()
+        self.assertIsNone(result)
+        log_writer._create_log.assert_called_once()
+        log_writer._create_error.assert_called_once()
+        self.assertIs(log_writer._create_error.call_args[0][0], error)
+        self.client._report_sentry.assert_called_once_with(
+            response=response, exception=None, method='PUT')
+
+    def test_prepared_payload_keeps_active_log_key_through_transport(self):
+        response = types.SimpleNamespace(raise_for_status=mock.Mock(), text='synthetic response')
+        with mock.patch.object(requests, 'request', return_value=response) as transport:
+            self.client.prepare_payload(active_log='payload value', item=3).dispatch_send()
+        transport.assert_called_once()
+        self.assertEqual(transport.call_args[1]['json'],
+                         {'active_log': 'payload value', 'item': 3})
+
     def test_normalize_json_bytearray_uuid_and_unknown_fallback(self):
         unknown = types.SimpleNamespace()
         result = production.normalize_json({
