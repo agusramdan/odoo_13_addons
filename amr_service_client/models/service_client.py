@@ -199,7 +199,6 @@ class ServiceClient:
         if args:
             raise TypeError("prepare_request_context accepts at most four positional arguments")
         request_context = {}
-        url = None
         headers = kw.get('headers')
         if self.endpoint:
             url = kw.get('url') or self.endpoint.get_url(path or self.path)
@@ -209,9 +208,7 @@ class ServiceClient:
         else:
             url = kw.get('url')
             audience = kw.get('audience', None)
-
-        if url:
-            request_context['url'] = url
+        request_context['url'] = url
         if params:
             request_context['params'] = params
         if headers:
