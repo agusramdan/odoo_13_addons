@@ -209,8 +209,6 @@ class ServiceClient:
             request_context['method'] = method
         elif self.method:
             request_context['method'] = self.method
-        else:
-            request_context['method'] = "GET"
         if request_context['method'] in ("POST", "PUT", "PATCH"):
             request_context["json"] = normalize_json(payload)
         else:
@@ -222,12 +220,10 @@ class ServiceClient:
             self.env, service_client=self.service_client, response=response, exception=exception, method=method
         )
 
-    def call(self, raise_exception=True, **kw):
+    def call(self,method=None, raise_exception=True, **kw):
         response = None
-        method = kw.get('method')
         try:
-            request_context = self.prepare_request_context(**kw)
-            method = request_context.get('method')
+            request_context = self.prepare_request_context(method=method,**kw)
             response = requests.request(**request_context)
             response.raise_for_status()
             self._report_sentry(response=response, method=method)
