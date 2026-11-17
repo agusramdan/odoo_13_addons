@@ -22,9 +22,12 @@ class ResUsers(models.Model):
 
         if item_dict:
             if item_dict.get('id') in [1, 2, 3, 4]:
+                # Browses only the listed built-in user IDs with elevated access; necessity is unverified.
                 return self.sudo().browse(item_dict.get('id'))
             elif item_dict.get('email'):
+                # Searches users by email across access rules; necessity is unverified.
                 return self.sudo().search([('email', '=', item_dict.get('email'))], limit=1)
             elif item_dict.get('login'):
+                # Searches users by login across access rules; necessity is unverified.
                 return self.sudo().search([('login', '=', item_dict.get('login'))], limit=1)
         return self.browse()

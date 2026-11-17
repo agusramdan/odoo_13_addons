@@ -348,6 +348,7 @@ class ExternalDataSyncStrategy(models.Model):
         external_id = item_data.get('id')
         display_name = item_data.get('display_name')
 
+        # Resolves the configured model with elevated access for ID matching; necessity is unverified.
         Model = self.env[self.internal_model].sudo()
         internal_id = None
         if self:

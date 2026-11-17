@@ -54,6 +54,7 @@ class ExternalDataLookup(models.Model):
 
     @api.model
     def _selection_internal_model(self):
+        # Reads model metadata across access rules for the internal-model selection; necessity is unverified.
         IrModel = self.env['ir.model'].sudo()
 
         domain = [
