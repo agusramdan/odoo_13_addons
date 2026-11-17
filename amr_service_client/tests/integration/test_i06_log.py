@@ -88,8 +88,9 @@ class TestI06Log(TransactionCase):
         self.assertEqual(transport.call_args[1], {
             'method': 'POST', 'url': 'https://example.invalid/' + self.markers[0],
             'headers': {'Content-Type': 'application/json', 'Accept': 'application/json'},
-            'params': None, 'timeout': 30, 'json': original_payload,
+            'timeout': 30, 'json': original_payload,
         })
+        self.assertNotIn('params', transport.call_args[1])
         self.assertEqual(payload, original_payload)
         self.assertEqual(response.text, self.markers[3])
 
@@ -121,7 +122,13 @@ class TestI06Log(TransactionCase):
         self.assertEqual(row.read(fields), before)
 
     def test_rpc_cannot_create_or_forge_log_attribution(self):
-        user = self.env.ref('base.user_demo')
+        user = self.env['res.users'].with_context(no_reset_password=True).create({
+            'name': 'Synthetic ordinary UAT user',
+            'login': 'i06-ordinary-' + uuid.uuid4().hex,
+            'groups_id': [(6, 0, self.env.ref('base.group_user').ids)],
+            'company_id': self.env.company.id,
+            'company_ids': [(6, 0, self.env.company.ids)],
+        })
         self.assertTrue(user.has_group('base.group_user'))
         self.assertFalse(user.has_group('base.group_system'))
         before = set(self.logs.search([]).ids)

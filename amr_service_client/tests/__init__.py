@@ -3,3 +3,6 @@ from .integration import test_i02_orm
 from .integration import test_i04_endpoint_wizard
 from .integration import test_i06_log
 from .integration import test_u09_inactive_guard
+from .integration import test_uat_addons13_71_logging
+from .integration import test_uat_addons13_71_refactor
+from .integration import test_uat_addons13_71_url_headers
