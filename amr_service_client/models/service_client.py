@@ -250,8 +250,7 @@ class ServiceClient:
         return self.call(method="DELETE", path=path, **kwargs)
 
     def prepare_payload(self, **payload):
-        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint,
-                                 credential_id=self.credential)
+        return ServiceClientSend(self, payload, active_log=self.active_log, endpoint_id=self.endpoint, credential_id=self.credential_id)
 
 
 class RemoteObjectProxy:
