@@ -220,10 +220,10 @@ class ServiceClient:
             self.env, service_client=self.service_client, response=response, exception=exception, method=method
         )
 
-    def call(self,method=None, raise_exception=True, **kw):
+    def call(self,method=None, path=None, params=None, payload=None, raise_exception=True, **kw):
         response = None
         try:
-            request_context = self.prepare_request_context(method=method,**kw)
+            request_context = self.prepare_request_context(method=method, path=path, params=params, payload=payload, **kw)
             response = requests.request(**request_context)
             response.raise_for_status()
             self._report_sentry(response=response, method=method)
