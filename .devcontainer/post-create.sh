@@ -4,6 +4,14 @@ set -e
 echo "=== 1. Setup Docker Socket & SSH Known Hosts ==="
 sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
 
+UNITTEST_IMAGE="unittest:odoo13-python373"
+echo "=== Build Odoo 13 unittest image ==="
+if docker build -f /workspace/.devcontainer/Dockerfile.unittest -t "$UNITTEST_IMAGE" /workspace; then
+  echo "Unittest image ready: $UNITTEST_IMAGE"
+else
+  echo "Unittest image build failed; workspace setup continues. Build manually with: docker build -f .devcontainer/Dockerfile.unittest -t $UNITTEST_IMAGE ." >&2
+fi
+
 mkdir -p ~/.ssh
 if ! grep -q "github.com" ~/.ssh/known_hosts 2>/dev/null; then
   ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
@@ -18,14 +26,11 @@ if [ -z "$DEVPOD_WORKSPACE_ID" ] || [ "$DEVPOD_WORKSPACE_ID" = "odoo-dev" ]; the
     echo "export DEVPOD_WORKSPACE_ID=\"$DETECTED_ID\"" >> ~/.bashrc
   fi
 fi
-
+RUNNING_DIR="/workspace/.runtime"
+mkdir -p "$RUNNING_DIR"
 # Buat panduan story per workspace tanpa menimpa konten Owner.
-if [ -n "$DEVPOD_WORKSPACE_ID" ]; then
-  STORY_DIR="/workspace/docs/${DEVPOD_WORKSPACE_ID}"
-  mkdir -p "$STORY_DIR"
-  if [ ! -e "$STORY_DIR/story.md" ]; then
-    touch "$STORY_DIR/story.md"
-  fi
+if [ ! -e "$RUNNING_DIR/story.md" ]; then
+  touch "$RUNNING_DIR/story.md"
 fi
 
 echo "=== 2. Menunggu PostgreSQL Siap ==="
@@ -49,8 +54,10 @@ if [ "$TABLE_EXISTS" != "ir_module_module" ]; then
 fi
 
 echo "=== 4. Aktivasi Hermes Skills-as-Code ==="
-if [ -d "/workspace/skills" ]; then
-  hermes skills trust /workspace/skills || true
+if [ -d "/workspace/.agents/skills" ]; then
+  hermes skills trust /workspace
+else
+  echo "Direktori .agents/skills tidak ditemukan; lewati trust proyek."
 fi
 
 # Generate .vscode/launch.json otomatis jika belum ada

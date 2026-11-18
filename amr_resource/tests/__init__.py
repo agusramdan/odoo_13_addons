@@ -1,1 +1,2 @@
-from .integration import test_helper, test_contracts, test_registry
+from .integration import test_lifecycle
+from .browser import test_browser

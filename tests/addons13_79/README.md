@@ -34,7 +34,7 @@ fixture is edited.
 Offline regression (supplemental unittest with repository isolation guard):
 
 ```
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=skills/odoo-unit-test/scripts python3 -c 'from isolation import install,self_check; install(); self_check(); import unittest; s=unittest.defaultTestLoader.discover("tests/addons13_79/unit",pattern="test_*.py"); r=unittest.TextTestRunner(verbosity=2).run(s); raise SystemExit(not r.wasSuccessful())'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.agents/skills/odoo-unit-test/scripts python3 -c 'from isolation import install,self_check; install(); self_check(); import unittest; s=unittest.defaultTestLoader.discover("tests/addons13_79/unit",pattern="test_*.py"); r=unittest.TextTestRunner(verbosity=2).run(s); raise SystemExit(not r.wasSuccessful())'
 ```
 
 The prescribed pytest skill runner is the required gate when available; this

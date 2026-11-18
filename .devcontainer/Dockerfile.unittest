@@ -1,0 +1,22 @@
+FROM odoo:13.0
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/opt/pytest-packages
+
+WORKDIR /workspace
+COPY .agents/skills/odoo-unit-test/examples/requirements.txt /tmp/test-requirements.txt
+COPY .agents/skills/odoo-unit-test/scripts/ /opt/odoo-unit-test/scripts/
+COPY .agents/skills/odoo-unit-test/examples/ /opt/odoo-unit-test/examples/
+COPY requirements.txt /tmp/addons-requirements.txt
+
+USER root
+RUN python3 -m pip install --no-cache-dir --upgrade pip==23.3.2 \
+    && python3 -m pip install --no-cache-dir --target /opt/pytest-packages -r /tmp/test-requirements.txt \
+    && python3 -m pip install --no-cache-dir -r /tmp/addons-requirements.txt \
+    && python3 -m pip install --no-cache-dir coverage==7.2.7 \
+    && python3 -c "import sys, pytest, jwt, cryptography, coverage; assert sys.version_info[:3] == (3, 7, 3), sys.version"
+USER odoo
+ENTRYPOINT ["python3", "-B", "/opt/odoo-unit-test/scripts/run_tests.py"]
