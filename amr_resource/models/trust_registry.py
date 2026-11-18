@@ -99,7 +99,6 @@ def _https_url(value):
         return False
 
 
-
 def _validate_mapping_claim(key, value):
     """Validate a literal top-level claim value without normalizing it."""
     import re
@@ -191,12 +190,13 @@ def _legacy_plan(get_param, values, audiences, bindings):
                       allow_missing_azp=False, fixed_user_id=False)
     normalized.update(values)
     plan: dict = dict(version=2, values=normalized,
-                audiences=sorted(audiences), bindings=sorted(
-                    [dict(b) for b in bindings], key=lambda b: b['sub']),
-                legacy_selectors=selectors, legacy_values=resolved)
+                      audiences=sorted(audiences), bindings=sorted(
+            [dict(b) for b in bindings], key=lambda b: b['sub']),
+                      legacy_selectors=selectors, legacy_values=resolved)
     plan['digest'] = hashlib.sha256(json.dumps(
         plan, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     return plan
+
 
 class RegistryAccess(models.AbstractModel):
     _name = 'amr.resource.registry.access'
@@ -371,37 +371,37 @@ class AmrResourceIssuer(models.Model):
                                       ('fixed_user', 'Fixed User'),
                                       ('mapping', 'Ordered Claim Mapping'),
                                       ('resolver', 'Allowlisted Resolver')])
-    mvp_enabled = fields.Boolean(default=False)
+    mvp_enabled = fields.Boolean(default=False, readonly=True)
     metadata_mode = fields.Selection([('manual', 'Manual'),
-                                      ('oidc_discovery', 'OIDC Discovery')])
-    discovery_unavailable_declared = fields.Boolean(default=False)
-    discovery_unavailable_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP)
+                                      ('oidc_discovery', 'OIDC Discovery')], readonly=True)
+    discovery_unavailable_declared = fields.Boolean(default=False, readonly=True)
+    discovery_unavailable_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
     verification_source = fields.Selection([('jwks', 'JWKS'),
                                             ('local_public', 'Local public key'),
-                                            ('none', 'No JWKS')])
+                                            ('none', 'No JWKS')], readonly=True)
     introspection_source = fields.Selection([('none', 'None'), ('manual', 'Manual'),
-                                             ('rfc8414', 'RFC 8414')])
-    no_jwks_declaration = fields.Boolean(default=False)
-    no_jwks_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP)
-    introspection_credential_ref = fields.Char(size=256, groups=TRUST_GROUP)
-    introspection_auth_client_id = fields.Char(groups=TRUST_GROUP)
-    introspection_auth_method = fields.Selection([('client_secret_basic', 'Client Secret Basic')])
-    introspection_basic_contract_ref = fields.Char(size=512, groups=TRUST_GROUP)
-    introspection_credential_endpoint = fields.Char(groups=TRUST_GROUP)
-    allow_jwt_introspection = fields.Boolean(default=False)
-    allow_introspection_iss_absent = fields.Boolean(default=False)
+                                             ('rfc8414', 'RFC 8414')], readonly=True)
+    no_jwks_declaration = fields.Boolean(default=False, readonly=True)
+    no_jwks_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
+    introspection_credential_ref = fields.Char(size=256, groups=TRUST_GROUP, readonly=True)
+    introspection_auth_client_id = fields.Char(groups=TRUST_GROUP, readonly=True)
+    introspection_auth_method = fields.Selection([('client_secret_basic', 'Client Secret Basic')], readonly=True)
+    introspection_basic_contract_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
+    introspection_credential_endpoint = fields.Char(groups=TRUST_GROUP, readonly=True)
+    allow_jwt_introspection = fields.Boolean(default=False, readonly=True)
+    allow_introspection_iss_absent = fields.Boolean(default=False, readonly=True)
     resolver_key = fields.Selection([('get_user_match', 'Default')],
                                     readonly=True, default='get_user_match', required=True)
-    python_code = fields.Text(groups=CODE_GROUP, copy=False,
+    python_code = fields.Text(groups=CODE_GROUP, copy=False, readonly=True,
                               help='Source storage only. Execution is disabled in v1.')
     code_revision = fields.Integer(readonly=True, copy=False, groups=CODE_GROUP)
     code_digest = fields.Char(readonly=True, copy=False, groups=CODE_GROUP)
     code_date = fields.Datetime(readonly=True, copy=False, groups=CODE_GROUP)
     policy_revision = fields.Integer(readonly=True, copy=False, default=1, groups=TRUST_GROUP)
 
-    fixed_user_id = fields.Many2one('res.users', ondelete='restrict')
+    fixed_user_id = fields.Many2one('res.users', readonly=True, ondelete='restrict')
     code_actor_id = fields.Many2one('res.users', readonly=True, copy=False,
-                                   ondelete='restrict', groups=CODE_GROUP)
+                                    ondelete='restrict', groups=CODE_GROUP)
     audience_ids = fields.One2many('oidc.issuer.register.audience', 'issuer_id')
     binding_ids = fields.One2many('oidc.issuer.subject', 'issuer_id')
     user_mapping_ids = fields.One2many('oidc.issuer.user.mapping', 'issuer_id')
@@ -517,8 +517,8 @@ class AmrResourceIssuer(models.Model):
             values = dict(values)
             # Context defaults are RPC input too; audit/source checks must see them.
             for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled',
-                                         'discovery_unavailable_declared',
-                                         'discovery_unavailable_evidence_ref'}:
+                                        'discovery_unavailable_declared',
+                                        'discovery_unavailable_evidence_ref'}:
                 if name not in values and 'default_' + name in self.env.context:
                     values[name] = self.env.context['default_' + name]
             self._guard_issuer_values(values, creating=True)
@@ -695,9 +695,10 @@ class AmrResourceIssuer(models.Model):
             'integrity_digest': digest, 'evidence_ref': evidence_ref,
             'actor_id': self.env.uid, 'captured_at': fields.Datetime.now(),
         })
-        _logger.info('Trust policy snapshot captured issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s timestamp=%s',
-                     self.id, snapshot.id, self.policy_revision, self.env.uid,
-                     self.verification_source or 'legacy', 'snapshot_capture', fields.Datetime.now())
+        _logger.info(
+            'Trust policy snapshot captured issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s timestamp=%s',
+            self.id, snapshot.id, self.policy_revision, self.env.uid,
+            self.verification_source or 'legacy', 'snapshot_capture', fields.Datetime.now())
         return snapshot.id
 
     def action_restore_policy_snapshot(self, snapshot_id, expected_revision, evidence_ref):
@@ -722,7 +723,8 @@ class AmrResourceIssuer(models.Model):
             payload = json.loads(snapshot.payload)
             if not isinstance(payload, dict):
                 raise ValidationError('Snapshot is invalid.')
-            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+            digest = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
         except (TypeError, ValueError):
             raise ValidationError('Snapshot is invalid.')
         if (digest != snapshot.integrity_digest or payload.get('issuer') != self.issuer
@@ -738,7 +740,7 @@ class AmrResourceIssuer(models.Model):
             raise ValidationError('Snapshot configuration is incomplete.')
         self._validate_snapshot_algorithms(payload)
         candidate = self.new({key: value for key, value in payload.items()
-                               if key not in ('audiences', 'mappings', 'algorithms')})
+                              if key not in ('audiences', 'mappings', 'algorithms')})
         candidate.audience_ids = [(0, 0, {'value': value}) for value in payload['audiences']]
         candidate.user_mapping_ids = [(0, 0, row) for row in payload['mappings']]
         candidate._check_profile(mvp_enabled=payload['mvp_enabled'])
@@ -765,10 +767,11 @@ class AmrResourceIssuer(models.Model):
             restoring = record.with_context(_policy_restore_token=_RESTORE_CONTEXT_TOKEN)
             super(AmrResourceIssuer, restoring).write(values)
             revision = record._issue_policy_revision()
-        _logger.info('Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
-                     self.id, snapshot.id, revision, self.env.uid,
-                     payload.get('verification_source') or 'legacy', 'snapshot_restore', evidence_ref,
-                     fields.Datetime.now())
+        _logger.info(
+            'Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
+            self.id, snapshot.id, revision, self.env.uid,
+            payload.get('verification_source') or 'legacy', 'snapshot_restore', evidence_ref,
+            fields.Datetime.now())
         return True
 
     @staticmethod
@@ -822,7 +825,8 @@ class AmrResourceIssuer(models.Model):
             if (record.token_profile != 'jwt' or record.metadata_mode != 'manual'
                     or record.verification_source not in ('jwks', 'local_public')
                     or record.introspection_source != 'none'):
-                raise ValidationError('Only manual JWT/JWKS or local-public profiles without introspection are supported.')
+                raise ValidationError(
+                    'Only manual JWT/JWKS or local-public profiles without introspection are supported.')
             if any(getattr(record, name, False) for name in (
                     'introspection_endpoint', 'introspection_credential_ref',
                     'introspection_auth_client_id', 'introspection_auth_method',
@@ -985,9 +989,10 @@ class OidcPolicySnapshot(models.Model):
             super(OidcPolicySnapshot, snapshot.sudo()).write({
                 'invalidated': True, 'invalidated_actor_id': self.env.uid,
                 'invalidated_at': fields.Datetime.now(), 'invalidation_reason': 'snapshot_invalidated'})
-            _logger.info('Trust policy snapshot invalidated issuer_id=%s snapshot_id=%s actor=%s reason_code=%s timestamp=%s',
-                         snapshot.issuer_id.id, snapshot.id, self.env.uid,
-                         'snapshot_invalidated', fields.Datetime.now())
+            _logger.info(
+                'Trust policy snapshot invalidated issuer_id=%s snapshot_id=%s actor=%s reason_code=%s timestamp=%s',
+                snapshot.issuer_id.id, snapshot.id, self.env.uid,
+                'snapshot_invalidated', fields.Datetime.now())
         return True
 
 
@@ -1070,7 +1075,7 @@ class AmrResourceUserMapping(models.Model):
             if row.field_user not in ('login', 'partner_id.email'):
                 raise ValidationError('Mapping user field is invalid.')
             _validate_mapping_rows([dict(sequence=item.sequence, field_user=item.field_user,
-                                          jwt_key=item.jwt_key, active=item.active)
+                                         jwt_key=item.jwt_key, active=item.active)
                                     for item in row.issuer_id.user_mapping_ids])
             if (row.issuer_id.resolver_mode == 'mapping' and
                     not any(item.active for item in row.issuer_id.user_mapping_ids)):

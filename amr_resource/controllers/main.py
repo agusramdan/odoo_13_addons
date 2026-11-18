@@ -7,6 +7,7 @@ from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
 from odoo.api import call_kw
+from odoo.exceptions import AccessError
 from odoo.http import Controller, request, route
 from odoo.models import check_method_name
 
@@ -82,7 +83,8 @@ class RedirectController(Controller):
             if url_type in ['auto_login', 'access_token']:
                 access_url = request.env.user._resource_access_url(url, url_type=url_type)
             else:
-                return self.invalid_response(400, "invalid type", "type[%s] accept only auto_login or access_token" % url_type)
+                return self.invalid_response(400, "invalid type",
+                                             "type[%s] accept only auto_login or access_token" % url_type)
             result = {
                 'url': url,
                 'url_access_token': access_url,
@@ -95,12 +97,18 @@ class RedirectController(Controller):
         return self.valid_response(200, {"data": "test connection machine ok"})
 
 
-class JsonRpcApi(Controller):
+EXCLUDE_MODEL = {
+    'oidc.issuer.register', 'oidc.issuer.policy.snapshot',
+    'oidc.issuer.register.audience', 'oidc.issuer.subject', 'oidc.issuer.user.mapping',
+    'oidc.issuer.algorithm.policy'
+}
 
-    def _call_kw(self, model, method, args, kwargs):
-        check_method_name(method)
-        return call_kw(request.env[model], method, args, kwargs)
+
+class JsonRpcApi(Controller):
 
     @route('/api/dataset/call_kw', type='json', auth="machine")
     def call_kw(self, model, method, args, kwargs):
-        return self._call_kw(model, method, args, kwargs)
+        if model in EXCLUDE_MODEL:
+            raise AccessError('Forbidden Call Model.')
+        check_method_name(method)
+        return call_kw(request.env[model], method, args, kwargs)
