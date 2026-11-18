@@ -198,9 +198,9 @@ class ResourceHelper(models.AbstractModel):
         if issuer is not None:
             return registry._lookup(issuer, token_profile)
         # sudo: protected global registry read only; company context never chooses trust.
-        rows = registry.sudo().with_context(active_test=False).search([
-            ('active', '=', True)] +
-            ([('token_profile', '=', token_profile)] if token_profile else []))
+        rows = registry.sudo().search(
+            [('active', '=', True)] + ([('token_profile', '=', token_profile)] if token_profile else [])
+        )
         if len(rows) != 1:
             raise Unauthorized()
         return registry._lookup(rows.issuer, token_profile)
@@ -217,14 +217,14 @@ class ResourceHelper(models.AbstractModel):
             return False
 
     @api.model
-    @_sanitized
     def is_local_issuer(self, issuer):
-        return bool(self._profile(issuer).local_key_ref)
+        # override in amr_oidc_resource
+        return False
 
     @api.model
-    @_sanitized
     def get_issuer(self):
-        return self._profile().issuer
+        # override in amr_oidc_resource
+        return None
 
     @api.model
     def get_audience(self):
@@ -298,79 +298,87 @@ class ResourceHelper(models.AbstractModel):
         value = base64.b64encode((profile.client_id + ':' + secret).encode('utf-8')).decode('ascii')
         return {'Authorization': 'Basic ' + value}
 
-    def encode(self, **kw):
-        return self.generate_token(**kw).get('access_token')
-
-    def decode(self, token, **kw):
-        return self.validate(token)
-
     @api.model
     @_sanitized
-    def generate_token(self, client_id=_UNSET, client_secret=_UNSET, iss=_UNSET,
-                       issuer=_UNSET, issuer_url=_UNSET, **kw):
+    def encode(self, iss=_UNSET, issuer=_UNSET, issuer_url=_UNSET, **kw):
         selectors = [value for value in (iss, issuer, issuer_url) if value is not _UNSET]
         if (not selectors or any(not _string(value) for value in selectors)
                 or any(value != selectors[0] for value in selectors[1:])):
             raise Unauthorized()
         profile = self._profile(selectors[0])
-        if (client_secret is not _UNSET or
-                (client_id is not _UNSET and
-                 (not _string(client_id) or client_id != profile.client_id))):
-            raise Unauthorized()
-        if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
-            raise Unauthorized()
-        if 'scope' in kw and not isinstance(kw['scope'], str):
-            raise Unauthorized()
-        if not profile.token_endpoint:
-            raise Unauthorized()
-        result = fetch_json(profile.token_endpoint, data=kw, headers=self._headers(profile, required=True))
-        if not isinstance(result, dict) or not _string(result.get('access_token')):
-            raise Unauthorized()
-        return result
+        return profile.encode(**kw)
+
+    def decode(self, token, **kw):
+        return self.validate(token)
+
+    # @api.model
+    # @_sanitized
+    # def generate_token(self, client_id=_UNSET, client_secret=_UNSET, iss=_UNSET,
+    #                    issuer=_UNSET, issuer_url=_UNSET, **kw):
+    #     selectors = [value for value in (iss, issuer, issuer_url) if value is not _UNSET]
+    #     if (not selectors or any(not _string(value) for value in selectors)
+    #             or any(value != selectors[0] for value in selectors[1:])):
+    #         raise Unauthorized()
+    #     profile = self._profile(selectors[0])
+    #     return profile.encode(**kw)
+        # if (client_secret is not _UNSET or
+    #             (client_id is not _UNSET and
+    #              (not _string(client_id) or client_id != profile.client_id))):
+    #         raise Unauthorized()
+    #     if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
+    #         raise Unauthorized()
+    #     if 'scope' in kw and not isinstance(kw['scope'], str):
+    #         raise Unauthorized()
+    #     if not profile.token_endpoint:
+    #         raise Unauthorized()
+    #     result = fetch_json(profile.token_endpoint, data=kw, headers=self._headers(profile, required=True))
+    #     if not isinstance(result, dict) or not _string(result.get('access_token')):
+    #         raise Unauthorized()
+    #     return result
 
     @api.model
     def is_local_token(self, token):
         return self.is_local_issuer(self.validate(token)['iss'])
 
-    def _claims(self, claims, profile, opaque=False, require_jti=True):
-        if not isinstance(claims, dict):
-            raise Unauthorized()
-        claims = dict(claims)
-        if opaque:
-            if claims.get('active') is not True:
-                raise Unauthorized()
-            claims.setdefault('iss', profile.issuer)
-        required = ('iss', 'sub', 'client_id') if opaque else (
-            ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
-        if any(not _string(claims.get(name)) for name in required):
-            raise Unauthorized()
-        if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
-            raise Unauthorized()
-        now = time.time()
-        for name in ('exp', 'iat', 'nbf'):
-            if name not in claims:
-                if not opaque and name in ('exp', 'iat'):
-                    raise Unauthorized()
-                continue
-            value = claims[name]
-            if type(value) not in (int, float) or not math.isfinite(value):
-                raise Unauthorized()
-            if (name == 'exp' and value <= now) or (name != 'exp' and value > now):
-                raise Unauthorized()
-        audiences = claims.get('aud')
-        audiences = [audiences] if isinstance(audiences, str) else audiences
-        configured = profile.audience_ids.mapped('value')
-        if (not isinstance(audiences, list) or not audiences
-                or any(not _string(value) for value in audiences)
-                or not configured or len(set(configured)) != len(configured)
-                or not any(value in configured for value in audiences)):
-            raise Unauthorized()
-        if 'azp' in claims:
-            if not _string(claims['azp']) or claims['azp'] != profile.azp:
-                raise Unauthorized()
-        elif not profile.allow_missing_azp:
-            raise Unauthorized()
-        return claims
+    # def _claims(self, claims, profile, opaque=False, require_jti=True):
+    #     if not isinstance(claims, dict):
+    #         raise Unauthorized()
+    #     claims = dict(claims)
+    #     if opaque:
+    #         if claims.get('active') is not True:
+    #             raise Unauthorized()
+    #         claims.setdefault('iss', profile.issuer)
+    #     required = ('iss', 'sub', 'client_id') if opaque else (
+    #         ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
+    #     if any(not _string(claims.get(name)) for name in required):
+    #         raise Unauthorized()
+    #     if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
+    #         raise Unauthorized()
+    #     now = time.time()
+    #     for name in ('exp', 'iat', 'nbf'):
+    #         if name not in claims:
+    #             if not opaque and name in ('exp', 'iat'):
+    #                 raise Unauthorized()
+    #             continue
+    #         value = claims[name]
+    #         if type(value) not in (int, float) or not math.isfinite(value):
+    #             raise Unauthorized()
+    #         if (name == 'exp' and value <= now) or (name != 'exp' and value > now):
+    #             raise Unauthorized()
+    #     audiences = claims.get('aud')
+    #     audiences = [audiences] if isinstance(audiences, str) else audiences
+    #     configured = profile.audience_ids.mapped('value')
+    #     if (not isinstance(audiences, list) or not audiences
+    #             or any(not _string(value) for value in audiences)
+    #             or not configured or len(set(configured)) != len(configured)
+    #             or not any(value in configured for value in audiences)):
+    #         raise Unauthorized()
+    #     if 'azp' in claims:
+    #         if not _string(claims['azp']) or claims['azp'] != profile.azp:
+    #             raise Unauthorized()
+    #     elif not profile.allow_missing_azp:
+    #         raise Unauthorized()
+    #     return claims
 
     def _mvp_introspect(self, token, profile, jwt_shaped=False, policy_revision=None):
         raise Unauthorized()
@@ -390,7 +398,8 @@ class ResourceHelper(models.AbstractModel):
         if not _string(token) or len(token) > 65536:
             raise Unauthorized()
         if token.count('.') != 2:
-            raise Unauthorized()
+            return self.validate_opaque(token)
+
         header = jwt.get_unverified_header(token)
         if (header.get('typ') != 'at+jwt' or header.get('alg') != 'RS256'
                 or any(name in header for name in ('jku', 'x5u', 'jwk', 'crit'))):
@@ -399,74 +408,75 @@ class ResourceHelper(models.AbstractModel):
         if not _string(hint.get('iss')):
             raise Unauthorized()
         profile = self._profile(hint['iss'], 'jwt')
-        key_source = _manual_key_source(profile)
-        if key_source is None:
-            raise Unauthorized()
-        if any(getattr(getattr(policy, 'algorithm_id', None), 'name', None) != 'RS256'
-               for policy in getattr(profile, 'algorithm_policy_ids', ())):
-            raise Unauthorized()
+        # key_source = _manual_key_source(profile)
+        # if key_source is None:
+        #     raise Unauthorized()
+        # if any(getattr(getattr(policy, 'algorithm_id', None), 'name', None) != 'RS256'
+        #        for policy in getattr(profile, 'algorithm_policy_ids', ())):
+        #     raise Unauthorized()
         policy_revision = getattr(profile, 'policy_revision', 0)
-        enabled_algorithms = (profile._verification_algorithms({})
-                              if getattr(profile, 'mvp_enabled', False) else frozenset(['RS256']))
-        if header.get('alg') not in enabled_algorithms:
-            raise Unauthorized()
-        self._claims(hint, profile)
-        if key_source == 'local_public':
-            _require_policy_revision(profile, policy_revision)
-            key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
-        else:
-            if not _string(header.get('kid')):
-                raise Unauthorized()
-            keys = self.get_jwks_data(profile.issuer)['keys']
-            _require_policy_revision(profile, policy_revision)
-            if not keys:
-                raise Unauthorized()
-            seen_kids = set()
-            selected_key = None
-            for candidate in keys:
-                if not isinstance(candidate, dict):
-                    raise Unauthorized()
-                candidate_kid = candidate.get('kid')
-                if (type(candidate_kid) is not str or not candidate_kid or len(candidate_kid) > 256
-                        or any(character.isspace() or ord(character) < 32 or ord(character) == 127
-                               or 0x80 <= ord(character) <= 0x9f for character in candidate_kid)
-                        or candidate_kid in seen_kids):
-                    raise Unauthorized()
-                seen_kids.add(candidate_kid)
-                if (candidate.get('kty') != 'RSA' or candidate.get('alg', 'RS256') != 'RS256'
-                        or candidate.get('use', 'sig') != 'sig'
-                        or any(name in candidate for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
-                        or ('key_ops' in candidate and candidate['key_ops'] != ['verify'])):
-                    raise Unauthorized()
-                try:
-                    parsed_candidate = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(candidate))
-                except Exception:
-                    raise Unauthorized() from None
-                if not isinstance(parsed_candidate, RSAPublicKey) or parsed_candidate.key_size < 2048:
-                    raise Unauthorized()
-                if candidate_kid == header['kid']:
-                    selected_key = parsed_candidate
-            if selected_key is None:
-                raise Unauthorized()
-            # Validate candidate structure only; verification uses issuer-pinned n/e material.
-            jwk = next(candidate for candidate in keys if candidate['kid'] == header['kid'])
-            if getattr(profile, 'mvp_enabled', False):
-                if header['alg'] not in profile._verification_algorithms(jwk):
-                    raise Unauthorized()
-            elif header['alg'] != 'RS256':
-                raise Unauthorized()
-            _require_policy_revision(profile, policy_revision)
-            key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
-        if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
-            raise Unauthorized()
-        _require_policy_revision(profile, policy_revision)
-        claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
-                            audience=profile.audience_ids.mapped('value'), leeway=0,
-                            options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
-        claims = self._claims(claims, profile)
-        claims.setdefault('kid', header.get('kid'))
-        claims.setdefault('alg', 'RS256')
-        _require_policy_revision(profile, policy_revision)
+        # enabled_algorithms = (profile._verification_algorithms({})
+        #                       if getattr(profile, 'mvp_enabled', False) else frozenset(['RS256']))
+        # if header.get('alg') not in enabled_algorithms:
+        #     raise Unauthorized()
+        # self._claims(hint, profile)
+        # if key_source == 'local_public':
+        #     _require_policy_revision(profile, policy_revision)
+        #     key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
+        # else:
+        #     if not _string(header.get('kid')):
+        #         raise Unauthorized()
+        #     keys = self.get_jwks_data(profile.issuer)['keys']
+        #     _require_policy_revision(profile, policy_revision)
+        #     if not keys:
+        #         raise Unauthorized()
+        #     seen_kids = set()
+        #     selected_key = None
+        #     for candidate in keys:
+        #         if not isinstance(candidate, dict):
+        #             raise Unauthorized()
+        #         candidate_kid = candidate.get('kid')
+        #         if (type(candidate_kid) is not str or not candidate_kid or len(candidate_kid) > 256
+        #                 or any(character.isspace() or ord(character) < 32 or ord(character) == 127
+        #                        or 0x80 <= ord(character) <= 0x9f for character in candidate_kid)
+        #                 or candidate_kid in seen_kids):
+        #             raise Unauthorized()
+        #         seen_kids.add(candidate_kid)
+        #         if (candidate.get('kty') != 'RSA' or candidate.get('alg', 'RS256') != 'RS256'
+        #                 or candidate.get('use', 'sig') != 'sig'
+        #                 or any(name in candidate for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
+        #                 or ('key_ops' in candidate and candidate['key_ops'] != ['verify'])):
+        #             raise Unauthorized()
+        #         try:
+        #             parsed_candidate = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(candidate))
+        #         except Exception:
+        #             raise Unauthorized() from None
+        #         if not isinstance(parsed_candidate, RSAPublicKey) or parsed_candidate.key_size < 2048:
+        #             raise Unauthorized()
+        #         if candidate_kid == header['kid']:
+        #             selected_key = parsed_candidate
+        #     if selected_key is None:
+        #         raise Unauthorized()
+        #     # Validate candidate structure only; verification uses issuer-pinned n/e material.
+        #     jwk = next(candidate for candidate in keys if candidate['kid'] == header['kid'])
+        #     if getattr(profile, 'mvp_enabled', False):
+        #         if header['alg'] not in profile._verification_algorithms(jwk):
+        #             raise Unauthorized()
+        #     elif header['alg'] != 'RS256':
+        #         raise Unauthorized()
+        #     _require_policy_revision(profile, policy_revision)
+        #     key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+        # if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
+        #     raise Unauthorized()
+        # _require_policy_revision(profile, policy_revision)
+        # claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
+        #                     audience=profile.audience_ids.mapped('value'), leeway=0,
+        #                     options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
+        # claims = self._claims(claims, profile)
+        # claims.setdefault('kid', header.get('kid'))
+        # claims.setdefault('alg', 'RS256')
+        # _require_policy_revision(profile, policy_revision)
+        claims = profile.decode(token)
         return _VerifiedClaims(claims, self.env.company.id, self.env.uid, policy_revision)
 
     @api.model

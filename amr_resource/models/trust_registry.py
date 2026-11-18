@@ -1,11 +1,20 @@
 # -*- coding: utf-8 -*-
 """Global trust configuration; no discovery or stored-code execution."""
+
+import base64
+import os
+import jwt
 import hashlib
 import ipaddress
 import json
 import logging
-from urllib.parse import urlsplit
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
+from urllib.parse import urlsplit
+from .helper import _string, _manual_key_source, _require_policy_revision, fetch_json
 from odoo import api, fields, models, SUPERUSER_ID
 from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Unauthorized
@@ -352,21 +361,44 @@ class AmrResourceIssuer(models.Model):
     _inherit = 'amr.resource.registry.access'
     _rec_name = 'issuer'
 
-    issuer = fields.Char(required=True, index=True)
     active = fields.Boolean(default=True)
-    token_profile = fields.Selection([('jwt', 'JWT Access Token'),
-                                      ('opaque', 'Opaque Access Token')], required=True)
+    local_oidc = fields.Boolean(help="When true, must install amr_oidc_resource and will check token.")
+    state = fields.Selection([('draft', 'Draft'), ('production', 'Production'), ('disable', 'Disable')])
+    issuer = fields.Char(required=True, index=True)
+    token_profile = fields.Selection(
+        [('jwt', 'JWT Access Token'), ('opaque', 'Opaque Access Token')], required=True, default='jwt'
+    )
     jwks_uri = fields.Char()
     token_endpoint = fields.Char()
     introspection_endpoint = fields.Char()
     client_id = fields.Char(required=True)
     azp = fields.Char()
     allow_missing_azp = fields.Boolean(default=False)
+    credential_source = fields.Selection(
+        [
+            ("database", "Database"),
+            ("env", "Environment"),
+            ("system_parameter", "System Parameter"),
+        ],
+        groups=TRUST_GROUP,
+        default="env"
+    )
     credential_ref = fields.Char(groups=TRUST_GROUP)
-    local_key_ref = fields.Char(groups='amr_resource.group_oidc_trust_admin',
-                                help='Protected ir.config_parameter key containing an RSA public PEM.')
-    local_public_key = fields.Text(compute='_compute_local_public_key', groups=TRUST_GROUP,
-                                   help='Protected RSA public PEM; no loopback key fetch.')
+    credential_value = fields.Char(groups=TRUST_GROUP)
+
+    # local_public_key dan local_key_ref di pindah ke amr_oidc_resource atau di hapus
+    local_key_ref = fields.Char(
+        groups='amr_resource.group_oidc_trust_admin',
+        help="""
+        Protected ir.config_parameter key containing an RSA public PEM.
+        """
+    )
+    local_public_key = fields.Text(
+        compute='_compute_local_public_key',
+        groups=TRUST_GROUP,
+        help='Protected RSA public PEM; no loopback key fetch.'
+    )
+
     resolver_mode = fields.Selection([('get_user_match', 'Default'),
                                       ('fixed_user', 'Fixed User'),
                                       ('mapping', 'Ordered Claim Mapping'),
@@ -378,9 +410,9 @@ class AmrResourceIssuer(models.Model):
     discovery_unavailable_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
     verification_source = fields.Selection([('jwks', 'JWKS'),
                                             ('local_public', 'Local public key'),
-                                            ('none', 'No JWKS')], readonly=True)
+                                            ('none', 'No JWKS')], )
     introspection_source = fields.Selection([('none', 'None'), ('manual', 'Manual'),
-                                             ('rfc8414', 'RFC 8414')], readonly=True)
+                                             ('rfc8414', 'RFC 8414')])
     no_jwks_declaration = fields.Boolean(default=False, readonly=True)
     no_jwks_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
     introspection_credential_ref = fields.Char(size=256, groups=TRUST_GROUP, readonly=True)
@@ -515,6 +547,7 @@ class AmrResourceIssuer(models.Model):
         prepared = []
         for values in vals_list:
             values = dict(values)
+            values['state'] = 'draft'
             # Context defaults are RPC input too; audit/source checks must see them.
             for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled',
                                         'discovery_unavailable_declared',
@@ -551,6 +584,8 @@ class AmrResourceIssuer(models.Model):
         self.check_access_rule('write')
         self._guard_issuer_values(values)
         for record in self:
+            if record.state != 'draft' and values.get('state') != 'draft':
+                raise ValidationError('Only Draft State can Edit')
             updated = dict(values)
             previous_active = record.active
             policy_changed = bool(values and set(values) - AUDIT_FIELDS)
@@ -947,6 +982,192 @@ class AmrResourceIssuer(models.Model):
             return records
         except Exception:
             raise Unauthorized() from None
+
+    def _headers(self, required=False):
+        # sudo: resolve only the configured protected credential reference.
+        secret = self._get_credential()
+        if not _string(secret):
+            if required:
+                raise Unauthorized()
+            return {}
+
+        value = base64.b64encode((self.client_id + ':' + secret).encode('utf-8')).decode('ascii')
+        return {'Authorization': 'Basic ' + value}
+
+    def encode(self, **kw):
+        if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
+            raise Unauthorized()
+        if 'scope' in kw and not isinstance(kw['scope'], str):
+            raise Unauthorized()
+        if not self.token_endpoint:
+            raise Unauthorized()
+        result = fetch_json(self.token_endpoint, data=kw, headers=self._headers(self, required=True))
+        if not isinstance(result, dict) or not _string(result.get('access_token')):
+            raise Unauthorized()
+        return result.get('access_token')
+
+    def introspect_token(self, token, **kw):
+        # introspect_token di panggil bila bukan local dan oaque
+        self.ensure_one()
+        client_id = None
+        client_secret = None
+        url = None
+        iss = None
+        raise Unauthorized()
+
+    def support_algorithm(self, alg):
+        if any(getattr(getattr(policy, 'algorithm_id', None), 'name', None) != 'RS256'
+               for policy in getattr(self, 'algorithm_policy_ids', ())):
+            return False
+        enabled_algorithms = (self._verification_algorithms({})
+                              if getattr(self, 'mvp_enabled', False) else frozenset(['RS256']))
+        if alg not in enabled_algorithms:
+            return False
+
+        return True
+
+    def claims(self, claims, opaque=False, require_jti=True):
+        import time
+        import math
+        profile = self.ensure_one()
+        if not isinstance(claims, dict):
+            raise Unauthorized()
+        claims = dict(claims)
+        if opaque:
+            if claims.get('active') is not True:
+                raise Unauthorized()
+            claims.setdefault('iss', profile.issuer)
+        required = ('iss', 'sub', 'client_id') if opaque else (
+            ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
+        if any(not _string(claims.get(name)) for name in required):
+            raise Unauthorized()
+        if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
+            raise Unauthorized()
+        now = time.time()
+        for name in ('exp', 'iat', 'nbf'):
+            if name not in claims:
+                if not opaque and name in ('exp', 'iat'):
+                    raise Unauthorized()
+                continue
+            value = claims[name]
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise Unauthorized()
+            if (name == 'exp' and value <= now) or (name != 'exp' and value > now):
+                raise Unauthorized()
+        audiences = claims.get('aud')
+        audiences = [audiences] if isinstance(audiences, str) else audiences
+        configured = profile.audience_ids.mapped('value')
+        if (not isinstance(audiences, list) or not audiences
+                or any(not _string(value) for value in audiences)
+                or not configured or len(set(configured)) != len(configured)
+                or not any(value in configured for value in audiences)):
+            raise Unauthorized()
+        if 'azp' in claims:
+            if not _string(claims['azp']) or claims['azp'] != profile.azp:
+                raise Unauthorized()
+        elif not profile.allow_missing_azp:
+            raise Unauthorized()
+        return claims
+
+    def decode(self, token, **kw):
+        if self:
+            profile = self.ensure_one()
+            hint = jwt.decode(token, options={'verify_signature': False})
+        else:
+            if not _string(token) or len(token) > 65536:
+                raise Unauthorized()
+            if token.count('.') != 2:
+                profile = self._lookup(token_profile='opaque')
+                if not profile:
+                    raise Unauthorized()
+                return profile.introspect_token(token)
+
+            hint = jwt.decode(token, options={'verify_signature': False})
+            if not _string(hint.get('iss')):
+                raise Unauthorized()
+            profile = self._lookup(hint['iss'], 'jwt')
+            if not profile:
+                raise Unauthorized()
+
+        header = jwt.get_unverified_header(token)
+        if (header.get('typ') != 'at+jwt' or header.get('alg') != 'RS256'
+                or any(name in header for name in ('jku', 'x5u', 'jwk', 'crit'))):
+            return profile.introspect_token(token)
+
+        key_source = _manual_key_source(profile)
+        if key_source is None:
+            raise Unauthorized()
+        if self.support_algorithm(header.get('alg')):
+            raise Unauthorized()
+
+        profile.claims(hint)
+        policy_revision = getattr(self, 'policy_revision', 0)
+        if key_source == 'local_public':
+            _require_policy_revision(profile, policy_revision)
+            key = serialization.load_pem_public_key(self._local_public_key(profile).encode('ascii'), default_backend())
+        else:
+            if not _string(header.get('kid')):
+                raise Unauthorized()
+            keys = self.get_jwks_data(profile.issuer)['keys']
+            _require_policy_revision(profile, policy_revision)
+            if not keys:
+                raise Unauthorized()
+            seen_kids = set()
+            selected_key = None
+            for candidate in keys:
+                if not isinstance(candidate, dict):
+                    raise Unauthorized()
+                candidate_kid = candidate.get('kid')
+                if (type(candidate_kid) is not str or not candidate_kid or len(candidate_kid) > 256
+                        or any(character.isspace() or ord(character) < 32 or ord(character) == 127
+                               or 0x80 <= ord(character) <= 0x9f for character in candidate_kid)
+                        or candidate_kid in seen_kids):
+                    raise Unauthorized()
+                seen_kids.add(candidate_kid)
+                if (candidate.get('kty') != 'RSA' or candidate.get('alg', 'RS256') != 'RS256'
+                        or candidate.get('use', 'sig') != 'sig'
+                        or any(name in candidate for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
+                        or ('key_ops' in candidate and candidate['key_ops'] != ['verify'])):
+                    raise Unauthorized()
+                try:
+                    parsed_candidate = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(candidate))
+                except Exception:
+                    raise Unauthorized() from None
+                if not isinstance(parsed_candidate, RSAPublicKey) or parsed_candidate.key_size < 2048:
+                    raise Unauthorized()
+                if candidate_kid == header['kid']:
+                    selected_key = parsed_candidate
+            if selected_key is None:
+                raise Unauthorized()
+            # Validate candidate structure only; verification uses issuer-pinned n/e material.
+            jwk = next(candidate for candidate in keys if candidate['kid'] == header['kid'])
+            if getattr(profile, 'mvp_enabled', False):
+                if header['alg'] not in profile._verification_algorithms(jwk):
+                    raise Unauthorized()
+            elif header['alg'] != 'RS256':
+                raise Unauthorized()
+            _require_policy_revision(profile, policy_revision)
+            key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+        if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
+            raise Unauthorized()
+        _require_policy_revision(profile, policy_revision)
+        claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
+                            audience=profile.audience_ids.mapped('value'), leeway=0,
+                            options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
+        claims = self._claims(claims, profile)
+        claims.setdefault('kid', header.get('kid'))
+        claims.setdefault('alg', 'RS256')
+        _require_policy_revision(profile, policy_revision)
+
+    def _get_credential(self):
+        if self.credential_source == 'database':
+            return self.credential_value
+        elif self.credential_source == 'system_parameter':
+            return self.env['ir.config_parameter'].sudo().get_param(self.credential_ref)
+        elif self.credential_source == 'env':
+            return os.getenv(self.credential_ref)
+        else:
+            raise ValueError("Invalid credential_source")
 
 
 class OidcPolicySnapshot(models.Model):
