@@ -49,3 +49,23 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/cron-watchdog:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/cron-watchdog:${{ env.DATE_TAG }}
+
+      - name: Build and push Docker image odoo-13-dev
+        uses: docker/build-push-action@v5
+        with:
+          context: .devcontainer/.
+          file: .devcontainer/Dockerfile.odoo
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-dev:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-dev:${{ env.DATE_TAG }}
+
+      - name: Build and push Docker image odoo-13-dev
+        uses: docker/build-push-action@v5
+        with:
+          context: .devcontainer/.
+          file: .devcontainer/Dockerfile.hermes
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-dev:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-dev:${{ env.DATE_TAG }}

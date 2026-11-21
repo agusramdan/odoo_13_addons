@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Ambil binary uv dan docker-cli secara ringan (tanpa install Docker daemon)
+# 2. Ambil binary uv dan docker-cli secara ringan
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
@@ -36,11 +36,15 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 RUN mkdir -p /workspace /home/${USERNAME}/.hermes \
     && chown -R ${USER_UID}:${USER_GID} /workspace /home/${USERNAME}/.hermes
 
-# 4. Beralih ke user dev & install Hermes Agent via uv
+# 4. Beralih ke user dev & install Hermes Agent (editable install via uv)
 USER ${USERNAME}
-ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
-RUN uv tool install --python 3.11 git+https://github.com/NousResearch/hermes-agent.git
+RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /home/${USERNAME}/hermes-agent \
+    && cd /home/${USERNAME}/hermes-agent \
+    && uv venv --python 3.11 .venv \
+    && uv pip install --python .venv/bin/python -e .
+
+ENV PATH="/home/${USERNAME}/hermes-agent/.venv/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 WORKDIR /workspace
 
