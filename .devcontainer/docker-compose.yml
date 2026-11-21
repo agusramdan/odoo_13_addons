@@ -26,7 +26,7 @@ services:
       - ai_net        # Jaringan bersama ke LiteLLM Proxy
     labels:
       # Subdomain otomatis berdasarkan ID workspace/branch DevPod
-      caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.domain.com"
+      caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.agusramdan.web.id"
       caddy.reverse_proxy: "{{upstreams 8069}}"
 
   db:
