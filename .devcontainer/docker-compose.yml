@@ -1,0 +1,51 @@
+services:
+  odoo:
+    # Gunakan pre-built base image yang sudah berisi Odoo, debugpy, & Hermes Agent
+    image: registry.domain.com/odoo-dev-hermes:13
+    command: sleep infinity
+    mem_limit: 2g
+    depends_on:
+      - db
+    volumes:
+      - ..:/workspace:cached
+      # Memori personal Hermes per developer (tidak hilang saat workspace dihapus)
+      - hermes_personal:/root/.hermes/memories
+    environment:
+      - HOST=db
+      - USER=odoo
+      - PASSWORD=odoo
+      # Arahkan Hermes ke LiteLLM Proxy terpusat di VPS
+      - OPENAI_API_BASE=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_VIRTUAL_KEY}
+    networks:
+      - default       # Jaringan internal khusus workspace ini (Odoo <-> DB)
+      - caddy_net     # Jaringan bersama ke Caddy Reverse Proxy
+      - ai_net        # Jaringan bersama ke LiteLLM Proxy
+    labels:
+      # Subdomain otomatis berdasarkan ID workspace/branch DevPod
+      caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.domain.com"
+      caddy.reverse_proxy: "{{upstreams 8069}}"
+
+  db:
+    image: postgres:12-alpine
+    mem_limit: 1g
+    environment:
+      - POSTGRES_USER=odoo
+      - POSTGRES_PASSWORD=odoo
+      - POSTGRES_DB=postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - default       # Terisolasi! Tidak akan bentrok dengan workspace lain
+
+volumes:
+  pg_data:            # Ephemeral: ikut terhapus saat workspace di-delete
+  hermes_personal:
+    external: true
+    name: "hermes_mem_${DEV_USER:-default}"
+
+networks:
+  caddy_net:
+    external: true
+  ai_net:
+    external: true
