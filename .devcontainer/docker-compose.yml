@@ -11,8 +11,7 @@ services:
       - db
     volumes:
       - ..:/workspace:cached
-      # Memori personal Hermes per developer (tidak hilang saat workspace dihapus)
-      - hermes_personal:/root/.hermes/memories
+      - hermes_personal:/home/dev/.hermes/memories
     environment:
       - HOST=db
       - USER=odoo
