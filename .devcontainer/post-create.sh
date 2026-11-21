@@ -11,14 +11,11 @@ until pg_isready -h db -U odoo; do
 done
 
 echo "=== 3. Inisialisasi Database Template (Jika Belum Ada) ==="
-DB_EXISTS=$(PGPASSWORD=odoo psql -h db -U odoo -tAc "SELECT 1 FROM pg_database WHERE datname='odoo_dev'")
+DB_EXISTS=$(PGPASSWORD=odoo psql -h db -U odoo -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='odoo_dev'")
 if [ "$DB_EXISTS" != "1" ]; then
   echo "Membuat database odoo_dev..."
   PGPASSWORD=odoo createdb -h db -U odoo odoo_dev
-  # Opsional: Restore dump staging yang sudah di-anonymize
-  # PGPASSWORD=odoo pg_restore -h db -U odoo -d odoo_dev /backups/staging_anonymized.dump
 fi
-
 echo "=== 4. Aktivasi Hermes Skills-as-Code ==="
 if [ -d "/workspace/skills" ]; then
   hermes skills trust /workspace/skills || true

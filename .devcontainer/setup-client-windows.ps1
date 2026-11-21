@@ -21,20 +21,21 @@ $LiteLlmKey = Read-Host "Masukkan LiteLLM Virtual Key Anda"
 # --- 2. Install DevPod CLI ---
 Write-Host "`n[1/5] Memeriksa & menginstal DevPod CLI..." -ForegroundColor Yellow
 if (-not (Get-Command devpod -ErrorAction SilentlyContinue)) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id LoftLabs.DevPod -e --accept-source-agreements --accept-package-agreements
-    } else {
-        $InstallDir = "$env:LOCALAPPDATA\Programs\DevPod"
-        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-        Invoke-WebRequest -Uri "https://github.com/loft-sh/devpod/releases/latest/download/devpod-windows-amd64.exe" -OutFile "$InstallDir\devpod.exe"
+    $InstallDir = "$Env:APPDATA\devpod"
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-        $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($CurrentPath -notlike "*$InstallDir*") {
-            [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$InstallDir", "User")
-            $env:Path += ";$InstallDir"
-        }
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]'Tls12'
+    Invoke-WebRequest -Uri "https://github.com/loft-sh/devpod/releases/latest/download/devpod-windows-amd64.exe" -OutFile "$InstallDir\devpod.exe"
+
+    # Tambahkan ke User PATH tanpa menduplikasi System PATH
+    $UserPath = [Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::User)
+    if ($UserPath -notlike "*$InstallDir*") {
+        $NewUserPath = if ([string]::IsNullOrWhiteSpace($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+        [Environment]::SetEnvironmentVariable("Path", $NewUserPath, [System.EnvironmentVariableTarget]::User)
     }
-    Write-Host "-> DevPod CLI berhasil diinstal." -ForegroundColor Green
+    $env:Path += ";$InstallDir"
+
+    Write-Host "-> DevPod CLI berhasil diinstal di $InstallDir." -ForegroundColor Green
 } else {
     Write-Host "-> DevPod CLI sudah terinstal." -ForegroundColor Green
 }
