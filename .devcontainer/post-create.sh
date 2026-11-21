@@ -3,7 +3,9 @@ set -e
 
 echo "=== 1. Setup SSH Known Hosts (GitHub) ==="
 mkdir -p ~/.ssh
-ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+if ! grep -q "github.com" ~/.ssh/known_hosts 2>/dev/null; then
+  ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+fi
 
 echo "=== 2. Menunggu PostgreSQL Siap ==="
 until pg_isready -h db -U odoo; do

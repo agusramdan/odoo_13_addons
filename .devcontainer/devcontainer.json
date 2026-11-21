@@ -1,15 +1,18 @@
 {
   "name": "Odoo Custom + Hermes Workspace",
   "dockerComposeFile": "docker-compose.yml",
-  "service": "odoo",
+  "service": "hermes",
   "workspaceFolder": "/workspace",
+  "shutdownAction": "none",
 
   "containerEnv": {
-    "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
     "DEV_USER": "${localEnv:USER}"
   },
 
-  "forwardPorts": [8069, 5678],
+  "forwardPorts": [
+    "odoo:8069",
+    "odoo:5678"
+  ],
 
   "customizations": {
     "vscode": {
