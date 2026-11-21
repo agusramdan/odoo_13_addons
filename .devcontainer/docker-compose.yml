@@ -1,7 +1,10 @@
 services:
   odoo:
     # Gunakan pre-built base image yang sudah berisi Odoo, debugpy, & Hermes Agent
-    image: registry.domain.com/odoo-dev-hermes:13
+    # image: agusramdan/odoo-dev-hermes:13
+    build:
+      context: .
+      dockerfile: Dockerfile
     command: sleep infinity
     mem_limit: 2g
     depends_on:

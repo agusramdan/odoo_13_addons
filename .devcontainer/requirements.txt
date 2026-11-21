@@ -1,0 +1,12 @@
+# Direct Python package imports used by addons in this repository.
+# Target: Odoo 13 on CPython 3.7.3 (Linux).
+# odoo:13.0@sha256:487514270bff6f4a37cfb7532a2f513cfca7ea4ce996f628c6d9edd4502be2a6
+# amr_oidc: PyJWT (imported as jwt) and cryptography.
+# amr_resource / amr_service_client: PyJWT and requests.
+# Werkzeug version matches Odoo 13.0's Linux requirements.
+# amr_sentry: sentry-sdk.
+PyJWT==2.8.0
+cryptography==39.0.2
+sentry-sdk==2.73.0
+cffi==1.15.1
+pycparser==2.21
