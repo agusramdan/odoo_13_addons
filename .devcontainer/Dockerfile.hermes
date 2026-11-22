@@ -49,6 +49,9 @@ RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /home/$
     && .venv/bin/python -c "import ruamel.yaml, openai, rich, requests, httpx" \
     && .venv/bin/hermes --version
 
+# Salin konfigurasi 4 agent & skills ke ~/.hermes
+COPY --chown=$USERNAME:$USERNAME hermes/ /home/$USERNAME/.hermes/
+
 ENV PATH="/home/${USERNAME}/hermes-agent/.venv/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 WORKDIR /workspace

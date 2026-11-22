@@ -1,0 +1,6 @@
+model:
+  provider: openai-compatible
+  base_url: ${OPENAI_BASE_URL}
+  api_key: ${OPENAI_API_KEY}
+  default: ${MODEL_CODER}
+  temperature: 0.2

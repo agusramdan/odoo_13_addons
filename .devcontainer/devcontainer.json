@@ -33,5 +33,11 @@
   "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
 
   "remoteUser": "dev",
-  "updateRemoteUserUID": true
+  "updateRemoteUserUID": true,
+  "remoteEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "OPENAI_BASE_URL": "${localEnv:OPENAI_API_KEY:-http://litellm:4000/v1}",
+    "MODEL_REASONING": "${localEnv:MODEL_REASONING:-gpt-6.1-teraa}",
+    "MODEL_CODER": "${localEnv:MODEL_CODER:-gpt-6-luna}"
+  }
 }
