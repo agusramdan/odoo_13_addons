@@ -32,7 +32,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID}
+      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID:-odoo-dev}
     # Port tidak di-bind ke host agar tidak bentrok saat multi-workspace.
     # Akses dari lokal tetap otomatis via forwardPorts di devcontainer.json.
     expose:
@@ -51,7 +51,7 @@ services:
     mem_limit: 512m
     memswap_limit: 1g # Total RAM (512m) + Swap (512m) agar aman saat -i/-u/debugpy
     labels:
-      caddy: "${DEVPOD_WORKSPACE_ID}.dev.agusramdan.web.id"
+      caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.agusramdan.web.id"
       caddy.reverse_proxy: "{{upstreams 8069}}"
   hermes:
     build:
