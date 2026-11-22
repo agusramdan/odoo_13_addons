@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -39,10 +39,15 @@ RUN mkdir -p /workspace /home/${USERNAME}/.hermes \
 # 4. Beralih ke user dev & install Hermes Agent (editable install via uv)
 USER ${USERNAME}
 
+# hermes-agent upstream WAJIB Python 3.14 (requires-python >=3.11,<3.15,
+# tapi semua deps di-pin 'python_version >= 3.14' — di 3.11 venv hampir kosong).
+# --depth 1 tetap; commit di-pin supaya build reprodusibel (hermes install / git pull untuk update).
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /home/${USERNAME}/hermes-agent \
     && cd /home/${USERNAME}/hermes-agent \
-    && uv venv --python 3.11 .venv \
-    && uv pip install --python .venv/bin/python -e .
+    && uv venv --python 3.14 .venv \
+    && uv pip install --python .venv/bin/python -e . \
+    && .venv/bin/python -c "import ruamel.yaml, openai, rich, requests, httpx" \
+    && .venv/bin/hermes --version
 
 ENV PATH="/home/${USERNAME}/hermes-agent/.venv/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
