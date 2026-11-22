@@ -25,7 +25,7 @@ services:
   odoo:
     build:
       context: .
-      dockerfile: Dockerfile.odo  o
+      dockerfile: Dockerfile.odoo
     restart: unless-stopped
     user: "1000:1000"
     depends_on:
@@ -50,7 +50,7 @@ services:
       - caddy_net
     mem_limit: 512m
     memswap_limit: 1g # Total RAM (512m) + Swap (512m) agar aman saat -i/-u/debugpy
-    
+
   hermes:
     build:
       context: .
