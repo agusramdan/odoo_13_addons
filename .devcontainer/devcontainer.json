@@ -6,7 +6,8 @@
   "shutdownAction": "none",
 
   "containerEnv": {
-    "DEV_USER": "${localEnv:USER}"
+    "DEV_USER": "${localEnv:USER}",
+    "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}"
   },
 
   "forwardPorts": [

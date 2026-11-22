@@ -15,16 +15,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    mem_limit: 384m
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c work_mem=4MB
+      -c max_connections=50
 
   odoo:
     build:
       context: .
-      dockerfile: Dockerfile.odoo
+      dockerfile: Dockerfile.odo  o
     restart: unless-stopped
     user: "1000:1000"
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID:-odoo-dev}
     # Port tidak di-bind ke host agar tidak bentrok saat multi-workspace.
     # Akses dari lokal tetap otomatis via forwardPorts di devcontainer.json.
     expose:
@@ -40,7 +48,9 @@ services:
     networks:
       - dev_net
       - caddy_net
-
+    mem_limit: 512m
+    memswap_limit: 1g # Total RAM (512m) + Swap (512m) agar aman saat -i/-u/debugpy
+    
   hermes:
     build:
       context: .
@@ -53,6 +63,7 @@ services:
       - path: /opt/devpod-infra/dev.env
         required: false
     environment:
+      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID:-odoo-dev}
       - ODOO_SERVICE=odoo
       - ODOO_URL=http://odoo:8069
       - PGHOST=db
