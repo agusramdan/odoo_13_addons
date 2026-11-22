@@ -7,7 +7,11 @@
 
   "containerEnv": {
     "DEV_USER": "${localEnv:USER}",
-    "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}"
+    "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
+    "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
+    "OPENAI_BASE_URL": "https://litellm:4000/v1",
+    "MODEL_REASONING": "${localEnv:MODEL_REASONING}",
+    "MODEL_CODER": "${localEnv:MODEL_CODER}"
   },
 
   "forwardPorts": [
@@ -33,11 +37,5 @@
   "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
 
   "remoteUser": "dev",
-  "updateRemoteUserUID": true,
-  "remoteEnv": {
-    "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
-    "OPENAI_BASE_URL": "https://litellm:4000/v1",
-    "MODEL_REASONING": "${localEnv:MODEL_REASONING}",
-    "MODEL_CODER": "${localEnv:MODEL_CODER}"
-  }
+  "updateRemoteUserUID": true
 }
