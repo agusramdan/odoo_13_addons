@@ -44,6 +44,16 @@ if [ -d "/workspace/skills" ]; then
   hermes skills trust /workspace/skills || true
 fi
 
+MODEL_CODER
+
+if [ ! -f ~/.hermes/.env ]; then
+  cat <<'EOF' > ~/.hermes/.env
+MODEL_CODER=${MODEL_CODER}
+MODEL_REASONING=${MODEL_REASONING}
+EOF
+  echo "-> .hermes/.env berhasil dibuat."
+fi
+
 # Generate .vscode/launch.json otomatis jika belum ada
 if [ ! -f /workspace/.vscode/launch.json ]; then
   mkdir -p /workspace/.vscode
