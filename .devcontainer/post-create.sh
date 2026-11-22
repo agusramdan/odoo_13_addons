@@ -9,6 +9,16 @@ if ! grep -q "github.com" ~/.ssh/known_hosts 2>/dev/null; then
   ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 fi
 
+# Deteksi otomatis DEVPOD_WORKSPACE_ID dari mount path DevPod jika belum terset
+if [ -z "$DEVPOD_WORKSPACE_ID" ] || [ "$DEVPOD_WORKSPACE_ID" = "odoo-dev" ]; then
+  DETECTED_ID=$(docker inspect "$(hostname)" --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' | sed -E 's|.*/workspaces/([^/]+)/content.*|\1|')
+  if [ -n "$DETECTED_ID" ]; then
+    export DEVPOD_WORKSPACE_ID="$DETECTED_ID"
+    sed -i '/^export DEVPOD_WORKSPACE_ID=/d' ~/.bashrc 2>/dev/null || true
+    echo "export DEVPOD_WORKSPACE_ID=\"$DETECTED_ID\"" >> ~/.bashrc
+  fi
+fi
+
 echo "=== 2. Menunggu PostgreSQL Siap ==="
 until pg_isready -h db -U odoo; do
   sleep 2
@@ -37,4 +47,4 @@ fi
 chmod +x /workspace/.devcontainer/odoo-ctl.sh 2>/dev/null || true
 
 echo "=== Workspace Siap! ==="
-echo "URL Live Demo: https://${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.agusramdan.web.id"
+echo "URL Live Demo: https://${DEVPOD_WORKSPACE_ID}.dev.agusramdan.web.id"
