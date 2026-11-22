@@ -35,8 +35,8 @@
   "remoteUser": "dev",
   "updateRemoteUserUID": true,
   "remoteEnv": {
-    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
-    "OPENAI_BASE_URL": "${localEnv:OPENAI_BASE_URL}",
+    "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
+    "OPENAI_BASE_URL": "https://litellm:4000/v1",
     "MODEL_REASONING": "${localEnv:MODEL_REASONING}",
     "MODEL_CODER": "${localEnv:MODEL_CODER}"
   }

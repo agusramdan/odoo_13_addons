@@ -1,7 +1,7 @@
 model:
-  provider: openai-compatible
-  base_url: ${OPENAI_BASE_URL}
-  api_key: ${OPENAI_API_KEY}
+  provider: litellm
+  base_url: ${OPENAI_API_BASE}
+  api_key: ${LITELLM_VIRTUAL_KEY}
   default: ${MODEL_CODER}
   temperature: 0.2
 
