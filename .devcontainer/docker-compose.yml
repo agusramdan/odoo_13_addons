@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:12
-    container_name: odoo13_db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=odoo
@@ -21,43 +20,40 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.odoo
-    container_name: odoo13_app
     restart: unless-stopped
     user: "1000:1000"
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "8069:8069" # Odoo HTTP
-      - "5678:5678" # Remote debugging (debugpy)
+    # Port tidak di-bind ke host agar tidak bentrok saat multi-workspace.
+    # Akses dari lokal tetap otomatis via forwardPorts di devcontainer.json.
+    expose:
+      - "8069" # Odoo HTTP
+      - "5678" # Remote debugging (debugpy)
     volumes:
       - ..:/workspace
       - ./odoo.conf:/etc/odoo/odoo.conf:ro
       - odoo_filestore:/var/lib/odoo
     working_dir: /workspace
-    # Gunakan sleep infinity agar kontainer tetap hidup saat Anda start/stop Odoo atau debugpy secara manual
     entrypoint: []
     command: ["sleep", "infinity"]
     networks:
       - dev_net
+      - caddy_net
 
   hermes:
     build:
       context: .
       dockerfile: Dockerfile.hermes
-    container_name: hermes_agent
     restart: unless-stopped
     user: "1000:1000"
-    # Sesuaikan GID grup docker di host VPS (cek via: getent group docker | cut -d: -f3)
-    # group_add:
-    #   - "999"
     depends_on:
       - odoo
     env_file:
       - path: /opt/devpod-infra/dev.env
         required: false
     environment:
-      - ODOO_CONTAINER=odoo13_app
+      - ODOO_SERVICE=odoo
       - ODOO_URL=http://odoo:8069
       - PGHOST=db
       - PGUSER=odoo
@@ -70,6 +66,7 @@ services:
     command: ["sleep", "infinity"]
     networks:
       - dev_net
+      - ai_net
 
 volumes:
   pgdata:

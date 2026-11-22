@@ -3,6 +3,16 @@ FROM odoo:13.0@sha256:487514270bff6f4a37cfb7532a2f513cfca7ea4ce996f628c6d9edd450
 COPY requirements.txt /tmp/addons-requirements.txt
 
 USER root
+
+# Sinkronkan UID/GID user 'odoo' ke 1000:1000 agar cocok dengan user 'dev' & volume filestore
+RUN groupmod -o -g 1000 odoo \
+    && usermod -o -u 1000 -g 1000 odoo \
+    && mkdir -p /var/lib/odoo /mnt/extra-addons \
+    && chown -R 1000:1000 /var/lib/odoo /etc/odoo /mnt/extra-addons
+
+# Install dependency addons + debugpy (1.7.0 adalah versi terakhir untuk Python 3.7)
 RUN python3 -m pip install --no-cache-dir --upgrade pip==23.3.2 \
-    && python3 -m pip install --no-cache-dir -r /tmp/addons-requirements.txt
+    && python3 -m pip install --no-cache-dir -r /tmp/addons-requirements.txt \
+    && python3 -m pip install --no-cache-dir debugpy==1.7.0
+
 USER odoo

@@ -23,12 +23,13 @@
         "eamodio.gitlens"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python3"
+        "python.defaultInterpreterPath": "/home/dev/hermes-agent/.venv/bin/python"
       }
     }
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
 
   "remoteUser": "dev",
   "updateRemoteUserUID": true
