@@ -4,3 +4,54 @@ model:
   api_key: ${OPENAI_API_KEY}
   default: ${MODEL_CODER}
   temperature: 0.2
+
+agent:
+  max_turns: 50
+  disabled_toolsets:
+    - a2a
+    - bot_room
+    - browser
+    - catalog
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - context_engine
+    - cronjob
+    - delegation
+    - desktop_ui
+    - discord
+    - discord_admin
+    - feishu_doc
+    - feishu_drive
+    - image_gen
+    - kanban
+    - memory
+    - onboarding
+    - project
+    - session_search
+    - stt
+    - todo
+    - tts
+    - video
+    - video_gen
+    - web
+    - x_search
+compression:
+  enabled: false
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+platform_toolsets:
+  cli:
+    - file
+    - skills
+    - terminal
+    - vision
+smart_model_routing:
+  enabled: false
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2

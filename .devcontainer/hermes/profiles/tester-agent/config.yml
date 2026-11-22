@@ -4,3 +4,6 @@ model:
   api_key: ${OPENAI_API_KEY}
   default: ${MODEL_CODER}
   temperature: 0.2
+
+agent:
+  max_turns: 150
