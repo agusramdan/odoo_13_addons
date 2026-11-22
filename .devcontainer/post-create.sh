@@ -44,8 +44,6 @@ if [ -d "/workspace/skills" ]; then
   hermes skills trust /workspace/skills || true
 fi
 
-MODEL_CODER
-
 if [ ! -f ~/.hermes/.env ]; then
   cat <<'EOF' > ~/.hermes/.env
 MODEL_CODER=${MODEL_CODER}
