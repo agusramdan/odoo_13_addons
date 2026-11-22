@@ -74,7 +74,6 @@ services:
       - PGPASSWORD=odoo
     volumes:
       - ..:/workspace
-      - hermes_memory:/home/dev/.hermes
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /workspace
     command: ["sleep", "infinity"]
@@ -85,7 +84,6 @@ services:
 volumes:
   pgdata:
   odoo_filestore:
-  hermes_memory:
 
 networks:
   caddy_net:
