@@ -8,7 +8,6 @@
   "containerEnv": {
     "DEV_USER": "${localEnv:USER}",
     "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
-    "OPENAI_BASE_URL": "http://litellm:4000/v1"
   },
 
   "forwardPorts": [

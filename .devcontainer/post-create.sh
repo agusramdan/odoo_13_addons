@@ -46,6 +46,7 @@ fi
 
 if [ ! -f ~/.hermes/.env ]; then
   cat <<'EOF' > ~/.hermes/.env
+OPENAI_API_KEY=${LITELLM_MASTER_KEY}
 MODEL_CODER=${MODEL_CODER}
 MODEL_REASONING=${MODEL_REASONING}
 EOF
