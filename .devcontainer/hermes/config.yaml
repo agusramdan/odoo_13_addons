@@ -1,7 +1,6 @@
 model:
   provider: litellm
   base_url: http://litellm:4000/v1
-  api_key: ${OPENAI_API_KEY}
   default: ${MODEL_CODER}
   temperature: 0.2
 
@@ -37,6 +36,22 @@ agent:
     - video_gen
     - web
     - x_search
+custom_providers:
+- name: litellm
+  base_url:
+  api_key: ${OPENAI_API_KEY}
+  model: qwen2.5:7b-64k
+  context_length: 65536
+  models:
+    - gpt-6-luna
+    - gpt-6.1-terra
+- name: ai.sumopod.com
+  base_url: https://ai.sumopod.com
+  api_key: ${SUMOPOD_KEY}
+  model: glm-5.3-flash
+  models:
+    - glm-5.3-flash
+
 compression:
   enabled: false
 memory:
