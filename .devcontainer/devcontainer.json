@@ -8,10 +8,7 @@
   "containerEnv": {
     "DEV_USER": "${localEnv:USER}",
     "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
-    "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
-    "OPENAI_BASE_URL": "http://litellm:4000/v1",
-    "MODEL_REASONING": "gpt-6.1-terra",
-    "MODEL_CODER": "gpt-6-luna"
+    "OPENAI_BASE_URL": "http://litellm:4000/v1"
   },
 
   "forwardPorts": [
