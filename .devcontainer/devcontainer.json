@@ -9,7 +9,7 @@
     "DEV_USER": "${localEnv:USER}",
     "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
     "LITELLM_VIRTUAL_KEY": "${localEnv:LITELLM_VIRTUAL_KEY}",
-    "OPENAI_BASE_URL": "https://litellm:4000/v1",
+    "OPENAI_BASE_URL": "http://litellm:4000/v1",
     "MODEL_REASONING": "${localEnv:MODEL_REASONING}",
     "MODEL_CODER": "${localEnv:MODEL_CODER}"
   },
