@@ -44,6 +44,35 @@ if [ -d "/workspace/skills" ]; then
   hermes skills trust /workspace/skills || true
 fi
 
+# Generate .vscode/launch.json otomatis jika belum ada
+if [ ! -f /workspace/.vscode/launch.json ]; then
+  mkdir -p /workspace/.vscode
+  cat <<'EOF' > /workspace/.vscode/launch.json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach Odoo 13 (Docker)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "odoo",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}",
+          "remoteRoot": "/workspace"
+        }
+      ],
+      "justMyCode": false
+    }
+  ]
+}
+EOF
+  echo "-> .vscode/launch.json berhasil dibuat."
+fi
+
 chmod +x /workspace/.devcontainer/odoo-ctl.sh 2>/dev/null || true
 
 echo "=== Workspace Siap! ==="

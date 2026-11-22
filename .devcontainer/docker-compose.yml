@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:12
+    image: postgres:10
     restart: unless-stopped
     environment:
       - POSTGRES_USER=odoo
@@ -53,6 +53,7 @@ services:
     labels:
       caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.agusramdan.web.id"
       caddy.reverse_proxy: "{{upstreams 8069}}"
+
   hermes:
     build:
       context: .
