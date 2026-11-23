@@ -16,7 +16,6 @@ agent:
     - connections
     - context_engine
     - cronjob
-    - delegation
     - desktop_ui
     - discord
     - discord_admin
