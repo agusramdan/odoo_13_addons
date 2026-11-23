@@ -1,6 +1,6 @@
 model:
   provider: litellm
-  default: ${MODEL_CODER}
+  default: leader-litellm
   temperature: 0.2
 
 agent:
@@ -42,8 +42,11 @@ custom_providers:
   model: qwen2.5:7b-64k
   context_length: 65536
   models:
-    - gpt-6-luna
-    - gpt-6.1-terra
+    - leader-litellm
+    - analyst-litellm
+    - developer-litellm
+    - reviewer-litellm
+    - tester-litellm
 - name: ai.sumopod.com
   base_url: https://ai.sumopod.com
   api_key: ${SUMOPOD_KEY}

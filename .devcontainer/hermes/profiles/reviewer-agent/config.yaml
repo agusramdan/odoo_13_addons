@@ -1,8 +1,6 @@
 model:
   provider: litellm
-  base_url: http://litellm:4000/v1
-  api_key: ${OPENAI_API_KEY}
-  default: ${MODEL_REASONING}
+  default: reviewer-litellm
   temperature: 0.2
 
 agent:

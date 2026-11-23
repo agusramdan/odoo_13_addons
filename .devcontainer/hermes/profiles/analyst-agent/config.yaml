@@ -1,7 +1,6 @@
 model:
-  provider: openai-compatible
-  api_key: ${OPENAI_API_KEY}
-  default: ${MODEL_REASONING}
+  provider: litellm
+  default: analyst-litellm
   temperature: 0.2
 
 agent:
