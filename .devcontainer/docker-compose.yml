@@ -1,0 +1,95 @@
+services:
+  db:
+    image: postgres:10
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=odoo
+      - POSTGRES_PASSWORD=odoo
+      - POSTGRES_DB=postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - dev_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 384m
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c work_mem=4MB
+      -c max_connections=50
+
+  odoo:
+    build:
+      context: .
+      dockerfile: Dockerfile.odoo
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID:-odoo-dev}
+    # Port tidak di-bind ke host agar tidak bentrok saat multi-workspace.
+    # Akses dari lokal tetap otomatis via forwardPorts di devcontainer.json.
+    expose:
+      - "8069" # Odoo HTTP
+      - "5678" # Remote debugging (debugpy)
+    volumes:
+      - ..:/workspace
+      - ./odoo.conf:/etc/odoo/odoo.conf:ro
+      - odoo_filestore:/var/lib/odoo
+    working_dir: /workspace
+    entrypoint: []
+    command: ["sleep", "infinity"]
+    networks:
+      - dev_net
+      - caddy_net
+    mem_limit: 512m
+    memswap_limit: 1g # Total RAM (512m) + Swap (512m) agar aman saat -i/-u/debugpy
+    labels:
+      caddy: "${DEVPOD_WORKSPACE_ID:-odoo-dev}.dev.agusramdan.web.id"
+      caddy.reverse_proxy: "{{upstreams 8069}}"
+
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.hermes
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      - odoo
+    env_file:
+      - path: /opt/devpod-infra/dev.env
+        required: false
+    environment:
+      - DEVPOD_WORKSPACE_ID=${DEVPOD_WORKSPACE_ID:-odoo-dev}
+      - ODOO_SERVICE=odoo
+      - ODOO_URL=http://odoo:8069
+      - PGHOST=db
+      - PGUSER=odoo
+      - PGPASSWORD=odoo
+    volumes:
+      - ..:/workspace
+      - /opt/devpod-infra/hermes.env:/home/dev/.hermes/.env
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    networks:
+      - dev_net
+      - ai_net
+
+volumes:
+  pgdata:
+  odoo_filestore:
+
+networks:
+  caddy_net:
+    external: true
+  ai_net:
+    external: true
+  dev_net:
+    driver: bridge

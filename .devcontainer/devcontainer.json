@@ -1,0 +1,39 @@
+{
+  "name": "Odoo Custom + Hermes Workspace",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "hermes",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "none",
+
+  "containerEnv": {
+    "DEV_USER": "${localEnv:USER}",
+    "UAT_DB_NAME": "${localEnv:UAT_DB_NAME:-odoo_uat}",
+    "UAT_MAX_RUNS:-3": "${localEnv:UAT_MAX_RUNS:-3}",
+    "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
+  },
+
+  "forwardPorts": [
+    "odoo:8069",
+    "odoo:5678"
+  ],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-xml",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/dev/hermes-agent/.venv/bin/python"
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "sudo chmod 666 /var/run/docker.sock 2>/dev/null || true",
+
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true
+}

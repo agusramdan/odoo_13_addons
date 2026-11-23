@@ -1,0 +1,67 @@
+model:
+  provider: litellm
+  default: leader-litellm
+  temperature: 0.2
+
+agent:
+  max_turns: 50
+  disabled_toolsets:
+    - a2a
+    - bot_room
+    - browser
+    - catalog
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - context_engine
+    - cronjob
+    - desktop_ui
+    - discord
+    - discord_admin
+    - feishu_doc
+    - feishu_drive
+    - image_gen
+    - kanban
+    - memory
+    - onboarding
+    - project
+    - session_search
+    - stt
+    - todo
+    - tts
+    - video
+    - video_gen
+    - web
+    - x_search
+custom_providers:
+  - name: litellm
+    base_url: http://litellm:4000/v1
+    api_key: ${OPENAI_API_KEY}
+    model: qwen2.5:7b-64k
+    context_length: 65536
+    models:
+      - leader-litellm
+      - analyst-litellm
+      - developer-litellm
+      - reviewer-litellm
+      - tester-litellm
+
+compression:
+  enabled: false
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+platform_toolsets:
+  cli:
+    - file
+    - skills
+    - terminal
+    - vision
+smart_model_routing:
+  enabled: false
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2

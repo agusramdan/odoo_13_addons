@@ -2,7 +2,7 @@
 # No services start with plain `docker compose up` because every service has a profile.
 # All images must be owner-approved immutable digest references; no production data,
 # credentials, routes, or host ports are configured here. Container odoo13dbuat
-# hosts the disposable database odoo13uat (these names are not interchangeable).
+# hosts the disposable database odoo_uat (these names are not interchangeable).
 services:
   odoo13addonsuat:
     profiles: ["uat-native"]
@@ -17,11 +17,11 @@ services:
     security_opt: ["no-new-privileges:true"]
     user: "${UAT_ODOO_UID:?Set approved unprivileged numeric UID}:${UAT_ODOO_GID:?Set approved unprivileged numeric GID}"
     working_dir: /workspace
-    command: ["/bin/sh", "-ec", "test \"$(python3 -c 'import sys; print(\".\".join(map(str, sys.version_info[:3])))')\" = 3.7.3; exec ${UAT_ODOO_COMMAND:?Set owner-approved bounded Odoo command} --database=odoo13uat"]
+    command: ["/bin/sh", "-ec", "test \"$(python3 -c 'import sys; print(\".\".join(map(str, sys.version_info[:3])))')\" = 3.7.3; exec ${UAT_ODOO_COMMAND:?Set owner-approved bounded Odoo command} --database=odoo_uat"]
     environment:
       HOST: odoo13dbuat
       PORT: "5432"
-      UAT_DB_NAME: "odoo13uat"
+      UAT_DB_NAME: "odoo_uat"
       USER: "${UAT_DB_USER:?Set synthetic UAT database user}"
       PASSWORD_FILE: /run/secrets/uat_db_password
       UAT_PYTHON_RUNTIME: "3.7.3"
@@ -53,7 +53,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
-      POSTGRES_DB: "odoo13uat"
+      POSTGRES_DB: "odoo_uat"
       POSTGRES_USER: "${UAT_DB_USER:?Set synthetic UAT database user}"
       POSTGRES_PASSWORD_FILE: /run/secrets/uat_db_password
     secrets: [uat_db_password]
@@ -101,7 +101,7 @@ services:
     command: ["/bin/sh", "-c", "${UAT_APPROVED_COMMAND:?Set exact owner-approved bounded command; no implicit test execution}"]
     environment:
       UAT_TASK_ID: "${UAT_TASK_ID:?Set task identifier}"
-      UAT_DB_NAME: "odoo13uat"
+      UAT_DB_NAME: "odoo_uat"
       UAT_MAX_RUNS: "3"
 
 networks:

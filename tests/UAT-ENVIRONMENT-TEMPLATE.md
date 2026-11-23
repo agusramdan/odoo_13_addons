@@ -185,7 +185,7 @@ runtime:
   selected_target: "Python 3.7.3 (Owner selection; NOT YET DEPENDENCY-QUALIFIED)"
   odoo_container: "odoo13addonsuat"
   postgres_container: "odoo13dbuat"
-  disposable_database: "odoo13uat"
+  disposable_database: "odoo_uat"
   compatibility_status: "UNRESOLVED — selections alone do not establish runtime/dependency compatibility"
   test_results: "NOT RUN"
 execution:
