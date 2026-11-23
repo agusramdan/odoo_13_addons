@@ -35,23 +35,17 @@ agent:
     - web
     - x_search
 custom_providers:
-- name: litellm
-  base_url: http://litellm:4000/v1
-  api_key: ${OPENAI_API_KEY}
-  model: qwen2.5:7b-64k
-  context_length: 65536
-  models:
-    - leader-litellm
-    - analyst-litellm
-    - developer-litellm
-    - reviewer-litellm
-    - tester-litellm
-- name: ai.sumopod.com
-  base_url: https://ai.sumopod.com
-  api_key: ${SUMOPOD_KEY}
-  model: glm-5.3-flash
-  models:
-    - glm-5.3-flash
+  - name: litellm
+    base_url: http://litellm:4000/v1
+    api_key: ${OPENAI_API_KEY}
+    model: qwen2.5:7b-64k
+    context_length: 65536
+    models:
+      - leader-litellm
+      - analyst-litellm
+      - developer-litellm
+      - reviewer-litellm
+      - tester-litellm
 
 compression:
   enabled: false

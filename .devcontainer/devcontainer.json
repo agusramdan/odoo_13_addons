@@ -7,6 +7,8 @@
 
   "containerEnv": {
     "DEV_USER": "${localEnv:USER}",
+    "UAT_DB_NAME": "${localEnv:UAT_DB_NAME:-odoo_uat}",
+    "UAT_MAX_RUNS:-3": "${localEnv:UAT_MAX_RUNS:-3}",
     "DEVPOD_WORKSPACE_ID": "${localEnv:DEVPOD_WORKSPACE_ID}",
   },
 

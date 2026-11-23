@@ -19,6 +19,15 @@ if [ -z "$DEVPOD_WORKSPACE_ID" ] || [ "$DEVPOD_WORKSPACE_ID" = "odoo-dev" ]; the
   fi
 fi
 
+# Buat panduan story per workspace tanpa menimpa konten Owner.
+if [ -n "$DEVPOD_WORKSPACE_ID" ]; then
+  STORY_DIR="/workspace/docs/${DEVPOD_WORKSPACE_ID}"
+  mkdir -p "$STORY_DIR"
+  if [ ! -e "$STORY_DIR/story.md" ]; then
+    touch "$STORY_DIR/story.md"
+  fi
+fi
+
 echo "=== 2. Menunggu PostgreSQL Siap ==="
 until pg_isready -h db -U odoo; do
   sleep 2
@@ -42,15 +51,6 @@ fi
 echo "=== 4. Aktivasi Hermes Skills-as-Code ==="
 if [ -d "/workspace/skills" ]; then
   hermes skills trust /workspace/skills || true
-fi
-
-if [ ! -f ~/.hermes/.env ]; then
-  cat <<'EOF' > ~/.hermes/.env
-OPENAI_API_KEY=${LITELLM_MASTER_KEY}
-MODEL_CODER=${MODEL_CODER}
-MODEL_REASONING=${MODEL_REASONING}
-EOF
-  echo "-> .hermes/.env berhasil dibuat."
 fi
 
 # Generate .vscode/launch.json otomatis jika belum ada
@@ -83,6 +83,7 @@ EOF
 fi
 
 chmod +x /workspace/.devcontainer/odoo-ctl.sh 2>/dev/null || true
+sudo ln -sf /workspace/.devcontainer/odoo-ctl.sh /usr/local/bin/odoo-ctl
 
 echo "=== Workspace Siap! ==="
 echo "URL Live Demo: https://${DEVPOD_WORKSPACE_ID}.dev.agusramdan.web.id"

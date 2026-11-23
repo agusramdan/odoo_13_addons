@@ -11,8 +11,19 @@ compose_file="$repo/tests/docker-compose-uat.yml"
 export PATH="$tmp/bin:$PATH" MOCK_CALLS="$tmp/calls"
 export UAT_COMPOSE_PROJECT=task-uat-79 UAT_STATE_FILE="$tmp/state"
 export UAT_EVIDENCE_DIR="$tmp/evidence" UAT_COMPOSE_FILE="$compose_file"
-export UAT_PROFILE=uat-offline UAT_MAX_RUNS=3 UAT_DB_NAME=odoo13uat
+export UAT_PROFILE=uat-offline UAT_MAX_RUNS=3 UAT_DB_NAME=odoo_uat
 export UAT_PYTHON_RUNTIME=3.7.3
+
+# Keep the logical database name bound consistently across wrapper and Compose.
+[ "$(grep -c 'odoo_uat' "$repo/tests/docker-compose-uat.yml")" -eq 5 ]
+grep -q 'database name must be odoo_uat' "$repo/tests/run-uat.sh"
+rm -f "$MOCK_CALLS"
+if UAT_DB_NAME=wrong_db "$repo/tests/run-uat.sh" uat-runner 2>"$tmp/database.err"; then
+  echo 'expected mismatched database name to be rejected' >&2; exit 1
+fi
+grep -q 'database name must be odoo_uat' "$tmp/database.err"
+[ ! -s "$MOCK_CALLS" ]
+[ ! -e "$UAT_STATE_FILE" ]
 
 # A mismatched runtime must fail before invoking even the Docker mock.
 if UAT_PYTHON_RUNTIME=3.8.20 "$repo/tests/run-uat.sh" uat-runner 2>"$tmp/runtime.err"; then
