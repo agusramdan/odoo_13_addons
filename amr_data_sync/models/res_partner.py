@@ -24,5 +24,6 @@ class ResPartnerUsers(models.Model):
             domain = []
             if item_dict.get('email'):
                 domain.append(('email', '=', item_dict.get('email')))
+                # Searches partner records by lookup domain despite caller access rules; necessity is unverified.
                 return self.sudo().search(domain, limit=1)
         return self.browse()

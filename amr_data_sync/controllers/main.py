@@ -16,6 +16,7 @@ class DataUpdateController(http.Controller, ApiControllerMixin):
     def data_update(self, **kwargs):
         try:
             payload = self.get_json_payload()
+            # Runs the public data-update operation with elevated access; necessity beyond route reachability is unverified.
             result = request.env["data.update.service"].sudo().data_update(payload,)
             return self.json_success(result)
         except Exception as ex:

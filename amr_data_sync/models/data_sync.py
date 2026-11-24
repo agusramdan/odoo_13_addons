@@ -115,6 +115,7 @@ class ExternalDataSync(models.Model):
         return super(ExternalDataSync, self).write(vals)
 
     def get_server_sync(self):
+        # Searches the server-sync configuration by app name when strategy lookup yields none; bypass necessity is unverified.
         return self.sync_strategy_id.get_server_sync() or self.env['external.server.sync'].sudo().search(
             [('name', '=', self.external_app_name)], limit=1)
 
@@ -346,6 +347,7 @@ class ExternalDataSync(models.Model):
             if payload:
                 done_data['payload_json'] = json.dumps(payload, default=date_utils.json_default)
 
+            # Persists completion data even when the current user cannot write; whether elevation is necessary is unverified.
             self.sudo().write(done_data)
 
         return internal_odoo
@@ -838,6 +840,7 @@ class ExternalDataSync(models.Model):
         if not internal_odoo_ids:
             _logger.warning("No data %s, %s", internal_model, internal_odoo_ids)
             return
+        # Searches matching sync records across access rules before duplicate cleanup; necessity is unverified.
         external_data_sync = self.sudo().search([('internal_model', '=', internal_model), ('internal_odoo_id', 'in', internal_odoo_ids)])
         return external_data_sync.remove_duplicate_data()
 

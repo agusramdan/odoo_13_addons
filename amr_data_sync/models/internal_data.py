@@ -67,5 +67,6 @@ class InternalData(models.AbstractModel):
         item_dict = self.convert_for_lookup_internal_from_external_data(item, **kwargs)
         if item_dict:
             if item_dict.get('id') == 1:
+                # Browses the explicitly allowed internal record ID as superuser; necessity beyond that allowlist is unverified.
                 return self.sudo().browse(item_dict.get('id'))
         return self.browse()

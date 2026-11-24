@@ -24,6 +24,7 @@ class DataUpdateService(models.AbstractModel):
 
     @api.model
     def get_token_strategy(self):
+        # Reads the token-strategy setting regardless of configuration access rules; necessity is unverified.
         return self.env['ir.config_parameter'].sudo().get_param(
             'amr_data_sync.date_update_security_option', 'secure_log'
         )

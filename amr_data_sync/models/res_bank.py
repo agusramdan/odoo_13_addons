@@ -25,5 +25,6 @@ class Bank(models.Model):
             domain = []
             if item_dict.get('name'):
                 domain.append(('name', '=', item_dict.get('name')))
+                # Searches bank records by lookup domain despite caller access rules; necessity is unverified.
                 return self.sudo().search(domain, limit=1)
         return self.browse()

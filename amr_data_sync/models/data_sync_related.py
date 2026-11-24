@@ -320,6 +320,7 @@ class ExternalDataSyncRelated(models.Model):
         if data:
             return data
 
+        # Resolves the configured internal model with elevated access for external-data lookup; necessity is unverified.
         Model = self.env[self.internal_model].sudo()
         if is_callable_method(Model, "lookup_internal_from_external_data"):
             method = getattr(Model, "lookup_internal_from_external_data")
