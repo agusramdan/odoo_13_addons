@@ -45,8 +45,8 @@ USER ${USERNAME}
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /home/${USERNAME}/hermes-agent \
     && cd /home/${USERNAME}/hermes-agent \
     && uv venv --python 3.14 .venv \
-    && uv pip install --python .venv/bin/python -e . \
-    && .venv/bin/python -c "import ruamel.yaml, openai, rich, requests, httpx" \
+    && uv pip install --python .venv/bin/python -e . pytest \
+    && .venv/bin/python -c "import ruamel.yaml, openai, rich, requests, httpx, pytest" \
     && .venv/bin/hermes --version
 
 # Salin konfigurasi 4 agent & skills ke ~/.hermes

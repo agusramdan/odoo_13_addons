@@ -1,126 +1,109 @@
 <?xml version="1.0" encoding="utf-8"?>
-<odoo><data>
-    <record id="view_resource_issuer_tree" model="ir.ui.view">
-        <field name="name">oidc.issuer.register.tree</field>
-        <field name="model">oidc.issuer.register</field>
-        <field name="arch" type="xml">
-            <tree string="Trusted Issuers">
-                <field name="issuer"/><field name="token_profile"/>
-                <field name="resolver_mode"/><field name="mvp_enabled"/><field name="active"/>
-            </tree>
-        </field>
-    </record>
-    <record id="view_resource_issuer_form" model="ir.ui.view">
-        <field name="name">oidc.issuer.register.form</field>
-        <field name="model">oidc.issuer.register</field>
-        <field name="arch" type="xml">
-            <form string="Trusted Issuer">
-                <sheet>
-                    <group>
-                        <field name="issuer"/><field name="active"/>
-                        <field name="token_profile"/><field name="client_id"/>
-                        <field name="azp"/><field name="allow_missing_azp"/>
-                    </group>
-                    <group string="Static endpoints / protected local key">
-                        <field name="jwks_uri"/><field name="token_endpoint"/>
-                        <field name="introspection_endpoint"/>
-                        <field name="credential_ref" groups="amr_resource.group_oidc_trust_admin"/>
-                        <field name="local_key_ref" groups="amr_resource.group_oidc_trust_admin"/>
-                    </group>
-                    <group string="User resolution (no automatic selection)">
-                        <field name="mvp_enabled"/><field name="resolver_mode"/>
-                        <field name="policy_revision" groups="amr_resource.group_oidc_trust_admin" readonly="1"/>
-                        <field name="fixed_user_id" attrs="{'invisible': [('resolver_mode', '!=', 'fixed_user')], 'required': [('resolver_mode', '=', 'fixed_user')]}"/>
-                        <field name="resolver_key" attrs="{'invisible': [('resolver_mode', '!=', 'resolver')]}"/>
-                    </group>
-                    <notebook>
-                        <page string="Audiences"><field name="audience_ids">
-                            <tree editable="bottom"><field name="value"/></tree>
-                        </field></page>
-                        <page string="Exact subject bindings"><field name="binding_ids">
-                            <tree editable="bottom"><field name="sub"/><field name="user_id"/></tree>
-                        </field></page>
-                        <page string="Ordered Claim Mappings" attrs="{'invisible': [('resolver_mode', '!=', 'mapping')]}">
-                            <field name="user_mapping_ids" groups="amr_resource.group_oidc_trust_admin">
-                                <tree editable="bottom">
-                                    <field name="sequence"/><field name="active"/>
-                                    <field name="field_user"/><field name="jwt_key"/>
-                                </tree>
-                            </field>
-                        </page>
-                        <page string="Introspection Authorization" groups="amr_resource.group_oidc_trust_admin">
-                            <field name="introspection_credential_ref"/>
-                            <field name="introspection_auth_client_id"/>
-                            <field name="introspection_auth_method"/>
-                            <field name="introspection_basic_contract_ref"/>
-                            <field name="introspection_credential_endpoint"/>
-                            <field name="allow_jwt_introspection"/>
-                            <field name="allow_introspection_iss_absent"/>
-                        </page>
-                        <page string="Metadata Source">
-                            <field name="metadata_mode"/><field name="discovery_unavailable_declared" readonly="1"/>
-                            <field name="discovery_unavailable_evidence_ref" readonly="1" groups="amr_resource.group_oidc_trust_admin"/>
-                            <field name="verification_source"/><field name="no_jwks_declaration"/>
-                            <field name="no_jwks_evidence_ref" groups="amr_resource.group_oidc_trust_admin"/>
-                            <field name="introspection_source"/>
-                        </page>
-                    </notebook>
-                </sheet>
-            </form>
-        </field>
-    </record>
-    <record id="view_resource_issuer_source_form" model="ir.ui.view">
-        <field name="name">oidc.issuer.register.source.form</field>
-        <field name="model">oidc.issuer.register</field>
-        <field name="arch" type="xml">
-            <form string="Stored Source — Execution Disabled" create="false" delete="false">
-                <sheet>
-                    <div class="alert alert-warning" role="alert">Stored Python is never executed in v1. Editing source does not activate it.</div>
-                    <group><field name="issuer" readonly="1"/></group>
-                    <group groups="amr_resource.group_oidc_code_admin">
-                        <field name="python_code"/>
-                        <field name="code_revision"/><field name="code_digest"/>
-                        <field name="code_actor_id"/><field name="code_date"/>
-                    </group>
-                </sheet>
-            </form>
-        </field>
-    </record>
-    <record id="action_resource_issuers" model="ir.actions.act_window">
-        <field name="name">Trusted Issuers</field><field name="res_model">oidc.issuer.register</field>
-        <field name="view_mode">tree,form</field><!-- Bila ir.actions.act_window punya ir.actions.act_window.view maka view_mode akan di abaikan -->
-        <field name="groups_id" eval="[(6, 0, [ref('group_oidc_trust_admin')])]"/>
-    </record>
-    <record id="action_resource_issuers_tree" model="ir.actions.act_window.view">
-        <field name="sequence">1</field><field name="view_mode">tree</field>
-        <field name="view_id" ref="view_resource_issuer_tree"/>
-        <field name="act_window_id" ref="action_resource_issuers"/>
-    </record>
-    <record id="action_resource_issuers_form" model="ir.actions.act_window.view">
-        <field name="sequence">2</field><field name="view_mode">form</field>
-        <field name="view_id" ref="view_resource_issuer_form"/>
-        <field name="act_window_id" ref="action_resource_issuers"/>
-    </record>
-    <record id="action_resource_sources" model="ir.actions.act_window">
-        <field name="name">Stored Source (Disabled)</field><field name="res_model">oidc.issuer.register</field>
-        <field name="view_mode">tree,form</field><!-- Bila ir.actions.act_window punya ir.actions.act_window.view maka view_mode akan di abaikan -->
-        <field name="groups_id" eval="[(6, 0, [ref('group_oidc_code_admin')])]"/>
-        <field name="context">{'create': False, 'delete': False}</field>
-    </record>
-    <record id="action_resource_sources_tree" model="ir.actions.act_window.view">
-        <field name="sequence">1</field><field name="view_mode">tree</field>
-        <field name="view_id" ref="view_resource_issuer_tree"/>
-        <field name="act_window_id" ref="action_resource_sources"/>
-    </record>
-    <record id="action_resource_sources_form" model="ir.actions.act_window.view">
-        <field name="sequence">2</field><field name="view_mode">form</field>
-        <field name="view_id" ref="view_resource_issuer_source_form"/>
-        <field name="act_window_id" ref="action_resource_sources"/>
-    </record>
-    <menuitem id="menu_resource_trust" name="Resource Trust" parent="base.menu_administration"
-              groups="amr_resource.group_oidc_trust_admin,amr_resource.group_oidc_code_admin"/>
-    <menuitem id="menu_resource_issuers" name="Trusted Issuers" parent="menu_resource_trust"
-              action="action_resource_issuers" groups="amr_resource.group_oidc_trust_admin"/>
-    <menuitem id="menu_resource_sources" name="Stored Source (Disabled)" parent="menu_resource_trust"
-              action="action_resource_sources" groups="amr_resource.group_oidc_code_admin"/>
-</data></odoo>
+<odoo>
+    <data>
+        <record id="view_resource_issuer_tree" model="ir.ui.view">
+            <field name="name">oidc.issuer.register.tree</field>
+            <field name="model">oidc.issuer.register</field>
+            <field name="arch" type="xml">
+                <tree string="Trusted Issuers" create="true" edit="true" delete="false">
+                    <field name="issuer"/>
+                    <field name="token_profile"/>
+                    <field name="resolver_mode"/>
+                    <field name="active"/>
+                </tree>
+            </field>
+        </record>
+        <record id="view_resource_issuer_form" model="ir.ui.view">
+            <field name="name">oidc.issuer.register.form</field>
+            <field name="model">oidc.issuer.register</field>
+            <field name="arch" type="xml">
+                <form string="Trusted Issuer" create="true" edit="true" delete="false">
+                    <header groups="amr_resource.group_oidc_trust_admin">
+                        <button name="action_to_production" type="object" string="Set Production" attrs="{'invisible': ['|', ('active', '=', False), ('state', 'not in', ['draft', 'disable'])]}"/>
+                        <button name="action_to_draft" type="object" string="Set Draft" states="production,disable"/>
+                        <button name="action_to_disable" type="object" string="Disable" states="draft,production"/>
+                        <button name="unlink" type="object" string="Archive" attrs="{'invisible': ['|', ('active', '=', False), ('state', '!=', 'disable')]}" confirm="Archive this disabled issuer?"/>
+                        <field name="state" widget="statusbar" statusbar_visible="draft,production,disable" readonly="1"/>
+                    </header>
+                    <sheet>
+                        <group>
+                            <field name="issuer" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="active" readonly="1"/>
+                            <field name="token_profile" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="client_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="azp" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="allow_missing_azp" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                        </group>
+                        <group string="User Resolution">
+                            <field name="resolver_mode" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="fixed_user_id"
+                                   attrs="{'invisible': [('resolver_mode', '!=', 'fixed_user')], 'required': [('resolver_mode', '=', 'fixed_user')], 'readonly': [('state', '!=', 'draft')]}"/>
+                            
+                        </group>
+                        <notebook>
+                            <page string="Static endpoints">
+                                <group string="Static Endpoints" >
+                                    <field name="jwks_uri" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                                    <field name="token_endpoint" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                                    <field name="introspection_endpoint" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                                </group>
+                            </page>
+                            <page string="Audiences">
+                                <field name="audience_ids" groups="amr_resource.group_oidc_trust_admin" attrs="{'readonly': [('state', '!=', 'draft')]}" >
+                                    <tree editable="bottom" create="true" delete="true">
+                                        <field name="value"/>
+                                    </tree>
+                                </field>
+                            </page>
+                            <page string="Exact subject bindings">
+                                <field name="binding_ids" groups="amr_resource.group_oidc_trust_admin" attrs="{'readonly': [('state', '!=', 'draft')]}" >
+                                    <tree editable="bottom" create="true" delete="true">
+                                        <field name="sub"/>
+                                        <field name="user_id"/>
+                                    </tree>
+                                </field>
+                            </page>
+                            <page string="Ordered Claim Mappings"
+                                  attrs="{'invisible': [('resolver_mode', '!=', 'mapping')]}">
+                                <field name="user_mapping_ids" groups="amr_resource.group_oidc_trust_admin" attrs="{'readonly': [('state', '!=', 'draft')]}" >
+                                    <tree editable="bottom" create="true" delete="true">
+                                        <field name="sequence"/>
+                                        <field name="active"/>
+                                        <field name="field_user"/>
+                                        <field name="jwt_key"/>
+                                    </tree>
+                                </field>
+                            </page>
+                            <page string="Algorithm Policy" groups="amr_resource.group_oidc_trust_admin">
+                                <field name="algorithm_policy_ids" groups="amr_resource.group_oidc_trust_admin" attrs="{'readonly': [('state', '!=', 'draft')]}" >
+                                    <tree editable="bottom" create="true" delete="true">
+                                        <field name="algorithm_id"/>
+                                        <field name="enabled"/>
+                                    </tree>
+                                </field>
+                            </page>
+                            <page string="Credential Configuration" groups="amr_resource.group_oidc_trust_admin">
+                                <group attrs="{'readonly': [('state', '!=', 'draft')]}" groups="amr_resource.group_oidc_trust_admin">
+                                    <field name="credential_source"/>
+                                    <field name="credential_ref" attrs="{'invisible': [('credential_source', '=', 'database')]}"/>
+                                    <field name="credential_value" attrs="{'invisible': [('credential_source', '!=', 'database')]}"/>
+                                </group>
+                            </page>
+                            <page string="Python Code" groups="amr_resource.group_oidc_trust_admin" attrs="{'invisible': [('resolver_mode', '!=', 'code')]}">
+                                <field name="python_code"/>
+                            </page>
+                        </notebook>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+         
+        <record id="action_resource_issuers" model="ir.actions.act_window">
+            <field name="name">Trusted Issuers</field>
+            <field name="res_model">oidc.issuer.register</field>
+            <field name="view_mode">tree,form</field><!-- Bila ir.actions.act_window punya ir.actions.act_window.view maka view_mode akan di abaikan -->
+            <field name="groups_id" eval="[(6, 0, [ref('group_oidc_trust_admin')])]"/>
+            <field name="context">{'active_test': False}</field>
+        </record>
+    </data>
+</odoo>

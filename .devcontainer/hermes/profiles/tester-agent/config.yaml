@@ -1,9 +1,10 @@
 model:
   provider: litellm
-  default: tester-litellm
+  model: tester-litellm
   temperature: 0.2
   max_output_tokens: 8192
-
+  max_input_tokens: 250000
+  
 agent:
   max_turns: 150
   verbose: false
@@ -94,8 +95,9 @@ delegation:
   max_iterations: 250
 skills:
   auto_load:
-    - odoo-unit-tests
-    - odoo-integration-tests
+    - odoo-unit-test
+    - odoo-integration-test
+    - odoo-browser-test
   creation_nudge_interval: 15
 approvals:
   mode: 'off'
@@ -130,4 +132,7 @@ platform_toolsets:
     - todo
     - vision
     - web
-
+onboarding:
+  seen:
+    tool_progress_prompt: true
+    busy_input_prompt: true

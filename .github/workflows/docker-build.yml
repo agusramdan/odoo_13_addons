@@ -60,6 +60,16 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-dev:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-dev:${{ env.DATE_TAG }}
 
+      - name: Build and push Docker image odoo-13-unittest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .devcontainer/Dockerfile.unittest
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-unittest:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/odoo-13-unittest:${{ env.DATE_TAG }}
+
       - name: Build and push Docker image odoo-13-dev
         uses: docker/build-push-action@v5
         with:

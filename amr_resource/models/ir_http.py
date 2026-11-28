@@ -1,11 +1,31 @@
 # -*- coding: utf-8 -*-
 
+import re
+
 from werkzeug.exceptions import Unauthorized
 
 from odoo import models
 from odoo.http import request
 from odoo.service import security
 
+AUTHORIZATION_RE = re.compile(r'^Bearer ([A-Za-z0-9\-._~+/]+=*)$')
+def get_param_token():
+    return (request.httprequest.args.get('access_token') or request.httprequest.form.get('access_token')
+                or request.httprequest.args.get('token') or request.httprequest.form.get('token')
+                or request.httprequest.args.get('token_access') or request.httprequest.form.get('token_access'))
+
+def get_header_token():
+    return request.httprequest.headers.get('access_token') or request.httprequest.headers.get('token')
+
+def get_bearer_token():
+    authorization = (request.httprequest.environ.get('HTTP_AUTHORIZATION')
+                     or request.httprequest.headers.get('Authorization'))
+    if authorization is None:
+        return None
+    match = AUTHORIZATION_RE.fullmatch(authorization)
+    if not match:
+        raise Unauthorized()
+    return match.group(1)
 
 class IrHttp(models.AbstractModel):
     _inherit = 'ir.http'
@@ -41,8 +61,8 @@ class IrHttp(models.AbstractModel):
     @classmethod
     def _authenticate_token(cls, token):
         try:
-            helper = request.env['amr.resource.helper']
-            payload = helper.get_validate_user(token)
+            helper = request.env['oidc.issuer.register']
+            payload = helper.decode(token)
             user = helper.get_user_match(payload)
             if not user:
                 raise Unauthorized()
@@ -57,11 +77,11 @@ class IrHttp(models.AbstractModel):
 
     @classmethod
     def _auth_method_machine(cls):
-        return cls._authenticate_token(request.env['amr.resource.helper'].get_bearer_token())
+        return cls._authenticate_token(get_bearer_token())
 
     @classmethod
     def _auth_method_params(cls):
-        return cls._authenticate_token(request.env['amr.resource.helper'].get_param_token())
+        return cls._authenticate_token(get_param_token())
 
     @classmethod
     def _auth_method_user_or_param(cls):
@@ -69,8 +89,7 @@ class IrHttp(models.AbstractModel):
             return cls._auth_method_user()
         except Unauthorized:
             pass
-        helper = request.env['amr.resource.helper']
-        token = helper.get_bearer_token()
+        token = get_bearer_token()
         if token is not None:
             return cls._authenticate_token(token)
         return cls._auth_method_params()
@@ -78,7 +97,7 @@ class IrHttp(models.AbstractModel):
     @classmethod
     def get_jwt_payload(cls):
         payload = getattr(request, 'jwt_payload', {})
-        helper = request.env['amr.resource.helper']
+        helper = request.env['oidc.issuer.register']
         return payload if helper._verified(payload) else {}
 
     @classmethod

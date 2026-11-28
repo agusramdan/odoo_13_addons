@@ -1,34 +1,59 @@
 # -*- coding: utf-8 -*-
 """Global trust configuration; no discovery or stored-code execution."""
+
+import base64
+import os
+import token
+import jwt
 import hashlib
 import ipaddress
 import json
 import logging
-from urllib.parse import urlsplit
+import re
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
+from urllib.parse import quote_plus, urlsplit
 from odoo import api, fields, models, SUPERUSER_ID
+from odoo.http import request
 from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Unauthorized
 
+from ..transport import fetch_json
+from .oidc_alogritma import ALGORITHM_CATALOG
+
 _logger = logging.getLogger(__name__)
-_RESTORE_CONTEXT_TOKEN = object()
+
 TRUST_GROUP = 'amr_resource.group_oidc_trust_admin'
 CODE_GROUP = 'amr_resource.group_oidc_code_admin'
-AUDIT_FIELDS = {'code_revision', 'code_digest', 'code_actor_id', 'code_date', 'policy_revision'}
 POLICY_CHILD_MODELS = {'oidc.issuer.register.audience', 'oidc.issuer.subject',
                        'oidc.issuer.user.mapping', 'oidc.issuer.algorithm.policy'}
-_POLICY_CHILD_TABLES = {
-    'oidc.issuer.register.audience': 'oidc_issuer_register_audience',
-    'oidc.issuer.subject': 'oidc_issuer_subject',
-    'oidc.issuer.user.mapping': 'oidc_issuer_user_mapping',
-    'oidc.issuer.algorithm.policy': 'oidc_issuer_algorithm_policy',
-}
-_ALGORITHM_CATALOG = __import__('types').MappingProxyType({
-    'RS256': __import__('types').MappingProxyType({
-        'key_family': 'RSA', 'min_key_bits': 2048,
-        'purpose': 'access_token_verification', 'support_state': 'supported'}),
-})
 
+_PROVENANCE = object()
+
+
+def _invalidate_request_policy():
+    try:
+        current_request = request._get_current_object() if request else None
+    except RuntimeError:
+        current_request = None
+    if current_request is not None:
+        current_request._trust_generation = getattr(current_request, '_trust_generation', 0) + 1
+
+
+def _string(value):
+    return isinstance(value, str) and bool(value) and not any(ord(c) < 33 or ord(c) == 127 for c in value)
+
+
+class _VerifiedClaims(dict):
+    def __init__(self, claims, uid):
+        super().__init__(claims)
+        self._origin, self._uid = _PROVENANCE, uid
+        self._request = request._get_current_object()
+        self._generation = getattr(self._request, '_trust_generation', 0)
+        self._snapshot = json.dumps(claims, sort_keys=True, allow_nan=False)
 
 def _policy_algorithms(policy, key_metadata):
     """Return only algorithms supported by code, enabled for issuer and key."""
@@ -38,12 +63,12 @@ def _policy_algorithms(policy, key_metadata):
     for row in policy:
         if (not isinstance(row, (list, tuple)) or len(row) != 2
                 or not isinstance(row[0], str) or type(row[1]) is not bool
-                or row[0] not in _ALGORITHM_CATALOG):
+                or row[0] not in ALGORITHM_CATALOG):
             raise ValidationError('Algorithm policy is invalid.')
         if row[1]:
             enabled.add(row[0])
     allowed = {name for name in enabled
-               if _ALGORITHM_CATALOG[name]['support_state'] == 'supported'}
+               if ALGORITHM_CATALOG[name]['support_state'] == 'supported'}
     key_algorithm = key_metadata.get('alg')
     if key_algorithm is not None:
         allowed = {name for name in allowed if name == key_algorithm}
@@ -52,27 +77,9 @@ def _policy_algorithms(policy, key_metadata):
     return frozenset(allowed)
 
 
-def _effective_algorithms(enabled, supported):
-    """Intersect issuer policy with a code-owned catalog and verified capability."""
-    if not isinstance(enabled, (list, tuple, set, frozenset)) or not isinstance(
-            supported, (list, tuple, set, frozenset)):
-        raise ValidationError('Algorithm policy is invalid.')
-    if not enabled or any(name not in _ALGORITHM_CATALOG for name in enabled):
-        raise ValidationError('Algorithm policy is empty or unsupported.')
-    effective = frozenset(enabled).intersection(supported)
-    if not effective:
-        raise ValidationError('No configured algorithm is supported.')
-    return effective
-
-
 def _exact_string(value):
     return isinstance(value, str) and bool(value) and not any(
         ord(char) < 33 or ord(char) == 127 for char in value)
-
-
-def _introspection_client_id(value):
-    return (type(value) is str and 1 <= len(value) <= 1024 and bool(value.strip())
-            and not any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value))
 
 
 def _https_url(value):
@@ -132,683 +139,59 @@ def _validate_mapping_rows(rows):
     return True
 
 
-def _mapping_candidate(rows, claims, find_users):
-    """Return the first uniquely matched user ID; caller enforces existing binding."""
-    if not isinstance(claims, dict) or not isinstance(rows, (list, tuple)):
-        raise ValidationError('Mapping configuration is invalid.')
-    configured = [dict(row, active=True) for row in rows]
-    _validate_mapping_rows(configured)
-    for row in sorted(configured, key=lambda item: item['sequence']):
-        if row['jwt_key'] not in claims:
-            raise ValidationError('Mapping claim is missing or invalid.')
-        value = _validate_mapping_claim(row['jwt_key'], claims[row['jwt_key']])
-        matches = find_users(row['field_user'], value)
-        identifiers = {match.id if hasattr(match, 'id') else match for match in matches}
-        if len(identifiers) > 1:
-            raise ValidationError('Mapping is ambiguous.')
-        if identifiers:
-            return next(iter(identifiers))
-    raise ValidationError('No mapping matched a user.')
-
-
-def _legacy_plan(get_param, values, audiences, bindings):
-    """Resolve legacy *keys* once; require an administrator-authored exact plan."""
-    import json
-    import re
-
-    allowed = {'issuer', 'client_id', 'token_profile', 'jwks_uri', 'token_endpoint',
-               'introspection_endpoint', 'credential_ref', 'local_key_ref',
-               'azp', 'allow_missing_azp', 'resolver_mode', 'fixed_user_id'}
-    if (not isinstance(values, dict) or set(values) - allowed or
-            values.get('resolver_mode') not in ('get_user_match', 'fixed_user', 'resolver')):
-        raise ValidationError('An explicit supported migration plan is required.')
-    selectors, resolved = [], []
-    for name in ('issuer', 'audience'):
-        selector = get_param('amr_resource.' + name)
-        if not isinstance(selector, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', selector):
-            raise ValidationError('Legacy configuration must contain an explicit parameter key.')
-        value = get_param(selector)
-        if not _exact_string(value):
-            raise ValidationError('Legacy configuration reference is missing or invalid.')
-        selectors.append(selector)
-        resolved.append(value)
-    if (values.get('issuer') != resolved[0] or not isinstance(audiences, list) or
-            not audiences or any(not _exact_string(a) for a in audiences) or
-            len(set(audiences)) != len(audiences) or resolved[1] not in audiences):
-        raise ValidationError('Legacy issuer or audience conflicts with the migration plan.')
-    if not isinstance(bindings, list):
-        raise ValidationError('Explicit subject bindings are required.')
-    subjects = set()
-    for binding in bindings:
-        if (not isinstance(binding, dict) or set(binding) != {'sub', 'user_id'} or
-                not _exact_string(binding['sub']) or type(binding['user_id']) is not int or
-                binding['user_id'] <= 0 or binding['sub'] in subjects):
-            raise ValidationError('Ambiguous or invalid subject binding.')
-        subjects.add(binding['sub'])
-    normalized = dict(jwks_uri=False, token_endpoint=False, introspection_endpoint=False,
-                      credential_ref=False, local_key_ref=False, azp=False,
-                      allow_missing_azp=False, fixed_user_id=False)
-    normalized.update(values)
-    plan: dict = dict(version=2, values=normalized,
-                      audiences=sorted(audiences), bindings=sorted(
-            [dict(b) for b in bindings], key=lambda b: b['sub']),
-                      legacy_selectors=selectors, legacy_values=resolved)
-    plan['digest'] = hashlib.sha256(json.dumps(
-        plan, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-    return plan
-
-
-class RegistryAccess(models.AbstractModel):
-    _name = 'amr.resource.registry.access'
-    _description = 'Trust Registry Access Guard'
-
-    def _registry_role(self, group):
-        user = self.env.user
-        return (not user.share and user.has_group('base.group_system')
-                and user.has_group(group))
-
-    @api.model
-    def check_access_rights(self, operation, raise_exception=True):
-        if not self.env.su:
-            allowed = self._registry_role(TRUST_GROUP)
-            if self._name == 'oidc.issuer.register' and operation in ('read', 'write'):
-                allowed = allowed or self._registry_role(CODE_GROUP)
-            if not allowed:
-                if raise_exception:
-                    raise AccessError('Registry access denied.')
-                return False
-        return super(RegistryAccess, self).check_access_rights(operation, raise_exception)
-
-    def _guard_parent_values(self, values):
-        if 'issuer_id' in values:
-            parent = self.env['oidc.issuer.register'].browse(values['issuer_id']).exists()
-            parent.check_access_rights('read')
-            parent.check_access_rule('read')
-            if len(parent) != 1:
-                raise AccessError('Registry access denied.')
-
-    def _lock_policy_child_rows(self):
-        if self._name not in POLICY_CHILD_MODELS:
-            return
-        ids = sorted(set(self.ids))
-        if not ids:
-            return
-        table = _POLICY_CHILD_TABLES[self._name]
-        # Odoo 13 ORM has no read-only row-lock API; lock child IDs in stable
-        # order before relation refresh and rechecks to preserve AC-M06 correctness.
-        self.env.cr.execute(
-            'SELECT id FROM %s WHERE id IN %%s ORDER BY id FOR UPDATE' % table,
-            (tuple(ids),))
-        self.invalidate_cache(ids=ids)
-
-    def _lock_policy_parent_ids(self, parent_ids):
-        if self._name not in POLICY_CHILD_MODELS:
-            return []
-        parent_ids = sorted(set(parent_id for parent_id in parent_ids if parent_id))
-        parents = self.env['oidc.issuer.register'].browse(parent_ids)
-        if parents:
-            parents._lock_policy_state()
-        return parents
-
-    def _bump_policy_parents(self, parents):
-        if self.env.context.get('_policy_restore_token') is _RESTORE_CONTEXT_TOKEN:
-            return
-        by_id = {issuer.id: issuer for issuer in parents}
-        for issuer_id in sorted(by_id):
-            issuer = by_id[issuer_id]
-            if hasattr(issuer, '_bump_policy_revision'):
-                issuer._bump_policy_revision()
-
-    @api.model_create_multi
-    def create(self, vals_list):
-        self.check_access_rights('create')
-        for values in vals_list:
-            self._guard_parent_values(values)
-        parents = []
-        if self._name in POLICY_CHILD_MODELS:
-            defaults = {}
-            if any('issuer_id' not in values for values in vals_list):
-                defaults = self.default_get(['issuer_id'])
-            parent_ids = [values.get('issuer_id', defaults.get('issuer_id'))
-                          for values in vals_list]
-            parent_ids = [parent_id for parent_id in parent_ids if parent_id]
-            if not parent_ids:
-                raise AccessError('Registry access denied.')
-            for parent_id in set(parent_ids):
-                self._guard_parent_values({'issuer_id': parent_id})
-            parents = self._lock_policy_parent_ids(parent_ids)
-            self.check_access_rights('create')
-            for parent in parents:
-                self._guard_parent_values({'issuer_id': parent.id})
-        records = super(RegistryAccess, self).create(vals_list)
-        self._bump_policy_parents(parents)
-        _logger.info('Trust registry create model=%s ids=%s actor=%s',
-                     self._name, records.ids, self.env.uid)
-        return records
-
-    def write(self, values):
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._guard_parent_values(values)
-        child_model = self._name in POLICY_CHILD_MODELS
-        parents = self.mapped('issuer_id') if child_model else []
-        parent_ids = [parent.id for parent in parents]
-        if child_model and values.get('issuer_id'):
-            parent_ids.append(values['issuer_id'])
-        for parent_id in set(parent_ids):
-            self._guard_parent_values({'issuer_id': parent_id})
-        parents = self._lock_policy_parent_ids(parent_ids)
-        if child_model:
-            self._lock_policy_child_rows()
-            current = self.mapped('issuer_id')
-            locked_ids = set(parent_ids)
-            if any(parent.id not in locked_ids for parent in current):
-                raise AccessError('Registry access denied.')
-            self.check_access_rights('write')
-            self.check_access_rule('write')
-            for parent in parents:
-                self._guard_parent_values({'issuer_id': parent.id})
-        result = super(RegistryAccess, self).write(values)
-        self._bump_policy_parents(parents)
-        _logger.info('Trust registry write model=%s ids=%s actor=%s',
-                     self._name, self.ids, self.env.uid)
-        return result
-
-    def unlink(self):
-        self.check_access_rights('unlink')
-        self.check_access_rule('unlink')
-        ids = self.ids
-        child_model = self._name in POLICY_CHILD_MODELS
-        parents = self.mapped('issuer_id') if child_model else []
-        parent_ids = [parent.id for parent in parents]
-        for parent_id in set(parent_ids):
-            self._guard_parent_values({'issuer_id': parent_id})
-        parents = self._lock_policy_parent_ids(parent_ids)
-        if child_model:
-            self._lock_policy_child_rows()
-            current = self.mapped('issuer_id')
-            locked_ids = set(parent_ids)
-            if any(parent.id not in locked_ids for parent in current):
-                raise AccessError('Registry access denied.')
-            self.check_access_rights('unlink')
-            self.check_access_rule('unlink')
-            for parent in parents:
-                self._guard_parent_values({'issuer_id': parent.id})
-        result = super(RegistryAccess, self).unlink()
-        self._bump_policy_parents(parents)
-        _logger.info('Trust registry unlink model=%s ids=%s actor=%s',
-                     self._name, ids, self.env.uid)
-        return result
-
-    def name_get(self):
-        self.check_access_rights('read')
-        self.check_access_rule('read')
-        return super(RegistryAccess, self).name_get()
-
-
-class AmrResourceIssuer(models.Model):
+class OidcResourceIssuer(models.Model):
     _name = 'oidc.issuer.register'
     _description = 'Resource Token Issuer'
-    _inherit = 'amr.resource.registry.access'
     _rec_name = 'issuer'
+    _order = 'sequence, id'
+    _inherit = ['mail.thread']
 
-    issuer = fields.Char(required=True, index=True)
     active = fields.Boolean(default=True)
-    token_profile = fields.Selection([('jwt', 'JWT Access Token'),
-                                      ('opaque', 'Opaque Access Token')], required=True)
+    sequence = fields.Integer(default=20)
+    state = fields.Selection([('draft', 'Draft'), ('production', 'Production'), ('disable', 'Disable')], default='draft')
+    issuer = fields.Char(required=True, index=True)
+    token_profile = fields.Selection(
+        [('jwt', 'JWT Access Token'), ('opaque', 'Opaque Access Token')], required=True, default='jwt'
+    )
     jwks_uri = fields.Char()
     token_endpoint = fields.Char()
     introspection_endpoint = fields.Char()
     client_id = fields.Char(required=True)
     azp = fields.Char()
     allow_missing_azp = fields.Boolean(default=False)
+    credential_source = fields.Selection(
+        [
+            ("none", "None"),
+            ("database", "Database"),
+            ("env", "Environment"),
+            ("system_parameter", "System Parameter"),
+        ],
+        groups=TRUST_GROUP,
+        default="none",
+        required=True,
+        help="Client credentials grant requires authentication regardless of source."
+    )
     credential_ref = fields.Char(groups=TRUST_GROUP)
-    local_key_ref = fields.Char(groups='amr_resource.group_oidc_trust_admin',
-                                help='Protected ir.config_parameter key containing an RSA public PEM.')
-    local_public_key = fields.Text(compute='_compute_local_public_key', groups=TRUST_GROUP,
-                                   help='Protected RSA public PEM; no loopback key fetch.')
+    credential_value = fields.Char(groups=TRUST_GROUP)
+
     resolver_mode = fields.Selection([('get_user_match', 'Default'),
                                       ('fixed_user', 'Fixed User'),
                                       ('mapping', 'Ordered Claim Mapping'),
-                                      ('resolver', 'Allowlisted Resolver')])
-    mvp_enabled = fields.Boolean(default=False, readonly=True)
-    metadata_mode = fields.Selection([('manual', 'Manual'),
-                                      ('oidc_discovery', 'OIDC Discovery')], readonly=True)
-    discovery_unavailable_declared = fields.Boolean(default=False, readonly=True)
-    discovery_unavailable_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
-    verification_source = fields.Selection([('jwks', 'JWKS'),
-                                            ('local_public', 'Local public key'),
-                                            ('none', 'No JWKS')], readonly=True)
-    introspection_source = fields.Selection([('none', 'None'), ('manual', 'Manual'),
-                                             ('rfc8414', 'RFC 8414')], readonly=True)
-    no_jwks_declaration = fields.Boolean(default=False, readonly=True)
-    no_jwks_evidence_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
-    introspection_credential_ref = fields.Char(size=256, groups=TRUST_GROUP, readonly=True)
-    introspection_auth_client_id = fields.Char(groups=TRUST_GROUP, readonly=True)
-    introspection_auth_method = fields.Selection([('client_secret_basic', 'Client Secret Basic')], readonly=True)
-    introspection_basic_contract_ref = fields.Char(size=512, groups=TRUST_GROUP, readonly=True)
-    introspection_credential_endpoint = fields.Char(groups=TRUST_GROUP, readonly=True)
-    allow_jwt_introspection = fields.Boolean(default=False, readonly=True)
-    allow_introspection_iss_absent = fields.Boolean(default=False, readonly=True)
-    resolver_key = fields.Selection([('get_user_match', 'Default')],
-                                    readonly=True, default='get_user_match', required=True)
+                                      ('code', 'Python Code'),]) 
     python_code = fields.Text(groups=CODE_GROUP, copy=False, readonly=True,
-                              help='Source storage only. Execution is disabled in v1.')
-    code_revision = fields.Integer(readonly=True, copy=False, groups=CODE_GROUP)
-    code_digest = fields.Char(readonly=True, copy=False, groups=CODE_GROUP)
-    code_date = fields.Datetime(readonly=True, copy=False, groups=CODE_GROUP)
-    policy_revision = fields.Integer(readonly=True, copy=False, default=1, groups=TRUST_GROUP)
-
-    fixed_user_id = fields.Many2one('res.users', readonly=True, ondelete='restrict')
-    code_actor_id = fields.Many2one('res.users', readonly=True, copy=False,
-                                    ondelete='restrict', groups=CODE_GROUP)
+                              help='Execution is disabled.')
+    
+    fixed_user_id = fields.Many2one('res.users', readonly=True, ondelete='restrict') 
     audience_ids = fields.One2many('oidc.issuer.register.audience', 'issuer_id')
     binding_ids = fields.One2many('oidc.issuer.subject', 'issuer_id')
     user_mapping_ids = fields.One2many('oidc.issuer.user.mapping', 'issuer_id')
     algorithm_policy_ids = fields.One2many('oidc.issuer.algorithm.policy', 'issuer_id')
 
     _sql_constraints = [('issuer_unique', 'unique(issuer)', 'Issuer must be unique.')]
-
-    @api.model
-    def _migrate_legacy_v2(self, values, audiences, bindings, dry_run=True):
-        """Explicit additive migration; never called during install or token handling."""
-        if type(dry_run) is not bool or not self._registry_role('amr_resource.group_oidc_trust_admin'):
-            raise AccessError('Registry access denied.')
-        self.check_access_rights('create')
-        # sudo: legacy parameters/marker are read only after the designated admin guard.
-        params = self.env['ir.config_parameter'].sudo()
-        plan = _legacy_plan(params.get_param, values, audiences, bindings)
-        data = plan['values']
-        marker = 'amr_resource.migration.v2.global'
-        previous = params.get_param(marker)
-        if previous and previous != plan['digest']:
-            raise ValidationError('Migration revision conflicts with the recorded plan.')
-        domain = [('issuer', '=', data['issuer'])]
-        # sudo: inspect archived and active global rows after the admin guard.
-        global_rows = self.sudo().with_context(active_test=False).search(domain)
-        if len(global_rows) > 1:
-            raise ValidationError('Migration issuer conflict.')
-        rows = global_rows
-        commands = [(0, 0, {'value': value}) for value in plan['audiences']]
-        candidate = self.new(dict(data, audience_ids=commands))
-        candidate._check_profile()
-        for binding in plan['bindings']:
-            user = self.env['res.users'].browse(binding['user_id']).exists()
-            if (len(user) != 1 or not user.active or user.id == SUPERUSER_ID or user.share
-                    or user.has_group('base.group_public') or user.has_group('base.group_portal')):
-                raise ValidationError('Migration requires an eligible exact subject binding.')
-        if rows:
-            if not rows.active or any(rows[field] != value if field != 'fixed_user_id'
-                                      else rows[field].id != value
-                                      for field, value in data.items()):
-                raise ValidationError('Existing issuer configuration conflicts with migration.')
-            if sorted(rows.audience_ids.mapped('value')) != plan['audiences']:
-                raise ValidationError('Existing issuer audience conflict.')
-            actual = sorted([{'sub': b.sub, 'user_id': b.user_id.id} for b in rows.binding_ids],
-                            key=lambda b: b['sub'])
-            if actual != plan['bindings']:
-                raise ValidationError('Existing subject bindings conflict with migration.')
-        elif previous:
-            raise ValidationError('Recorded migration issuer is missing.')
-        result = {'version': 2, 'issuer_count': 1, 'binding_count': len(bindings),
-                  'dry_run': dry_run, 'already_applied': bool(previous)}
-        if dry_run or previous:
-            return result
-        # A savepoint keeps registry creation and the revision marker atomic even for a caught error.
-        with self.env.cr.savepoint():
-            if not rows:
-                self.create(dict(data, audience_ids=commands, binding_ids=[
-                    (0, 0, binding) for binding in plan['bindings']]))
-            params.set_param(marker, plan['digest'])
-            for xml_id in ('rule_oidc_issuer_company', 'rule_oidc_audience_company',
-                           'rule_oidc_binding_company'):
-                rule = self.env.ref('amr_resource.' + xml_id, raise_if_not_found=False)
-                if rule:
-                    # sudo: remove obsolete company rules after the designated migration-admin guard.
-                    rule.sudo().unlink()
-        _logger.info('Trust migration version=2 actor=%s bindings=%s',
-                     self.env.uid, len(bindings))
-        return result
-
-    @api.depends('local_key_ref')
-    def _compute_local_public_key(self):
-        # sudo: read only the protected administrator-selected public key reference.
-        params = self.env['ir.config_parameter'].sudo()
+    
+    @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint', 'client_id')
+    def _check_endpoints(self):
         for record in self:
-            record.local_public_key = (params.get_param(record.local_key_ref)
-                                       if record.local_key_ref else False)
-
-    def _guard_issuer_values(self, values, creating=False):
-        if {'discovery_unavailable_declared', 'discovery_unavailable_evidence_ref'}.intersection(values):
-            raise ValidationError('Discovery-unavailable fields are not supported.')
-        if 'local_public_key' in values or (creating and 'default_local_public_key' in self.env.context):
-            raise AccessError('Use a protected local key reference.')
-        if 'mvp_enabled' in values:
-            if type(values['mvp_enabled']) is not bool or values['mvp_enabled']:
-                raise AccessError('Use the explicit MVP activation action.')
-            if any(getattr(record, 'mvp_enabled', False) for record in self):
-                raise AccessError('Use the explicit MVP deactivation action.')
-        if 'active' in values and any(getattr(record, 'mvp_enabled', False) for record in self):
-            if type(values['active']) is not bool:
-                raise AccessError('Use a Boolean active value for MVP issuers.')
-            if not values['active'] or any(
-                    getattr(record, 'mvp_enabled', False) and not record.active for record in self):
-                raise AccessError('Use the explicit MVP activation/deactivation action.')
-        if AUDIT_FIELDS.intersection(values):
-            raise AccessError('Registry access denied.')
-        if 'resolver_key' in values and (not creating or values['resolver_key'] != 'get_user_match'):
-            raise AccessError('Registry access denied.')
-        if 'python_code' in values and not self._registry_role(CODE_GROUP):
-            raise AccessError('Registry access denied.')
-        if set(values) - {'python_code'} and not self.env.su and not self._registry_role(TRUST_GROUP):
-            raise AccessError('Registry access denied.')
-
-    def _source_audit(self, source, revision):
-        digest = hashlib.sha256((source or '').encode('utf-8')).hexdigest()
-        _logger.info('Trust source revision issuer_ids=%s revision=%s digest=%s actor=%s',
-                     self.ids, revision, digest, self.env.uid)
-        return {'code_revision': revision, 'code_digest': digest,
-                'code_actor_id': self.env.uid, 'code_date': fields.Datetime.now()}
-
-    @api.model_create_multi
-    def create(self, vals_list):
-        prepared = []
-        for values in vals_list:
-            values = dict(values)
-            # Context defaults are RPC input too; audit/source checks must see them.
-            for name in AUDIT_FIELDS | {'python_code', 'resolver_key', 'mvp_enabled',
-                                        'discovery_unavailable_declared',
-                                        'discovery_unavailable_evidence_ref'}:
-                if name not in values and 'default_' + name in self.env.context:
-                    values[name] = self.env.context['default_' + name]
-            self._guard_issuer_values(values, creating=True)
-            if 'python_code' in values:
-                values.update(self._source_audit(values['python_code'], 1))
-            prepared.append(values)
-        return super(AmrResourceIssuer, self).create(prepared)
-
-    def _issue_policy_revision(self):
-        """Atomically advance and refresh this issuer's database revision."""
-        self.ensure_one()
-        # ORM read-then-write can lose concurrent increments; use one atomic DB increment.
-        self.env.cr.execute(
-            'UPDATE oidc_issuer_register SET policy_revision = policy_revision + 1 WHERE id = %s RETURNING policy_revision',
-            (self.id,))
-        row = self.env.cr.fetchone()
-        if not row:
-            raise ValidationError('Issuer policy revision could not be advanced.')
-        revision = row[0]
-        self.invalidate_cache(fnames=['policy_revision'], ids=[self.id])
-        _logger.info('Trust policy revision issuer_id=%s revision=%s actor=%s',
-                     self.id, revision, self.env.uid)
-        return revision
-
-    def write(self, values):
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._lock_policy_state()
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._guard_issuer_values(values)
-        for record in self:
-            updated = dict(values)
-            previous_active = record.active
-            policy_changed = bool(values and set(values) - AUDIT_FIELDS)
-            if 'python_code' in values and values['python_code'] != record.python_code:
-                updated.update(record._source_audit(values['python_code'], record.code_revision + 1))
-            super(AmrResourceIssuer, record).write(updated)
-            revision = record._issue_policy_revision() if policy_changed else None
-            if policy_changed:
-                if 'active' in values and values['active'] != previous_active:
-                    _logger.info('Trust activation issuer_id=%s active=%s revision=%s actor=%s',
-                                 record.ids[0], values['active'], revision, self.env.uid)
-        return True
-
-    def _bump_policy_revision(self):
-        for record in self:
-            record._issue_policy_revision()
-
-    def _lock_policy_state(self):
-        """Serialize state checks with writes; lock issuer rows in ID order."""
-        ids = sorted(set(self.ids))
-        for record_id in ids:
-            # Lock before state/access checks; sorted IDs preserve a consistent lock order.
-            self.env.cr.execute(
-                'SELECT id FROM oidc_issuer_register WHERE id = %s FOR UPDATE',
-                (record_id,))
-        if ids:
-            self.invalidate_cache(ids=ids)
-
-    def action_activate_mvp(self, reason_code):
-        """Enable a fully validated MVP profile via an audited trust-admin action."""
-        import re
-
-        if not self._registry_role(TRUST_GROUP):
-            raise AccessError('Registry access denied.')
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._lock_policy_state()
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        if (not isinstance(reason_code, str)
-                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
-            raise ValidationError('A bounded reason code is required.')
-        for record in self:
-            if (record.active and record.mvp_enabled) or (not record.active and not record.mvp_enabled):
-                raise ValidationError('Issuer is not in an activatable state.')
-            if record.token_profile == 'jwt':
-                record._verification_algorithms({})
-            record._check_profile(mvp_enabled=True)
-        for record in self:
-            timestamp = fields.Datetime.now()
-            revision = record._issue_policy_revision()
-            source_kind = record.verification_source
-            changes = {}
-            if record.active:
-                changes['mvp_enabled'] = True
-            else:
-                changes['active'] = True
-            super(AmrResourceIssuer, record).write(changes)
-            _logger.info('Trust issuer activated issuer_id=%s action=%s source_kind=%s '
-                         'revision=%s actor=%s reason_code=%s timestamp=%s',
-                         record.id, 'activate_mvp', source_kind, revision,
-                         self.env.uid, reason_code, timestamp)
-        return True
-
-    def action_deactivate_mvp(self, reason_code):
-        """Disable one active MVP issuer through an explicit audited admin action."""
-        import re
-
-        if not self._registry_role(TRUST_GROUP):
-            raise AccessError('Registry access denied.')
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._lock_policy_state()
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        if (not isinstance(reason_code, str)
-                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', reason_code)):
-            raise ValidationError('A bounded reason code is required.')
-        for record in self:
-            if not record.active or not record.mvp_enabled:
-                raise ValidationError('Only an active MVP issuer can be deactivated.')
-            source_kind = record.verification_source
-            if source_kind not in ('jwks', 'local_public', 'none'):
-                raise ValidationError('MVP issuer source state is invalid.')
-        for record in self:
-            timestamp = fields.Datetime.now()
-            revision = record._issue_policy_revision()
-            super(AmrResourceIssuer, record).write({'active': False})
-            _logger.info('Trust issuer deactivated issuer_id=%s action=%s source_kind=%s '
-                         'revision=%s actor=%s reason_code=%s timestamp=%s',
-                         record.id, 'deactivate_mvp', record.verification_source,
-                         revision, self.env.uid, reason_code, timestamp)
-        return True
-
-    def _policy_snapshot_tuple(self):
-        self.ensure_one()
-        if self.resolver_mode == 'fixed_user':
-            raise ValidationError('Fixed-user identity state cannot be snapshotted.')
-        return {
-            'issuer': self.issuer, 'token_profile': self.token_profile,
-            'jwks_uri': self.jwks_uri or False, 'token_endpoint': self.token_endpoint or False,
-            'introspection_endpoint': self.introspection_endpoint or False,
-            'client_id': self.client_id, 'azp': self.azp or False,
-            'allow_missing_azp': self.allow_missing_azp,
-            'credential_ref': self.credential_ref or False, 'local_key_ref': self.local_key_ref or False,
-            'resolver_mode': self.resolver_mode or False, 'mvp_enabled': self.mvp_enabled,
-            'metadata_mode': self.metadata_mode or False,
-            'verification_source': self.verification_source or False,
-            'introspection_source': self.introspection_source or False,
-            'no_jwks_declaration': self.no_jwks_declaration,
-            'no_jwks_evidence_ref': self.no_jwks_evidence_ref or False,
-            'introspection_credential_ref': self.introspection_credential_ref or False,
-            'introspection_auth_client_id': self.introspection_auth_client_id or False,
-            'introspection_auth_method': self.introspection_auth_method or False,
-            'introspection_basic_contract_ref': self.introspection_basic_contract_ref or False,
-            'introspection_credential_endpoint': self.introspection_credential_endpoint or False,
-            'allow_jwt_introspection': self.allow_jwt_introspection,
-            'allow_introspection_iss_absent': self.allow_introspection_iss_absent,
-            'audiences': sorted(self.audience_ids.mapped('value')),
-            'mappings': sorted([{'sequence': row.sequence, 'active': row.active,
-                                 'field_user': row.field_user, 'jwt_key': row.jwt_key}
-                                for row in self.user_mapping_ids], key=lambda row: row['sequence']),
-            'algorithms': sorted([{'name': row.algorithm_id.name, 'enabled': row.enabled}
-                                  for row in self.algorithm_policy_ids], key=lambda row: row['name']),
-        }
-
-    def action_capture_policy_snapshot(self, evidence_ref):
-        import re
-        if not self._registry_role(TRUST_GROUP):
-            raise AccessError('Registry access denied.')
-        self.ensure_one()
-        if not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref):
-            raise ValidationError('A sanitized evidence reference is required.')
-        self._check_profile()
-        payload = self._policy_snapshot_tuple()
-        self._validate_snapshot_algorithms(payload)
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-        model = self.env['oidc.issuer.policy.snapshot'].sudo()
-        snapshot = super(OidcPolicySnapshot, model).create({
-            'issuer_id': self.id, 'captured_revision': self.policy_revision,
-            'payload': json.dumps(payload, sort_keys=True, separators=(',', ':')),
-            'integrity_digest': digest, 'evidence_ref': evidence_ref,
-            'actor_id': self.env.uid, 'captured_at': fields.Datetime.now(),
-        })
-        _logger.info(
-            'Trust policy snapshot captured issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s timestamp=%s',
-            self.id, snapshot.id, self.policy_revision, self.env.uid,
-            self.verification_source or 'legacy', 'snapshot_capture', fields.Datetime.now())
-        return snapshot.id
-
-    def action_restore_policy_snapshot(self, snapshot_id, expected_revision, evidence_ref):
-        import re
-        if not self._registry_role(TRUST_GROUP):
-            raise AccessError('Registry access denied.')
-        self.ensure_one()
-        if (type(snapshot_id) is not int or snapshot_id <= 0 or type(expected_revision) is not int
-                or not isinstance(evidence_ref, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,512}', evidence_ref)):
-            raise ValidationError('Rollback identifiers or evidence are invalid.')
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        self._lock_policy_state()
-        self.check_access_rights('write')
-        self.check_access_rule('write')
-        if self.active or self.policy_revision != expected_revision:
-            raise ValidationError('Issuer must be inactive at the expected policy revision.')
-        snapshot = self.env['oidc.issuer.policy.snapshot'].sudo().browse(snapshot_id).exists()
-        if len(snapshot) != 1 or snapshot.issuer_id.id != self.id or snapshot.invalidated:
-            raise ValidationError('Snapshot is unavailable for this issuer.')
-        try:
-            payload = json.loads(snapshot.payload)
-            if not isinstance(payload, dict):
-                raise ValidationError('Snapshot is invalid.')
-            digest = hashlib.sha256(
-                json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-        except (TypeError, ValueError):
-            raise ValidationError('Snapshot is invalid.')
-        if (digest != snapshot.integrity_digest or payload.get('issuer') != self.issuer
-                or snapshot.captured_revision <= 0 or snapshot.captured_revision > expected_revision):
-            raise ValidationError('Snapshot integrity or issuer binding failed.')
-        if set(payload) != set(self._policy_snapshot_tuple()) or payload.get('resolver_mode') == 'fixed_user':
-            raise ValidationError('Snapshot tuple is incomplete or contains identity state.')
-        if (not isinstance(payload['audiences'], list) or not payload['audiences']
-                or any(not _exact_string(value) for value in payload['audiences'])
-                or len(set(payload['audiences'])) != len(payload['audiences'])
-                or not isinstance(payload['mappings'], list)
-                or not isinstance(payload['algorithms'], list)):
-            raise ValidationError('Snapshot configuration is incomplete.')
-        self._validate_snapshot_algorithms(payload)
-        candidate = self.new({key: value for key, value in payload.items()
-                              if key not in ('audiences', 'mappings', 'algorithms')})
-        candidate.audience_ids = [(0, 0, {'value': value}) for value in payload['audiences']]
-        candidate.user_mapping_ids = [(0, 0, row) for row in payload['mappings']]
-        candidate._check_profile(mvp_enabled=payload['mvp_enabled'])
-        algorithm_commands = []
-        for row in payload['algorithms']:
-            algorithm = self.env['oidc.algorithm'].search([('name', '=', row['name'])], limit=1)
-            if len(algorithm) != 1:
-                raise ValidationError('Snapshot algorithm is no longer available.')
-            algorithm_commands.append((0, 0, {'algorithm_id': algorithm.id, 'enabled': row['enabled']}))
-        current_audiences = list(self.audience_ids)
-        audience_commands = [(0, 0, {'value': value})
-                             for value in payload['audiences'][len(current_audiences):]]
-        audience_commands += [(1, current.id, {'value': value})
-                              for current, value in zip(current_audiences, payload['audiences'])]
-        audience_commands += [(2, current.id, 0)
-                              for current in current_audiences[len(payload['audiences']):]]
-        values = {key: value for key, value in payload.items()
-                  if key not in ('issuer', 'audiences', 'mappings', 'algorithms')}
-        values.update({'audience_ids': audience_commands,
-                       'user_mapping_ids': [(5, 0, 0)] + [(0, 0, row) for row in payload['mappings']],
-                       'algorithm_policy_ids': [(5, 0, 0)] + algorithm_commands,
-                       'active': False})
-        for record in self:
-            restoring = record.with_context(_policy_restore_token=_RESTORE_CONTEXT_TOKEN)
-            super(AmrResourceIssuer, restoring).write(values)
-            revision = record._issue_policy_revision()
-        _logger.info(
-            'Trust policy snapshot restored issuer_id=%s snapshot_id=%s revision=%s actor=%s source=%s reason_code=%s evidence_ref=%s timestamp=%s',
-            self.id, snapshot.id, revision, self.env.uid,
-            payload.get('verification_source') or 'legacy', 'snapshot_restore', evidence_ref,
-            fields.Datetime.now())
-        return True
-
-    @staticmethod
-    def _validate_snapshot_algorithms(payload):
-        rows = payload.get('algorithms')
-        if not isinstance(rows, list):
-            raise ValidationError('Snapshot algorithm policy is invalid.')
-        names, enabled = set(), set()
-        for row in rows:
-            if (not isinstance(row, dict) or set(row) != {'name', 'enabled'}
-                    or row['name'] not in _ALGORITHM_CATALOG or type(row['enabled']) is not bool
-                    or row['name'] in names):
-                raise ValidationError('Snapshot algorithm policy is invalid.')
-            names.add(row['name'])
-            if row['enabled']:
-                if _ALGORITHM_CATALOG[row['name']]['support_state'] != 'supported':
-                    raise ValidationError('Snapshot enables an unsupported algorithm.')
-                enabled.add(row['name'])
-        if payload.get('mvp_enabled') and not enabled:
-            raise ValidationError('MVP snapshot requires a supported enabled algorithm.')
-
-    @api.constrains('issuer', 'token_profile', 'jwks_uri', 'token_endpoint',
-                    'introspection_endpoint', 'client_id', 'azp', 'allow_missing_azp',
-                    'local_public_key', 'local_key_ref', 'credential_ref', 'resolver_mode', 'fixed_user_id',
-                    'audience_ids', 'mvp_enabled', 'metadata_mode', 'verification_source', 'introspection_source',
-                    'no_jwks_declaration', 'no_jwks_evidence_ref', 'introspection_credential_ref',
-                    'introspection_auth_client_id', 'introspection_auth_method',
-                    'introspection_basic_contract_ref', 'introspection_credential_endpoint',
-                    'allow_jwt_introspection', 'allow_introspection_iss_absent', 'user_mapping_ids')
-    def _check_profile(self, mvp_enabled=None):
-        for record in self:
-            import re
-            enabled = record.mvp_enabled if mvp_enabled is None else mvp_enabled
-            for reference in (record.local_key_ref, record.credential_ref):
-                if reference and (not isinstance(reference, str) or
-                                  not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
-                    raise ValidationError('Configure an exact protected parameter key, not a URL.')
             try:
                 issuer = urlsplit(record.issuer or '')
                 valid_issuer = (_exact_string(record.issuer) and issuer.scheme == 'https'
@@ -822,117 +205,112 @@ class AmrResourceIssuer(models.Model):
             for endpoint in (record.jwks_uri, record.token_endpoint, record.introspection_endpoint):
                 if endpoint and not _https_url(endpoint):
                     raise ValidationError('Endpoints must be public HTTPS URLs on port 443.')
-            if (record.token_profile != 'jwt' or record.metadata_mode != 'manual'
-                    or record.verification_source not in ('jwks', 'local_public')
-                    or record.introspection_source != 'none'):
-                raise ValidationError(
-                    'Only manual JWT/JWKS or local-public profiles without introspection are supported.')
-            if any(getattr(record, name, False) for name in (
-                    'introspection_endpoint', 'introspection_credential_ref',
-                    'introspection_auth_client_id', 'introspection_auth_method',
-                    'introspection_basic_contract_ref', 'introspection_credential_endpoint',
-                    'no_jwks_declaration', 'no_jwks_evidence_ref',
-                    'allow_jwt_introspection', 'allow_introspection_iss_absent')):
-                raise ValidationError('Manual JWT profiles cannot retain introspection or NO_JWKS settings.')
-            if record.token_profile == 'jwt' and bool(record.jwks_uri) == bool(record.local_public_key):
-                raise ValidationError('JWT requires exactly one static JWKS URL or local public key.')
-            if record.local_public_key:
-                if record.token_profile != 'jwt':
-                    raise ValidationError('Local keys require the JWT profile.')
-                try:
-                    from cryptography.hazmat.backends import default_backend
-                    from cryptography.hazmat.primitives import serialization
-                    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
-                    key = serialization.load_pem_public_key(
-                        record.local_public_key.encode('ascii'), backend=default_backend())
-                    if not isinstance(key, RSAPublicKey) or key.key_size < 2048:
-                        raise ValueError()
-                except (ValueError, TypeError, UnicodeError):
-                    raise ValidationError('A valid RSA public PEM of at least 2048 bits is required.')
-            if (record.token_profile == 'opaque' and not record.introspection_endpoint
-                    and not enabled):
-                raise ValidationError('Opaque profiles require a static introspection endpoint.')
-            if (not record.allow_missing_azp and not record.azp) or (record.azp and not _exact_string(record.azp)):
-                raise ValidationError('Configure one exact azp or explicitly allow its absence.')
-            if not record.audience_ids:
-                raise ValidationError('At least one audience is required.')
-            if record.resolver_mode == 'fixed_user':
-                user = record.fixed_user_id
-                if (len(user) != 1 or not user.active or user.id == SUPERUSER_ID
-                        or user.share or user.has_group('base.group_public')
-                        or user.has_group('base.group_portal')):
-                    raise ValidationError('Fixed user must be an active eligible internal user.')
-            if record.resolver_mode == 'mapping' and not enabled:
-                raise ValidationError('Mapping resolver requires explicit MVP enablement.')
-            mapping_rows = [dict(sequence=row.sequence, field_user=row.field_user,
-                                 jwt_key=row.jwt_key, active=row.active)
-                            for row in record.user_mapping_ids]
-            _validate_mapping_rows(mapping_rows)
-            if record.resolver_mode == 'mapping' and not any(row['active'] for row in mapping_rows):
-                raise ValidationError('Mapping resolver requires an active mapping.')
-            if enabled:
-                if (record.token_profile != 'jwt' or record.metadata_mode != 'manual'
-                        or record.introspection_source != 'none'):
-                    raise ValidationError('MVP supports only manual JWT verification without introspection.')
-                if (record.metadata_mode not in ('manual', 'oidc_discovery')
-                        or record.verification_source not in ('jwks', 'local_public', 'none')
-                        or record.introspection_source not in ('none', 'manual', 'rfc8414')):
-                    raise ValidationError('MVP source configuration is incomplete.')
-                for reference in (record.no_jwks_evidence_ref,
-                                  record.introspection_credential_ref,
-                                  record.introspection_basic_contract_ref):
-                    if reference and (not isinstance(reference, str)
-                                      or len(reference) > 512
-                                      or not re.fullmatch(r'[A-Za-z0-9_.-]+', reference)):
-                        raise ValidationError('MVP evidence or credential reference is invalid.')
+    def _registry_role(self, group):
+        return self.env.user.has_group(group)
 
-                if record.metadata_mode == 'oidc_discovery' and (
-                        record.token_profile != 'jwt' or record.verification_source != 'jwks'
-                        or record.introspection_source != 'none'):
-                    raise ValidationError('OIDC Discovery requires JWT/JWKS and no introspection source.')
-                if record.verification_source == 'jwks' and (
-                        record.token_profile != 'jwt' or
-                        (not record.jwks_uri and record.metadata_mode != 'oidc_discovery')
-                        or record.local_key_ref or record.local_public_key
-                        or record.introspection_source != 'none'):
-                    raise ValidationError('JWKS source configuration conflicts.')
-                if record.verification_source == 'local_public' and (
-                        record.token_profile != 'jwt' or record.jwks_uri
-                        or not record.local_key_ref or record.introspection_source != 'none'):
-                    raise ValidationError('Local public-key source configuration conflicts.')
-                if record.verification_source == 'none':
-                    if (record.metadata_mode != 'manual' or record.jwks_uri
-                            or record.local_key_ref or record.local_public_key
-                            or not record.no_jwks_declaration or not record.no_jwks_evidence_ref
-                            or record.introspection_source not in ('manual', 'rfc8414')):
-                        raise ValidationError('NO_JWKS requires an explicit compatible declaration.')
-                    endpoint = (record.introspection_endpoint if record.introspection_source == 'manual'
-                                else record.introspection_credential_endpoint)
-                    if (not endpoint or not record.introspection_credential_endpoint
-                            or endpoint != record.introspection_credential_endpoint
-                            or not _https_url(endpoint)
-                            or not record.introspection_credential_ref
-                            or not _introspection_client_id(record.introspection_auth_client_id)
-                            or record.introspection_auth_method != 'client_secret_basic'
-                            or (record.introspection_source == 'manual'
-                                and not record.introspection_basic_contract_ref)
-                            or ((record.credential_ref == record.introspection_credential_ref
-                                 or record.client_id == record.introspection_auth_client_id)
-                                and not record.introspection_basic_contract_ref)):
-                        raise ValidationError('Introspection requires a separate authorized Basic configuration.')
-                elif record.introspection_source != 'none':
-                    raise ValidationError('Introspection metadata requires a genuine NO_JWKS source.')
-                if record.allow_jwt_introspection and (
-                        record.token_profile != 'jwt' or record.verification_source != 'none'):
-                    raise ValidationError('JWT introspection requires explicit JWT NO_JWKS mode.')
-                if record.allow_introspection_iss_absent and record.token_profile != 'opaque':
-                    raise ValidationError('Absent issuer policy is only valid for opaque tokens.')
+    def _check_draft_state(self):
+        if self.filtered(lambda issuer: issuer.state != 'draft'):
+            raise ValidationError('Only Draft State can Edit')
+
+    def action_set_state(self, target):
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        transitions = {'draft': {'production', 'disable'},
+                       'production': {'draft', 'disable'},
+                       'disable': {'draft', 'production'}}
+        for record in self:
+            if (target not in transitions.get(record.state, set())
+                    or (not record.active and target != 'draft')):
+                raise ValidationError('Invalid issuer state transition.')
+        result = super(OidcResourceIssuer, self).write(
+            {'state': target, 'active': True} if target != 'disable' else {'state': target})
+        _invalidate_request_policy()
+        return result
+
+    def action_to_production(self):
+        return self.action_set_state('production')
+
+    def action_to_draft(self):
+        return self.action_set_state('draft')
+
+    def action_to_disable(self):
+        return self.action_set_state('disable')
+
+    def copy(self, default=None):
+        default = dict(default or {})
+        default['state'] = 'draft'
+        return super(OidcResourceIssuer, self).copy(default)
+
+    def unlink(self):
+        if not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        if self.filtered(lambda record: record.state != 'disable'):
+            raise ValidationError('Only disabled issuers can be archived.')
+        return super(OidcResourceIssuer, self).write({'active': False})
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        prepared = []
+        for values in vals_list:
+            values = dict(values)
+            values['state'] = 'draft'
+            prepared.append(values)
+        _invalidate_request_policy()
+        return super(OidcResourceIssuer, self).create(prepared)
+
+    def write(self, values):
+        _invalidate_request_policy()
+        unarchiving = self.filtered(lambda record: not record.active) if values == {'active': True} else self.browse()
+        if unarchiving and not self._registry_role(TRUST_GROUP):
+            raise AccessError('Registry access denied.')
+        others = self - unarchiving
+        if not values.get('active',True):
+            super(OidcResourceIssuer, others).write({'active': False})
+        elif others:
+            state = values.get('state',None)  
+            if (state and values.get('state',None) != 'draft') or others.filtered(lambda record: record.state != 'draft'):
+                raise ValidationError('Only Draft State can Edit')
+            super(OidcResourceIssuer, others).write(values)
+        if unarchiving:
+            super(OidcResourceIssuer, unarchiving).write(dict(values, state='draft'))
+        
+        return True
+
+    @staticmethod
+    def _validate_snapshot_algorithms(payload):
+        rows = payload.get('algorithms')
+        if not isinstance(rows, list):
+            raise ValidationError('Snapshot algorithm policy is invalid.')
+        names, enabled = set(), set()
+        for row in rows:
+            if (not isinstance(row, dict) or set(row) != {'name', 'enabled'}
+                    or row['name'] not in ALGORITHM_CATALOG or type(row['enabled']) is not bool
+                    or row['name'] in names):
+                raise ValidationError('Snapshot algorithm policy is invalid.')
+            names.add(row['name'])
+            if row['enabled']:
+                if ALGORITHM_CATALOG[row['name']]['support_state'] != 'supported':
+                    raise ValidationError('Snapshot enables an unsupported algorithm.')
+                enabled.add(row['name'])
+        if payload.get('mvp_enabled') and not enabled:
+            raise ValidationError('MVP snapshot requires a supported enabled algorithm.')
 
     def _verification_algorithms(self, key_metadata):
         self.ensure_one()
         policy = [(row.algorithm_id.name, row.enabled) for row in self.algorithm_policy_ids]
         return _policy_algorithms(policy, key_metadata)
-
+    
+    @api.model
+    def _lookup_default(self):
+        """Select a unique highest-priority active production opaque issuer."""
+        # sudo: read only global trust configuration, independent of company.
+        rows = self.sudo().with_context(active_test=False).search([
+            ('active', '=', True), ('state', '=', 'production'),
+            ('token_profile', '=', 'opaque')], order='sequence, id', limit=2)
+        if not rows or (len(rows) > 1 and rows[0].sequence == rows[1].sequence):
+            raise Unauthorized()
+        return rows[0]
+    
     @api.model
     def _lookup(self, issuer=None, token_profile=None):
         """Private runtime read only: never use this elevation to execute a resolver."""
@@ -941,18 +319,388 @@ class AmrResourceIssuer(models.Model):
         try:
             # sudo: read protected global trust rows; user eligibility remains request-scoped.
             records = self.sudo().with_context(active_test=False).search([
-                ('issuer', '=', issuer), ('active', '=', True)])
+                ('issuer', '=', issuer), ('active', '=', True), ('state', '=', 'production')])
             if len(records) != 1 or (token_profile and records.token_profile != token_profile):
                 raise Unauthorized()
             return records
         except Exception:
             raise Unauthorized() from None
 
+    def _headers(self, required=False):
+        if not _string(self.client_id):
+            raise Unauthorized()
+        if self.credential_source=='none':
+            if required:
+                raise ValueError("Invalid Configuration Issuer Credential Source")
+            return {}
+        else:    
+            # sudo: resolve only the configured protected credential reference.
+            secret = self._get_credential()
+            if not _string(secret):
+                if required:
+                    raise Unauthorized()
+                return {}
+
+            value = base64.b64encode((quote_plus(self.client_id) + ':' + quote_plus(secret)).encode('ascii')).decode('ascii')
+            return {'Authorization': 'Basic ' + value}
+    
+    def _profile(self, issuer=None, token_profile=None):
+        registry = self.env['oidc.issuer.register']
+        if issuer is not None:
+            return registry._lookup(issuer, token_profile)
+        # sudo: protected global registry read only; company context never chooses trust.
+        rows = registry.sudo().search(
+            [('active', '=', True), ('state', '=', 'production')] + ([('token_profile', '=', token_profile)] if token_profile else [])
+        )
+        if len(rows) != 1:
+            raise Unauthorized()
+        return registry._lookup(rows.issuer, token_profile)
+    
+    def encode(self, **kw):
+        if set(kw) - {'grant_type', 'scope'} or kw.get('grant_type') != 'client_credentials':
+            raise Unauthorized()
+        if 'scope' in kw and not isinstance(kw['scope'], str):
+            raise Unauthorized()
+        if not self.token_endpoint:
+            raise Unauthorized()
+        result = fetch_json(self.token_endpoint, data=kw, headers=self._headers(required=True))
+        if not isinstance(result, dict) or not _string(result.get('access_token')):
+            raise Unauthorized()
+        return result.get('access_token')
+
+    def introspect_token(self, token, **kw):
+        self.ensure_one()
+        if not _string(self.client_id):
+            raise Unauthorized()
+        return fetch_json(self.introspection_endpoint, data={'token': token, 'client_id': self.client_id})
+
+    def support_algorithm(self, alg):
+        if any(getattr(getattr(policy, 'algorithm_id', None), 'name', None) != 'RS256'
+               for policy in getattr(self, 'algorithm_policy_ids', ())):
+            return False
+        enabled_algorithms = (self._verification_algorithms({})
+                              if getattr(self, 'mvp_enabled', False) else frozenset(['RS256']))
+        if alg not in enabled_algorithms:
+            return False
+
+        return True
+
+    def claims(self, claims, opaque=False, require_jti=True):
+        import time
+        import math
+        profile = self.ensure_one()
+        if not isinstance(claims, dict):
+            raise Unauthorized()
+        claims = dict(claims)
+        if opaque:
+            if claims.get('active') is not True:
+                raise Unauthorized()
+            if 'exp' not in claims:
+                raise Unauthorized()
+        required = ('iss', 'sub', 'client_id') if opaque else (
+            ('iss', 'sub', 'client_id', 'jti') if require_jti else ('iss', 'sub', 'client_id'))
+        if any(not _string(claims.get(name)) for name in required):
+            raise Unauthorized()
+        if claims['iss'] != profile.issuer or claims['client_id'] != profile.client_id:
+            raise Unauthorized()
+        now = time.time()
+        for name in ('exp', 'iat', 'nbf'):
+            if name not in claims:
+                if not opaque and name in ('exp', 'iat'):
+                    raise Unauthorized()
+                continue
+            value = claims[name]
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise Unauthorized()
+            if (name == 'exp' and value <= now) or (name != 'exp' and value > now):
+                raise Unauthorized()
+        audiences = claims.get('aud')
+        audiences = [audiences] if isinstance(audiences, str) else audiences
+        configured = profile.audience_ids.mapped('value')
+        if (not isinstance(audiences, list) or not audiences
+                or any(not _string(value) for value in audiences)
+                or not configured or len(set(configured)) != len(configured)
+                or not any(value in configured for value in audiences)):
+            raise Unauthorized()
+        if 'azp' in claims:
+            if not _string(claims['azp']) or claims['azp'] != profile.azp:
+                raise Unauthorized()
+        elif not profile.allow_missing_azp:
+            raise Unauthorized()
+        return claims
+    
+    def get_public_key(self, header):
+        """alwaise return public key or raise Exception"""
+        try:
+            jwks_data = self.get_jwks_data()
+            keys = jwks_data.get('keys')
+            if not isinstance(keys, list) or not keys:
+                raise Unauthorized()
+        except Exception:
+            raise Unauthorized()
+        seen_kids = set()
+        candidates = {}
+        for candidate in keys:
+            if not isinstance(candidate, dict):
+                        continue
+            candidate_kid = candidate.get('kid')
+            if (type(candidate_kid) is not str or not candidate_kid or len(candidate_kid) > 256
+                            or any(character.isspace() or ord(character) < 32 or ord(character) == 127
+                                   or 0x80 <= ord(character) <= 0x9f for character in candidate_kid)
+                            or candidate_kid in seen_kids):
+                continue
+                    
+            if (candidate.get('kty') != 'RSA'
+                            or candidate.get('use', 'sig') != 'sig'
+                            or ('alg' in candidate and candidate['alg'] != header.get('alg'))
+                            or any(name in candidate for name in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'))
+                            or ('key_ops' in candidate and candidate['key_ops'] != ['verify'])):
+                continue
+            try:
+                parsed_candidate = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(candidate))
+            except Exception:
+                continue
+            if not isinstance(parsed_candidate, RSAPublicKey) or parsed_candidate.key_size < 2048:
+                continue
+            seen_kids.add(candidate_kid)
+            candidates[candidate_kid] = parsed_candidate
+
+        if header.get('kid') not in candidates:
+            raise Unauthorized()
+        return candidates[header['kid']]
+    
+    def is_local_token(self):
+        return False
+    
+    def local_decode(self, token, **kw):
+        raise Unauthorized()
+    
+    def decode(self, token, **kw):
+        if not _string(token) or len(token) > 65536:
+            raise Unauthorized()
+        if token.count('.') != 2:
+            profile = self._lookup_default()
+            if self and self.ensure_one() != profile:
+                raise Unauthorized()
+            if profile.is_local_token():
+                raise Unauthorized()
+            try:
+                claims = profile.claims(profile.introspect_token(token), opaque=True)
+                return _VerifiedClaims(claims, self.env.uid)
+            except Exception:
+                raise Unauthorized() from None
+        hint = jwt.decode(token, options={'verify_signature': False})
+        if not _string(hint.get('iss')):
+            raise Unauthorized()
+        profile = self._lookup(hint['iss'], 'jwt')
+        if self and self.ensure_one() != profile:
+            raise Unauthorized()
+        if profile.is_local_token():
+            raise Unauthorized()
+
+        header = jwt.get_unverified_header(token)
+        if (not _string(header.get('kid')) or not profile.support_algorithm(header.get('alg'))
+                or header.get('typ') != 'at+jwt'
+                or any(name in header for name in ('jku', 'x5u', 'jwk', 'crit'))):
+            raise Unauthorized()
+        key = profile.get_public_key(header)
+        claims = jwt.decode(token, key, algorithms=[header['alg']], issuer=profile.issuer,
+                            audience=profile.audience_ids.mapped('value'), leeway=0,
+                            options={'require': ['iss', 'aud', 'exp', 'iat', 'jti', 'sub', 'client_id']})
+        claims = profile.claims(claims)
+        claims.setdefault('kid', header.get('kid'))
+        claims.setdefault('alg', header['alg'])
+        return _VerifiedClaims(claims, self.env.uid)
+
+    def _get_credential(self):
+        if self.credential_source == 'database':
+            return self.credential_value
+        elif self.credential_source == 'system_parameter':
+            return self.env['ir.config_parameter'].sudo().get_param(self.credential_ref)
+        elif self.credential_source == 'env':
+            return os.getenv(self.credential_ref)
+        else:
+            raise ValueError("Invalid credential_source")
+
+    # @api.model
+    # def get_validate_user(self, token):
+        # return self.decode(token) or None
+    
+    @api.model
+    def get_user_token_login(self, token):
+        validation = self.decode(token)
+        user = self.get_user_match(validation)
+        return user
+
+    def _rebind_verified(self, payload, uid):
+        if not self._verified(payload):
+            raise Unauthorized()
+        return _VerifiedClaims(payload, uid)
+
+    @api.model
+    def get_uid(self, payload):
+        user = self.get_user_match(payload)
+        return user and user.id
+
+    @api.model
+    def is_user_match(self, user, payload):
+        return bool(user) and user.id == self.get_uid(payload)
+    
+    def _eligible_user(self, user):
+        # Read only eligibility attributes; return the original unprivileged record.
+        checked = user.sudo()
+        if (getattr(user, '_name', None) != 'res.users' or len(user) != 1
+                or len(checked.exists()) != 1 or not checked.active or checked.id == SUPERUSER_ID
+                or checked.share or checked.has_group('base.group_public') or checked.has_group('base.group_portal')):
+            raise Unauthorized()
+        return user
+
+    def _bound_user(self, validation):
+        if self:
+            profile = self
+        else:
+            if not self._verified(validation):
+                raise Unauthorized()
+            profile = self._profile(validation['iss'])
+        matches = profile.binding_ids.filtered(lambda row: row.sub == validation['sub'])
+        if len(matches) != 1:
+            raise Unauthorized()
+        return self.env['res.users'].browse(matches.user_id.id)
+
+    @staticmethod
+    def _mapping_claim_value(key, value):
+        if (not isinstance(key, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', key)
+                or not isinstance(value, str) or not 1 <= len(value) <= 1024
+                or not value.strip()
+                or any(ord(char) <= 31 or 127 <= ord(char) <= 159 for char in value)):
+            raise Unauthorized()
+        return value
+
+    def _find_mapping_users(self, field_name, exact_value):
+        if field_name not in ('login', 'partner_id.email'):
+            raise Unauthorized()
+        users = self.env['res.users'].sudo().with_context(active_test=False).search(
+            [(field_name, '=', exact_value)])
+        matched = []
+        seen = set()
+        for user in users:
+            actual = user.login if field_name == 'login' else user.partner_id.email
+            if type(actual) is str and actual == exact_value and user.id not in seen:
+                seen.add(user.id)
+                matched.append(user)
+        return matched
+
+    def _mapping_user(self, validation):
+        if self:
+            profile = self
+        else:
+            if not self._verified(validation):
+                raise Unauthorized()
+            profile = self._profile(validation['iss'])
+        rows = profile.user_mapping_ids
+        seen_sequences = set()
+        active_rows = []
+        for row in rows:
+            if (type(row.sequence) is not int or row.sequence <= 0
+                    or type(row.active) is not bool
+                    or row.field_user not in ('login', 'partner_id.email')
+                    or row.sequence in seen_sequences):
+                raise Unauthorized()
+            self._mapping_claim_value(row.jwt_key, 'schema-check')
+            seen_sequences.add(row.sequence)
+            if row.active:
+                active_rows.append(row)
+        if not active_rows or len(active_rows) > 20:
+            raise Unauthorized()
+        candidate_ids = set()
+        for row in sorted(active_rows, key=lambda item: item.sequence):
+            if row.jwt_key not in validation:
+                raise Unauthorized()
+            value = self._mapping_claim_value(row.jwt_key, validation[row.jwt_key])
+            matches = self._find_mapping_users(row.field_user, value)
+            ids = {user.id for user in matches}
+            if len(ids) > 1:
+                raise Unauthorized()
+            if ids:
+                candidate_ids = ids
+                break
+        if len(candidate_ids) != 1:
+            raise Unauthorized()
+        candidate_id = next(iter(candidate_ids))
+        bindings = profile.binding_ids.filtered(lambda row: row.sub == validation['sub'])
+        if len(bindings) != 1 or bindings.user_id.id != candidate_id:
+            raise Unauthorized()
+        return self.env['res.users'].browse(candidate_id)
+
+    def get_user_match(self, validation):
+        if not self._verified(validation):
+            raise Unauthorized()
+        profile = self._profile(validation['iss'])
+        if self and self != profile:
+            raise Unauthorized()
+
+        if profile.resolver_mode == 'fixed_user':
+            user = self.env['res.users'].browse(profile.fixed_user_id.id)
+        elif profile.resolver_mode == 'get_user_match':
+            user = self._bound_user(validation)
+        elif profile.resolver_mode == 'mapping':
+            user = self._mapping_user(validation)
+        elif profile.resolver_mode == 'code':
+            # Only this code-owned resolver exists in v1; no arbitrary ORM dispatch.
+            # need implment code
+            raise NotImplemented 
+        else:
+            raise Unauthorized()
+        user = self._eligible_user(user)
+        return user
+
+    def _verified(self, payload, raise_exeption=True):
+        import math
+        import time
+        try:
+            if (type(payload) is not _VerifiedClaims or payload._origin is not _PROVENANCE
+                    or payload._request is not request._get_current_object() or payload._uid != self.env.uid
+                    or payload._generation != getattr(payload._request, '_trust_generation', 0)
+                    or type(payload.get('exp')) not in (int, float)
+                    or not math.isfinite(payload['exp']) or payload['exp'] <= time.time()
+                    or payload._snapshot != json.dumps(dict(payload), sort_keys=True, allow_nan=False)):
+                return False
+            self._profile(payload['iss'])
+            return True
+        except Exception:
+            return False
+    
+    def get_jwks_uri_default(self):
+        return self.issuer + '/.well-known/jwks.json'
+    
+    def get_jwks_data(self):
+        profile = self
+        if profile.token_profile != 'jwt':
+            raise Unauthorized()
+        jwks_uri = profile.jwks_uri or profile.get_jwks_uri_default()
+        result = fetch_json(jwks_uri)
+        if not isinstance(result, dict) or not isinstance(result.get('keys'), list):
+            raise Unauthorized()
+        return result
+    
+    def get_openid_configuration_default(self):
+        return self.issuer + '/.well-known/openid-configuration'
+    
+    def get_openid_configuration(self):
+        profile = self
+        openid_configuration_url = profile.issuer + '/.well-known/openid-configuration'
+        result = fetch_json(openid_configuration_url)
+        return result
+    
+def _check_parent_issuers_draft(records, issuer_field='issuer_id'):
+    records.mapped(issuer_field)._check_draft_state()
+    _invalidate_request_policy()
+
 
 class OidcPolicySnapshot(models.Model):
     _name = 'oidc.issuer.policy.snapshot'
     _description = 'Immutable Issuer Policy Recovery Snapshot'
-    _inherit = 'amr.resource.registry.access'
+    #_inherit = 'amr.resource.registry.access'
     _rec_name = 'id'
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='restrict', index=True)
@@ -999,8 +747,14 @@ class OidcPolicySnapshot(models.Model):
 class AmrResourceAudience(models.Model):
     _name = 'oidc.issuer.register.audience'
     _description = 'Resource Issuer Audience'
-    _inherit = 'amr.resource.registry.access'
+    #_inherit = 'amr.resource.registry.access'
     _rec_name = 'value'
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        self.env['oidc.issuer.register'].browse([v['issuer_id'] for v in vals_list if v.get('issuer_id')])._check_draft_state()
+        _invalidate_request_policy()
+        return super(AmrResourceAudience, self).create(vals_list)
 
     value = fields.Char(required=True)
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
@@ -1013,6 +767,9 @@ class AmrResourceAudience(models.Model):
                 raise ValidationError('An exact nonempty audience is required.')
 
     def write(self, values):
+        _check_parent_issuers_draft(self)
+        if values.get('issuer_id'):
+            self.env['oidc.issuer.register'].browse(values['issuer_id'])._check_draft_state()
         parents = self.mapped('issuer_id') if 'issuer_id' in values else self.env['oidc.issuer.register']
         result = super(AmrResourceAudience, self).write(values)
         if parents.exists().filtered(lambda record: not record.audience_ids):
@@ -1020,6 +777,7 @@ class AmrResourceAudience(models.Model):
         return result
 
     def unlink(self):
+        _check_parent_issuers_draft(self)
         parents = self.mapped('issuer_id')
         result = super(AmrResourceAudience, self).unlink()
         if parents.exists().filtered(lambda record: not record.audience_ids):
@@ -1030,8 +788,25 @@ class AmrResourceAudience(models.Model):
 class AmrResourceBinding(models.Model):
     _name = 'oidc.issuer.subject'
     _description = 'Resource Issuer Subject Binding'
-    _inherit = 'amr.resource.registry.access'
+    #_inherit = 'amr.resource.registry.access'
     _rec_name = 'sub'
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        issuers = self.env['oidc.issuer.register'].browse([v['issuer_id'] for v in vals_list if v.get('issuer_id')])
+        issuers._check_draft_state()
+        _invalidate_request_policy()
+        return super(AmrResourceBinding, self).create(vals_list)
+
+    def write(self, values):
+        _check_parent_issuers_draft(self)
+        if values.get('issuer_id'):
+            self.env['oidc.issuer.register'].browse(values['issuer_id'])._check_draft_state()
+        return super(AmrResourceBinding, self).write(values)
+
+    def unlink(self):
+        _check_parent_issuers_draft(self)
+        return super(AmrResourceBinding, self).unlink()
 
     sub = fields.Char(required=True)
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
@@ -1051,9 +826,19 @@ class AmrResourceBinding(models.Model):
 
 class AmrResourceUserMapping(models.Model):
     _name = 'oidc.issuer.user.mapping'
-    _inherit = 'amr.resource.registry.access'
+    #_inherit = 'amr.resource.registry.access'
     _description = 'Issuer User Claim Mapping'
     _rec_name = 'jwt_key'
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        self.env['oidc.issuer.register'].browse([v['issuer_id'] for v in vals_list if v.get('issuer_id')])._check_draft_state()
+        _invalidate_request_policy()
+        return super(AmrResourceUserMapping, self).create(vals_list)
+
+    def unlink(self):
+        _check_parent_issuers_draft(self)
+        return super(AmrResourceUserMapping, self).unlink()
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
     sequence = fields.Integer(required=True, default=10)
@@ -1082,48 +867,34 @@ class AmrResourceUserMapping(models.Model):
                 raise ValidationError('Mapping resolver requires an active mapping.')
 
     def write(self, values):
+        _check_parent_issuers_draft(self)
         if 'issuer_id' in values:
             raise ValidationError('Mappings cannot be moved to another issuer.')
         return super(AmrResourceUserMapping, self).write(values)
 
 
-class OidcAlgorithm(models.Model):
-    _name = 'oidc.algorithm'
-    _description = 'Code-Owned OIDC Verification Algorithm'
-    _rec_name = 'name'
-
-    name = fields.Char(required=True, index=True)
-    key_family = fields.Selection([('RSA', 'RSA')], required=True, readonly=True)
-    min_key_bits = fields.Integer(required=True, readonly=True, default=2048)
-    purpose = fields.Selection([('access_token_verification', 'Access Token Verification')],
-                               required=True, readonly=True)
-    support_state = fields.Selection([('supported', 'Supported'), ('target', 'Target')],
-                                     required=True, readonly=True)
-
-    _sql_constraints = [('algorithm_name_unique', 'unique(name)', 'Algorithm must be unique.')]
+class OidcIssuerAlgorithmPolicy(models.Model):
+    _name = 'oidc.issuer.algorithm.policy'
+    #_inherit = 'amr.resource.registry.access'
+    _description = 'Issuer Enabled OIDC Algorithm Policy'
+    _rec_name = 'algorithm_id'
 
     @api.model_create_multi
     def create(self, vals_list):
-        expected = _ALGORITHM_CATALOG
-        for values in vals_list:
-            name = values.get('name') if isinstance(values, dict) else None
-            if name not in expected or any(
-                    values.get(field) != value for field, value in expected[name].items()):
-                raise AccessError('Algorithm catalog is code-owned.')
-        return super(OidcAlgorithm, self).create(vals_list)
+        issuers = self.env['oidc.issuer.register'].browse([v['issuer_id'] for v in vals_list if v.get('issuer_id')])
+        issuers._check_draft_state()
+        _invalidate_request_policy()
+        return super(OidcIssuerAlgorithmPolicy, self).create(vals_list)
 
     def write(self, values):
-        raise AccessError('Algorithm catalog is immutable; update it in code.')
+        _check_parent_issuers_draft(self)
+        if values.get('issuer_id'):
+            self.env['oidc.issuer.register'].browse(values['issuer_id'])._check_draft_state()
+        return super(OidcIssuerAlgorithmPolicy, self).write(values)
 
     def unlink(self):
-        raise AccessError('Algorithm catalog is immutable; update it in code.')
-
-
-class OidcIssuerAlgorithmPolicy(models.Model):
-    _name = 'oidc.issuer.algorithm.policy'
-    _inherit = 'amr.resource.registry.access'
-    _description = 'Issuer Enabled OIDC Algorithm Policy'
-    _rec_name = 'algorithm_id'
+        _check_parent_issuers_draft(self)
+        return super(OidcIssuerAlgorithmPolicy, self).unlink()
 
     issuer_id = fields.Many2one('oidc.issuer.register', required=True, ondelete='cascade', index=True)
     algorithm_id = fields.Many2one('oidc.algorithm', required=True, ondelete='restrict')
@@ -1135,7 +906,7 @@ class OidcIssuerAlgorithmPolicy(models.Model):
     @api.constrains('issuer_id', 'algorithm_id', 'enabled')
     def _check_supported_policy(self):
         for policy in self:
-            if policy.algorithm_id.name not in _ALGORITHM_CATALOG:
+            if policy.algorithm_id.name not in ALGORITHM_CATALOG:
                 raise ValidationError('Algorithm is not supported by this build.')
             if policy.enabled and policy.algorithm_id.support_state != 'supported':
                 raise ValidationError('Algorithm is not enabled for runtime support.')

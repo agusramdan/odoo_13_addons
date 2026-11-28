@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <menuitem id="menu_resource_trust" name="Resource Trust" parent="base.menu_administration"
+                  groups="amr_resource.group_oidc_trust_admin,amr_resource.group_oidc_code_admin"/>
+        <menuitem id="menu_resource_issuers" name="Trusted Issuers" parent="menu_resource_trust"
+                  action="action_resource_issuers" groups="amr_resource.group_oidc_trust_admin"/>
+    </data>
+</odoo>

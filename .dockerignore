@@ -2,6 +2,13 @@
 *
 !odoo.conf
 !requirements.txt
+!.agents/
+!.agents/skills/
+!.agents/skills/odoo-unit-test/
+!.agents/skills/odoo-unit-test/examples/
+!.agents/skills/odoo-unit-test/examples/requirements.txt
+!.agents/skills/odoo-unit-test/scripts/
+!.agents/skills/odoo-unit-test/scripts/**
 # Izinkan folder berawalan amr_ dan seluruh isi di dalamnya
 !amr_*/
 !amr_*/**
